@@ -10,7 +10,13 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.12.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.12.3` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Rilevamento automatico della fingerprint 0.12.1
+
+La configurazione richiede soltanto l'URL HTTPS di Passbolt. L'app legge la fingerprint OpenPGP pubblicata da `/auth/verify.json`, la mostra in sola lettura e richiede una conferma esplicita prima di abilitare la fase successiva. Il rilevamento automatico non viene presentato come prova autonoma dell'identita del server: alla prima connessione il valore deve essere confrontato con quello comunicato dall'amministratore tramite un canale indipendente.
+
+Dopo la conferma, la fingerprint resta in memoria per la sessione corrente e viene passata al bridge OpenPGP come valore atteso. Durante GPGAuth il bridge analizza la chiave pubblica effettiva, ne calcola la fingerprint e blocca il login se non coincide con il valore confermato. Il probe da riga di comando conserva invece la modalita con `-ExpectedFingerprint`, adatta alle verifiche automatizzate e al pinning preconfigurato.
 
 ### Sottocartelle condivise con permessi ereditati 0.12.0
 
@@ -22,9 +28,8 @@ La creazione segue questo ordine:
 
 1. crea la cartella personale con `POST /folders.json?contain[permission]=1`;
 2. calcola la differenza fra il permesso Owner appena restituito e la maschera del contenitore;
-3. simula i cambi con `POST /share/simulate/folder/{id}.json` e verifica che gli utenti concreti restituiti appartengano al piano;
-4. applica la maschera con `PUT /share/folder/{id}.json`;
-5. soltanto dopo la condivisione riuscita crea le risorse nella nuova cartella e applica a ciascuna la stessa maschera con il flusso risorse della versione 0.11.
+3. applica la maschera con `PUT /share/folder/{id}.json`, come il client Passbolt ufficiale;
+4. soltanto dopo la condivisione riuscita crea le risorse nella nuova cartella e applica a ciascuna la stessa maschera con il flusso risorse della versione 0.11, che comprende la simulazione prevista per le risorse.
 
 I metadati di una nuova cartella v5 condivisa sono cifrati e firmati fin dalla creazione con la chiave metadati condivisa verificata. Se la chiave non e disponibile e il formato e **Automatico**, il piano puo ripiegare su v4 quando consentito dall'istanza; un formato v5 richiesto esplicitamente resta invece bloccato.
 
@@ -113,7 +118,7 @@ La versione 0.4.1 corregge la decodifica degli header GPGAuth prodotti con seman
 ## 01 — Configurazione
 
 - verifica che l'URL Passbolt usi HTTPS;
-- controlla healthcheck, TLS e fingerprint pubblica del server;
+- controlla healthcheck e TLS, rileva la fingerprint pubblica del server e ne richiede la conferma;
 - permette di scegliere la cartella principale dei documenti clienti;
 - abilita la fase successiva solo quando connessione e cartella sono valide.
 
@@ -160,7 +165,7 @@ La fase 04 implementa un'importazione Passbolt v4/v5 condizionata da un dry-run 
 
 1. L'utente seleziona soltanto candidati con stato **Pronto**.
 2. L'utente seleziona il file della propria chiave privata OpenPGP, inserisce la passphrase e, se l'account lo richiede, il codice MFA TOTP a 6 cifre, quindi usa **Avvia sessione**.
-3. Il bridge locale verifica la chiave del server contro la fingerprint configurata, esegue GPGAuth, completa TOTP nella stessa sessione e controlla che la chiave privata corrisponda all'identita Passbolt autenticata. Passphrase e TOTP vengono immediatamente rimossi dalla richiesta e dai campi UI.
+3. Il bridge locale verifica la chiave del server contro la fingerprint rilevata e confermata nella fase 01, esegue GPGAuth, completa TOTP nella stessa sessione e controlla che la chiave privata corrisponda all'identita Passbolt autenticata. Passphrase e TOTP vengono immediatamente rimossi dalla richiesta e dai campi UI.
 4. Per ogni dry-run l'app ricalcola SHA-256 e ricostruisce i candidati dai documenti. Se un documento, il record o i metadati sono cambiati dopo la revisione, il flusso si interrompe.
 5. L'app verifica che la sessione e l'identita siano ancora valide, quindi legge impostazioni, cartelle, maschere dei permessi, utenti, gruppi, chiavi pubbliche, tipi di risorsa e metadati delle risorse accessibili all'utente. Se incontra cartelle o risorse v5, decifra localmente i metadati con la chiave personale o con la copia verificata della chiave condivisa.
 6. Il catalogo delle cartelle viene mostrato nella UI. Se l'utente cambia contenitore, destinazione diretta, modalita oppure una singola associazione cliente-cartella, il piano appena prodotto viene invalidato e il dry-run deve essere ripetuto nella stessa sessione.
@@ -246,9 +251,9 @@ Il controllo di connessione esegue esclusivamente richieste pubbliche e in sola 
 - `GET /healthcheck/status.json`
 - `GET /auth/verify.json`
 
-L'applicazione non contiene URL o fingerprint preconfigurati. Inserire la fingerprint OpenPGP del proprio server (40 cifre esadecimali) e confrontarla con quella letta direttamente dalla configurazione di Passbolt o comunicata dall'amministratore attraverso un canale indipendente.
+L'applicazione non contiene URL o fingerprint preconfigurati. Nella GUI la fingerprint OpenPGP viene rilevata automaticamente, mostrata in sola lettura e confermata dall'utente. Alla prima connessione deve essere confrontata con quella letta direttamente dalla configurazione di Passbolt o comunicata dall'amministratore attraverso un canale indipendente.
 
-Se la fingerprint cambia, il programma termina con errore. Non modificare il controllo per ignorare la differenza finché la rotazione della chiave non è stata confermata.
+Una volta confermata, la fingerprint viene usata come pin per la sessione corrente. Se la chiave effettiva ricevuta durante GPGAuth non coincide, il programma termina con errore. Non modificare il controllo per ignorare la differenza finché la rotazione della chiave non è stata confermata.
 
 Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettura:
 
@@ -262,9 +267,9 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 - `GET /folders.json?contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1`
 - `GET /share/search-aros.json?contain[gpgkey]=1&contain[groups_users]=1`
 
-L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `POST /share/simulate/folder/{id}.json` e `PUT /share/folder/{id}.json` per le nuove cartelle, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. Ogni `PUT` viene eseguita soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
+L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.12 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint e verifica crittograficamente le sfide di entrambi i lati.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.12.3 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati.
 
 Per eseguire soltanto il controllo da riga di comando:
 
@@ -291,10 +296,10 @@ python .\passbolt_import.py --self-test
 '{"command":"self-test"}' | node .\passbolt_crypto.mjs
 node .\test_passbolt_crypto.mjs
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py
+python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py
 ```
 
-`test_passbolt_crypto.mjs` avvia un server simulato soltanto su `127.0.0.1` e verifica end-to-end GPGAuth stage 0/1/2, redirect interni, blocco dei redirect esterni, TOTP mancante, TOTP rifiutato, TOTP valido, cookie di sessione e MFA, riuso della sessione per due dry-run senza un secondo login o un secondo TOTP, CSRF, piano duplicati v4/v5, chiave metadati personale, chiave metadati condivisa verificata, catalogo gerarchico delle cartelle, contenitore padre selezionato, destinazione diretta, mappature distinte v4/v5, destinazione radice per singolo cliente, rifiuto delle destinazioni incomplete o in sola lettura, lettura e creazione cartelle v4/v5, ereditarieta User/Group per nuove sottocartelle condivise, digest della maschera, simulazione prima dell'applicazione, chiave condivisa per i metadati v5, assegnazione di `folder_parent_id`, blocco dei duplicati presenti altrove, riconciliazione dei fallimenti parziali e creazione risorse v4/v5 con segreti e metadati OpenPGP cifrati. Non contatta l'istanza Passbolt reale.
+`test_passbolt_crypto.mjs` avvia un server simulato soltanto su `127.0.0.1` e verifica end-to-end GPGAuth stage 0/1/2, redirect interni, blocco dei redirect esterni, TOTP mancante, TOTP rifiutato, TOTP valido, cookie di sessione e MFA, riuso della sessione per due dry-run senza un secondo login o un secondo TOTP, CSRF, piano duplicati v4/v5, chiave metadati personale, chiave metadati condivisa verificata, catalogo gerarchico delle cartelle, contenitore padre selezionato, destinazione diretta, mappature distinte v4/v5, destinazione radice per singolo cliente, rifiuto delle destinazioni incomplete o in sola lettura, lettura e creazione cartelle v4/v5, ereditarieta User/Group per nuove sottocartelle condivise, digest della maschera, applicazione diretta dei permessi cartella, simulazione prima della condivisione delle risorse, chiave condivisa per i metadati v5, assegnazione di `folder_parent_id`, blocco dei duplicati presenti altrove, riconciliazione dei fallimenti parziali e creazione risorse v4/v5 con segreti e metadati OpenPGP cifrati. Non contatta l'istanza Passbolt reale.
 
 È possibile creare un inventario JSON o un report CSV anche da riga di comando:
 

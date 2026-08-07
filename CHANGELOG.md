@@ -2,6 +2,39 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.3 - 2026-08-07
+
+### Fixed
+
+- rimossa la chiamata non supportata `POST /share/simulate/folder/{id}`: il dry-run dell'endpoint `/share/simulate` opera sulle risorse, non sulle cartelle;
+- allineata la condivisione cartelle al client e al backend ufficiali Passbolt tramite `PUT /share/folder/{id}`;
+- aggiunti endpoint, metodo e stato HTTP al messaggio di errore della condivisione cartelle;
+- aggiunti versione al titolo degli errori di importazione e ID delle cartelle duplicate al blocco del dry-run.
+
+## 0.12.2 - 2026-08-07
+
+### Fixed
+
+- aggiunto il marcatore `is_new` richiesto dall'API Passbolt per i nuovi permessi di cartelle e risorse condivise;
+- aggiunta la riconciliazione sicura delle cartelle personali rimaste dopo una condivisione interrotta, limitata a cartelle vuote con un unico proprietario verificato;
+- impedita la creazione di una cartella cliente duplicata durante il recupero da un errore parziale;
+- estesi dry-run, conferma e riepilogo finale per distinguere cartelle create, riutilizzate e riconciliate.
+
+## 0.12.1 - 2026-08-07
+
+### Changed
+
+- rimosso l'inserimento manuale della fingerprint dalla fase 01;
+- aggiunti rilevamento automatico, visualizzazione in sola lettura e conferma esplicita della fingerprint;
+- corretto il marchio testuale nel pannello laterale da `passbolt` a `Passbolt`;
+- aggiornata la versione visualizzata e dichiarata dai backend.
+
+### Security
+
+- il rilevamento automatico deve essere richiesto esplicitamente con `--discover-fingerprint`, mentre il probe CLI standard conserva il confronto con una fingerprint attesa;
+- dopo la conferma, la fingerprint viene fissata per la sessione e confrontata con quella calcolata dalla chiave OpenPGP effettivamente ricevuta durante GPGAuth;
+- aggiunti test unitari per le modalita di rilevamento, confronto riuscito, mancata corrispondenza e selezione obbligatoria della modalita CLI.
+
 ## 0.12.0 - 2026-08-07
 
 ### Added

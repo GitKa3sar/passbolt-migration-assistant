@@ -27,7 +27,7 @@ Il maintainer confermerà la ricezione, valuterà riproducibilità e impatto e c
 
 ## Ambito prioritario
 
-Sono particolarmente rilevanti problemi che possano causare esposizione di segreti, aggiramento del pinning della fingerprint, autenticazione verso un server non fidato, scritture non confermate, riuso improprio della sessione, accesso a file fuori dalla radice selezionata, esecuzione di contenuti attivi o assegnazione errata dei permessi Passbolt.
+Sono particolarmente rilevanti problemi che possano causare esposizione di segreti, aggiramento del pinning applicato dopo la conferma della fingerprint, autenticazione verso un server non fidato, scritture non confermate, riuso improprio della sessione, accesso a file fuori dalla radice selezionata, esecuzione di contenuti attivi o assegnazione errata dei permessi Passbolt.
 
 ## Gestione sicura dei dati
 

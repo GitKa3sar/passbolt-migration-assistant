@@ -40,6 +40,16 @@ function redirect(response, location, headers = {}) {
   response.end();
 }
 
+function assertNewPermissionMarkers(payload) {
+  assert.equal(Array.isArray(payload?.permissions), true);
+  const additions = payload.permissions.filter((permission) => !permission.id && permission.delete !== true);
+  assert.equal(additions.length > 0, true);
+  for (const permission of additions) assert.equal(permission.is_new, true);
+  for (const permission of payload.permissions.filter((permission) => permission.id)) {
+    assert.equal(Object.hasOwn(permission, 'is_new'), false);
+  }
+}
+
 function encodeGpgAuthHeader(value) {
   // Mirror PHP/form-style URL encoding: spaces are represented as '+', while
   // literal plus signs in the armored base64 remain percent-encoded as %2B.
@@ -103,6 +113,7 @@ async function main() {
   let createdPayload = null;
   let createdPayloadV5 = null;
   let createdFolderPayload = null;
+  let createdFolderRequestCount = 0;
   let metadataPrivateKeyEnvelope = null;
   let existingV5Metadata = null;
   let existingV5FolderMetadata = null;
@@ -111,9 +122,10 @@ async function main() {
   let folderShareApplyMode = 'success';
   let sharedFolderPermissionMode = 'normal';
   let includePersonalChildInSharedContainer = false;
+  let includeDuplicatePersonalChild = false;
   let sharedSimulationPayload = null;
   let sharedApplyPayload = null;
-  let sharedFolderSimulationPayload = null;
+  let folderShareSimulationRequestCount = 0;
   let sharedFolderApplyPayload = null;
 
   const mockServer = createServer(async (request, response) => {
@@ -455,6 +467,23 @@ async function main() {
               }],
             });
           }
+          if (includeDuplicatePersonalChild) {
+            sharedFolders.push({
+              id: 'second-created-unshared-folder-id',
+              name: 'Cliente Nuovo Condiviso',
+              folder_parent_id: 'folder-shared-id',
+              personal: true,
+              permission: { type: 15 },
+              permissions: [{
+                id: 'second-created-unshared-owner-permission-id',
+                aco: 'Folder',
+                aco_foreign_key: 'second-created-unshared-folder-id',
+                aro: 'User',
+                aro_foreign_key: 'user-id',
+                type: 15,
+              }],
+            });
+          }
           send(response, 200, apiSuccess(sharedFolders));
         } else if (folderMode === 'v5') {
           send(response, 200, apiSuccess([{
@@ -476,6 +505,7 @@ async function main() {
           return;
         }
         createdFolderPayload = await requestJson(request);
+        createdFolderRequestCount += 1;
         send(response, 200, apiSuccess({
           id: 'created-folder-id',
           permission: {
@@ -567,7 +597,7 @@ async function main() {
       }
       if (request.method === 'POST' && url.pathname.startsWith('/share/simulate/resource/')) {
         sharedSimulationPayload = await requestJson(request);
-        assert.equal(Array.isArray(sharedSimulationPayload.permissions), true);
+        assertNewPermissionMarkers(sharedSimulationPayload);
         assert.equal(sharedSimulationPayload.permissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === 'direct-recipient-id'), true);
         assert.equal(sharedSimulationPayload.permissions.some((permission) => permission.aro === 'Group' && permission.aro_foreign_key === 'shared-group-id'), true);
         send(response, 200, apiSuccess({
@@ -579,16 +609,8 @@ async function main() {
         return;
       }
       if (request.method === 'POST' && url.pathname.startsWith('/share/simulate/folder/')) {
-        sharedFolderSimulationPayload = await requestJson(request);
-        assert.equal(Array.isArray(sharedFolderSimulationPayload.permissions), true);
-        assert.equal(sharedFolderSimulationPayload.permissions.some((permission) => permission.aco === 'Folder' && permission.aro === 'User' && permission.aro_foreign_key === 'direct-recipient-id'), true);
-        assert.equal(sharedFolderSimulationPayload.permissions.some((permission) => permission.aco === 'Folder' && permission.aro === 'Group' && permission.aro_foreign_key === 'shared-group-id'), true);
-        send(response, 200, apiSuccess({
-          changes: {
-            added: [{ User: { id: 'direct-recipient-id' } }, { User: { id: 'group-recipient-id' } }],
-            removed: [],
-          },
-        }));
+        folderShareSimulationRequestCount += 1;
+        send(response, 404, apiError('Not Found'));
         return;
       }
       if (request.method === 'PUT' && url.pathname.startsWith('/share/folder/')) {
@@ -597,7 +619,7 @@ async function main() {
           send(response, 400, apiError('Mock folder sharing failure.'));
           return;
         }
-        assert.equal(Array.isArray(sharedFolderApplyPayload.permissions), true);
+        assertNewPermissionMarkers(sharedFolderApplyPayload);
         assert.equal(Object.hasOwn(sharedFolderApplyPayload, 'secrets'), false);
         send(response, 200, apiSuccess(null));
         return;
@@ -609,6 +631,7 @@ async function main() {
           return;
         }
         assert.equal(sharedApplyPayload.secrets.length, 2);
+        assertNewPermissionMarkers(sharedApplyPayload);
         const recipientPrivateKeys = new Map([
           ['direct-recipient-id', directRecipientPrivateKey],
           ['group-recipient-id', groupRecipientPrivateKey],
@@ -1062,7 +1085,8 @@ async function main() {
     assert.equal(sharedChildCreated.created[0].status, 'created_shared');
     assert.equal(createdFolderPayload.folder_parent_id, 'folder-shared-id');
     assert.equal(createdPayload.folder_parent_id, 'created-folder-id');
-    assert.equal(sharedFolderSimulationPayload.permissions.some((permission) => permission.aco_foreign_key === 'created-folder-id'), true);
+    assert.equal(folderShareSimulationRequestCount, 0);
+    assert.equal(sharedFolderApplyPayload.permissions.some((permission) => permission.aco_foreign_key === 'created-folder-id'), true);
     assert.equal(sharedFolderApplyPayload.permissions.some((permission) => permission.aro === 'Group' && permission.aro_foreign_key === 'shared-group-id'), true);
 
     folderShareApplyMode = 'failure';
@@ -1076,6 +1100,8 @@ async function main() {
       ),
       (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
         && error?.details?.folder_sharing_failed === true
+        && error?.details?.cause_code === 'FOLDER_SHARE_APPLY_FAILED'
+        && error?.details?.http_status === 400
         && error?.details?.created_unshared_folder_id === 'created-folder-id'
         && error?.details?.created_folders?.[0]?.status === 'created_unshared'
         && error?.details?.created?.length === 0,
@@ -1093,9 +1119,80 @@ async function main() {
       'v4',
       'folder-shared-id',
     );
-    assert.equal(unsharedChildReconciliation.capabilities.can_import, false);
-    assert.match(unsharedChildReconciliation.capabilities.unavailable_reason, /risulta personale/i);
-    assert.match(unsharedChildReconciliation.capabilities.unavailable_reason, /created-unshared-folder-id/);
+    assert.equal(unsharedChildReconciliation.capabilities.can_import, true);
+    assert.equal(unsharedChildReconciliation.capabilities.create_folder_count, 0);
+    assert.equal(unsharedChildReconciliation.capabilities.reconcile_shared_folder_count, 1);
+    assert.equal(unsharedChildReconciliation.capabilities.candidates[0].folder_action, 'repair_share');
+    assert.equal(unsharedChildReconciliation.capabilities.candidates[0].folder_id, 'created-unshared-folder-id');
+    assert.equal(unsharedChildReconciliation.runtime.folders[0].existing_permission.id, 'created-unshared-owner-permission-id');
+
+    const folderRequestsBeforeReconciliation = createdFolderRequestCount;
+    folderShareApplyMode = 'failure';
+    await assert.rejects(
+      createPlannedContent(
+        session,
+        unsharedChildReconciliation.capabilities.candidates,
+        [{ ...sharedChildCandidate[0], password: 'mock-resource-password', description: 'mock description' }],
+        unsharedChildReconciliation.runtime,
+        keyMaterial,
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.folder_reconciliation_failed === true
+        && error?.details?.existing_personal_folder_id === 'created-unshared-folder-id'
+        && error?.details?.created_folders?.length === 0
+        && error?.details?.created?.length === 0,
+    );
+    assert.equal(createdFolderRequestCount, folderRequestsBeforeReconciliation);
+    folderShareApplyMode = 'success';
+
+    const reconciledChildCreated = await createPlannedContent(
+      session,
+      unsharedChildReconciliation.capabilities.candidates,
+      [{ ...sharedChildCandidate[0], password: 'mock-resource-password', description: 'mock description' }],
+      unsharedChildReconciliation.runtime,
+      keyMaterial,
+    );
+    assert.equal(createdFolderRequestCount, folderRequestsBeforeReconciliation);
+    assert.equal(reconciledChildCreated.createdFolders.length, 0);
+    assert.equal(reconciledChildCreated.reconciledFolders.length, 1);
+    assert.equal(reconciledChildCreated.reconciledFolders[0].folder_id, 'created-unshared-folder-id');
+    assert.equal(reconciledChildCreated.reconciledFolders[0].status, 'reconciled_shared');
+    assert.equal(reconciledChildCreated.created[0].status, 'created_shared');
+    assert.equal(createdPayload.folder_parent_id, 'created-unshared-folder-id');
+    assert.equal(sharedFolderApplyPayload.permissions.every((permission) => permission.id || permission.is_new === true), true);
+
+    existingResourceFolderId = 'created-unshared-folder-id';
+    const nonEmptyPersonalChild = await analyzeCapabilities(
+      session,
+      user,
+      sharedChildCandidate,
+      keyMaterial,
+      'v4',
+      'client_folders',
+      'v4',
+      'folder-shared-id',
+    );
+    assert.equal(nonEmptyPersonalChild.capabilities.can_import, false);
+    assert.match(nonEmptyPersonalChild.capabilities.unavailable_reason, /vuota/i);
+    assert.match(nonEmptyPersonalChild.capabilities.unavailable_reason, /created-unshared-folder-id/);
+    existingResourceFolderId = null;
+
+    includeDuplicatePersonalChild = true;
+    const ambiguousPersonalChildren = await analyzeCapabilities(
+      session,
+      user,
+      sharedChildCandidate,
+      keyMaterial,
+      'v4',
+      'client_folders',
+      'v4',
+      'folder-shared-id',
+    );
+    assert.equal(ambiguousPersonalChildren.capabilities.can_import, false);
+    assert.match(ambiguousPersonalChildren.capabilities.unavailable_reason, /created-unshared-folder-id/);
+    assert.match(ambiguousPersonalChildren.capabilities.unavailable_reason, /second-created-unshared-folder-id/);
+    assert.match(ambiguousPersonalChildren.capabilities.unavailable_reason, /copie personali vuote in eccesso/i);
+    includeDuplicatePersonalChild = false;
     includePersonalChildInSharedContainer = false;
 
     shareDirectoryMode = 'missing-key';
@@ -1543,9 +1640,12 @@ async function main() {
         shared_partial_failure_reconciliation: true,
         shared_child_folder_permission_inheritance: true,
         shared_child_folder_permission_mask_in_digest: true,
-        shared_child_folder_simulation_before_apply: true,
+        shared_child_folder_direct_apply: true,
         shared_child_folder_partial_failure_reconciliation: true,
-        shared_child_folder_unshared_collision_blocked: true,
+        new_share_permissions_marked: true,
+        empty_personal_child_folder_reconciled: true,
+        nonempty_personal_child_folder_blocked: true,
+        duplicate_personal_child_folders_identified: true,
         shared_v5_folder_metadata_key_enforced: true,
         duplicate_destination_classification: true,
         duplicate_elsewhere_blocked: true,

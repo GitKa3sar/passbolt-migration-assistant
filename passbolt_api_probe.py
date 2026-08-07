@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
-USER_AGENT = "Passbolt-Migration-Assistant-Probe/1.0"
+USER_AGENT = "Passbolt-Migration-Assistant-Probe/0.12.3"
 
 
 class ProbeError(RuntimeError):
@@ -31,7 +31,7 @@ class ProbeResult:
     verify_http_status: int
     verify_api_status: str | None
     fingerprint: str
-    fingerprint_matches_expected: bool
+    fingerprint_matches_expected: bool | None
     armored_public_key_present: bool
     public_key_length: int
 
@@ -101,7 +101,11 @@ def api_status(document: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def run_probe(base_url: str, expected_fingerprint: str, timeout: float) -> ProbeResult:
+def run_probe(
+    base_url: str,
+    expected_fingerprint: str | None,
+    timeout: float,
+) -> ProbeResult:
     health_http, health = get_json(base_url, "/healthcheck/status.json", timeout)
     if health_http != 200 or api_status(health) != "success" or health.get("body") != "OK":
         raise ProbeError("L'healthcheck Passbolt non dichiara lo stato OK.")
@@ -137,7 +141,9 @@ def run_probe(base_url: str, expected_fingerprint: str, timeout: float) -> Probe
         verify_http_status=verify_http,
         verify_api_status=api_status(verify),
         fingerprint=fingerprint,
-        fingerprint_matches_expected=fingerprint == expected_fingerprint,
+        fingerprint_matches_expected=(
+            None if expected_fingerprint is None else fingerprint == expected_fingerprint
+        ),
         armored_public_key_present=key_is_armored,
         public_key_length=len(keydata),
     )
@@ -155,10 +161,18 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="URL base HTTPS dell'istanza Passbolt.",
     )
-    parser.add_argument(
+    fingerprint_mode = parser.add_mutually_exclusive_group(required=True)
+    fingerprint_mode.add_argument(
         "--expected-fingerprint",
-        required=True,
         help="Fingerprint verificata con un canale amministrativo indipendente.",
+    )
+    fingerprint_mode.add_argument(
+        "--discover-fingerprint",
+        action="store_true",
+        help=(
+            "Rileva la fingerprint dichiarata dal server senza confrontarla con un "
+            "valore preconfigurato. Richiede una conferma separata dell'utente."
+        ),
     )
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument(
@@ -173,7 +187,11 @@ def main() -> int:
     args = parse_args()
     try:
         base_url = normalize_base_url(args.base_url)
-        expected = normalize_fingerprint(args.expected_fingerprint)
+        expected = (
+            normalize_fingerprint(args.expected_fingerprint)
+            if args.expected_fingerprint
+            else None
+        )
         result = run_probe(base_url, expected, args.timeout)
     except ProbeError as exc:
         print(f"ERRORE: {exc}", file=sys.stderr)
@@ -186,16 +204,23 @@ def main() -> int:
         print(f"Healthcheck: HTTP {result.health_http_status}, {result.health_body}")
         print(f"API verify: HTTP {result.verify_http_status}, {result.verify_api_status}")
         print(f"Fingerprint: {result.fingerprint}")
-        print(
-            "Fingerprint attesa: "
-            + ("CORRISPONDE" if result.fingerprint_matches_expected else "NON CORRISPONDE")
-        )
+        if result.fingerprint_matches_expected is None:
+            print("Fingerprint attesa: NON FORNITA (modalità rilevamento)")
+        else:
+            print(
+                "Fingerprint attesa: "
+                + (
+                    "CORRISPONDE"
+                    if result.fingerprint_matches_expected
+                    else "NON CORRISPONDE"
+                )
+            )
         print(
             "Chiave pubblica OpenPGP: "
             + ("PRESENTE" if result.armored_public_key_present else "NON VALIDA")
         )
 
-    if not result.fingerprint_matches_expected:
+    if result.fingerprint_matches_expected is False:
         print(
             "ERRORE: la fingerprint del server è cambiata. Non procedere con il login.",
             file=sys.stderr,

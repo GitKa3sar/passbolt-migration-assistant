@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.12.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.12.3 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -15,7 +15,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 
 - inventario metadati di file TXT, CSV, JSON, XML, XLSX, DOCX e ODT;
 - revisione locale e mascherata dei candidati, senza mostrare integralmente le password;
-- verifica pubblica di healthcheck, TLS e fingerprint OpenPGP del server;
+- verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
 - creazione di risorse Passbolt v4 e v5 con cifratura OpenPGP locale;
 - destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
@@ -54,10 +54,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run_passbolt_app.ps1
 Al primo utilizzo:
 
 1. inserire l'URL HTTPS dell'istanza Passbolt;
-2. inserire la fingerprint OpenPGP del server ottenuta dall'amministratore tramite un canale indipendente;
-3. verificare la connessione pubblica;
+2. verificare la connessione pubblica;
+3. leggere e confermare la fingerprint OpenPGP rilevata automaticamente, confrontandola alla prima connessione con il valore comunicato dall'amministratore tramite un canale indipendente;
 4. selezionare la cartella locale contenente i documenti da inventariare;
 5. completare revisione, mappatura delle destinazioni e dry-run prima di autorizzare la scrittura.
+
+La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
 
 Il controllo pubblico può essere eseguito anche senza aprire la GUI:
 
@@ -94,14 +96,14 @@ python .\passbolt_import.py --self-test
 '{"command":"self-test"}' | node .\passbolt_crypto.mjs
 node .\test_passbolt_crypto.mjs
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py
+python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py
 ```
 
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
 
-La versione 0.12.0 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti.
+La versione 0.12.3 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti.
 
 La fase 0.13 prevista introduce un registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. Le fasi successive potranno estendere provider MFA, gestione controllata dei permessi e operazioni sicure sulle risorse esistenti.
 

@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.12.0"
+        Title="Passbolt Migration Assistant - v0.12.3"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -132,7 +132,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <StackPanel Margin="22,26,22,32">
-                <TextBlock Text="passbolt" Foreground="White" FontSize="25" FontWeight="Bold" />
+                <TextBlock Text="Passbolt" Foreground="White" FontSize="25" FontWeight="Bold" />
                 <TextBlock Text="Migration Assistant" Foreground="#AEB8C2" FontSize="12" Margin="0,2,0,0" />
             </StackPanel>
             <StackPanel Grid.Row="1" Margin="10,0">
@@ -176,7 +176,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="24,20">
                         <StackPanel>
                             <TextBlock Text="1. Connessione Passbolt" FontSize="16" FontWeight="SemiBold" Foreground="#1F2933" />
-                            <TextBlock Text="Inserisci URL e fingerprint verificata tramite un canale amministrativo indipendente. Il controllo pubblico non esegue alcun login." Foreground="#66737F" Margin="0,4,0,14" TextWrapping="Wrap" />
+                            <TextBlock Text="Inserisci l'URL. L'app rileva la fingerprint OpenPGP del server e ne richiede la conferma prima di procedere; il controllo pubblico non esegue alcun login." Foreground="#66737F" Margin="0,4,0,14" TextWrapping="Wrap" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBox x:Name="PassboltUrl" ToolTip="URL base HTTPS, ad esempio https://passbolt.example.com" />
@@ -184,8 +184,10 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                             </Grid>
                             <Grid Margin="0,10,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="Fingerprint server" Foreground="#66737F" VerticalAlignment="Center" />
-                                <TextBox x:Name="ServerFingerprint" Grid.Column="1" MaxLength="59" ToolTip="Fingerprint OpenPGP del server: 40 cifre esadecimali, con o senza spazi" />
+                                <TextBlock Text="Fingerprint rilevata" Foreground="#66737F" VerticalAlignment="Center" />
+                                <Border Grid.Column="1" Background="#F3F6F8" BorderBrush="#D7DEE4" BorderThickness="1" CornerRadius="4" Padding="10,7">
+                                    <TextBlock x:Name="DetectedFingerprint" Text="Non ancora rilevata" Foreground="#43515D" FontFamily="Consolas" TextWrapping="Wrap" />
+                                </Border>
                             </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                 <Ellipse x:Name="ConnectionDot" Width="9" Height="9" Fill="#98A5B1" Margin="0,0,7,0" />
@@ -485,7 +487,7 @@ $StepImportNumber = Get-Control "StepImportNumber"
 $StepImportText = Get-Control "StepImportText"
 $SafeModeText = Get-Control "SafeModeText"
 $PassboltUrl = Get-Control "PassboltUrl"
-$ServerFingerprint = Get-Control "ServerFingerprint"
+$DetectedFingerprint = Get-Control "DetectedFingerprint"
 $VerifyButton = Get-Control "VerifyButton"
 $ConnectionDot = Get-Control "ConnectionDot"
 $ConnectionStatus = Get-Control "ConnectionStatus"
@@ -1443,13 +1445,16 @@ function Invoke-ImportReadiness {
             $SharedFolderSummary = if ([int]$Result.create_shared_folder_count -gt 0) {
                 " Cartelle condivise da creare con permessi ereditati: $([int]$Result.create_shared_folder_count)."
             } else { "" }
+            $ReconciledFolderSummary = if ([int]$Result.reconcile_shared_folder_count -gt 0) {
+                " Cartelle personali vuote da riconciliare con i permessi del contenitore: $([int]$Result.reconcile_shared_folder_count)."
+            } else { "" }
             $SharingSummary = if ([int]$Result.shared_create_count -gt 0) {
                 " Risorse condivise: $([int]$Result.shared_create_count); copie cifrate complessive: $([int]$Result.encrypted_secret_copy_count)."
             } else { "" }
-            $ImportPlanStatus.Text = "Dry-run completato. Nessuna modifica eseguita; cartelle nuove: $($Result.create_folder_count), cartelle riutilizzate: $($Result.reuse_folder_count).$SharedFolderSummary$SharingSummary Le cartelle Passbolt sono caricate: se cambi la destinazione, ripeti il dry-run."
+            $ImportPlanStatus.Text = "Dry-run completato. Nessuna modifica eseguita; cartelle nuove: $($Result.create_folder_count), da riconciliare: $($Result.reconcile_shared_folder_count), cartelle riutilizzate: $($Result.reuse_folder_count).$SharedFolderSummary$ReconciledFolderSummary$SharingSummary Le cartelle Passbolt sono caricate: se cambi la destinazione, ripeti il dry-run."
             $ConfirmationHint.Text = "Sessione sicura attiva. Digita: $ExpectedPhrase"
             $ImportConfirmation.IsEnabled = $true
-            Add-Activity "Dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, incluse $($Result.create_shared_folder_count) condivise; $($Result.duplicate_count) duplicati nella destinazione."
+            Add-Activity "Dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, $($Result.reconcile_shared_folder_count) cartelle da riconciliare, incluse $($Result.create_shared_folder_count) nuove condivise; $($Result.duplicate_count) duplicati nella destinazione."
         } elseif ([bool]$Result.can_import) {
             $ImportPlanStatus.Text = "Dry-run completato: tutti i candidati selezionati risultano gia' presenti."
             $ConfirmationHint.Text = "Nessuna nuova risorsa da creare."
@@ -1484,6 +1489,7 @@ function Invoke-ConfirmedImport {
     $DuplicateCount = [int]$script:ImportPlan.duplicate_count
     $CreateFolderCount = [int]$script:ImportPlan.create_folder_count
     $CreateSharedFolderCount = [int]$script:ImportPlan.create_shared_folder_count
+    $ReconcileSharedFolderCount = [int]$script:ImportPlan.reconcile_shared_folder_count
     $ReuseFolderCount = [int]$script:ImportPlan.reuse_folder_count
     $SharedCreateCount = [int]$script:ImportPlan.shared_create_count
     $EncryptedSecretCopyCount = [int]$script:ImportPlan.encrypted_secret_copy_count
@@ -1491,10 +1497,13 @@ function Invoke-ConfirmedImport {
         " Di queste, $SharedCreateCount risorse erediteranno i permessi delle cartelle condivise; saranno prodotte $EncryptedSecretCopyCount copie cifrate complessive dei segreti. Ogni condivisione verra' prima simulata da Passbolt."
     } else { "" }
     $FolderSharingConfirmation = if ($CreateSharedFolderCount -gt 0) {
-        " $CreateSharedFolderCount nuove cartelle saranno create nel contenitore condiviso e riceveranno la sua maschera completa di permessi. La condivisione di ogni cartella verra' simulata e applicata prima di creare le relative risorse."
+        " $CreateSharedFolderCount nuove cartelle saranno create nel contenitore condiviso e riceveranno la sua maschera completa di permessi prima di creare le relative risorse."
+    } else { "" }
+    $FolderReconciliationConfirmation = if ($ReconcileSharedFolderCount -gt 0) {
+        " $ReconcileSharedFolderCount cartelle personali gia' esistenti, verificate come vuote e di proprieta' dell'utente autenticato, riceveranno la maschera di permessi del contenitore prima della creazione delle risorse."
     } else { "" }
     $Decision = [System.Windows.MessageBox]::Show(
-        "Passbolt creera' $CreateFolderCount cartelle e $CreateCount risorse, riutilizzera' $ReuseFolderCount cartelle e saltera' $DuplicateCount duplicati nella destinazione.$FolderSharingConfirmation$SharingConfirmation Le creazioni sono sequenziali: in caso di interruzione verra' mostrato quante sono riuscite. Continuare?",
+        "Passbolt creera' $CreateFolderCount cartelle e $CreateCount risorse, riconciliera' $ReconcileSharedFolderCount cartelle personali, riutilizzera' $ReuseFolderCount cartelle e saltera' $DuplicateCount duplicati nella destinazione.$FolderSharingConfirmation$FolderReconciliationConfirmation$SharingConfirmation Le operazioni sono sequenziali: in caso di interruzione verra' mostrato quante sono riuscite. Continuare?",
         "Conferma scrittura su Passbolt",
         [System.Windows.MessageBoxButton]::YesNo,
         [System.Windows.MessageBoxImage]::Warning
@@ -1536,7 +1545,9 @@ function Invoke-ConfirmedImport {
             if ($CreatedBeforeFailure -gt 0 -or $CreatedFoldersBeforeFailure -gt 0) {
                 $Message += "`n`nAttenzione: $CreatedFoldersBeforeFailure cartelle e $CreatedBeforeFailure risorse risultano create prima dell'errore. Ripetere il dry-run per riconciliare lo stato; non verranno eliminate automaticamente."
             }
-            if ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_sharing_failed) {
+            if ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_reconciliation_failed) {
+                $Message += "`n`nLa cartella personale $($Envelope.error.details.existing_personal_folder_id) non e' stata riconciliata con i permessi del contenitore. Nessuna risorsa del cliente e' stata inserita al suo interno. Ripetere il dry-run per verificare lo stato corrente."
+            } elseif ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_sharing_failed) {
                 $Message += "`n`nLa cartella $($Envelope.error.details.created_unshared_folder_id) e' stata creata ma i permessi ereditati non sono stati applicati. Al momento resta personale; nessuna risorsa del cliente e' stata inserita al suo interno. Ripetere il dry-run per riconciliare lo stato."
             } elseif ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.sharing_failed) {
                 $Message += "`n`nLa risorsa $($Envelope.error.details.created_unshared_resource_id) e' stata creata ma la condivisione non e' stata applicata. Al momento resta personale e deve essere riconciliata con un nuovo dry-run prima di continuare."
@@ -1549,13 +1560,13 @@ function Invoke-ConfirmedImport {
         $ImportConfirmation.Text = ""
         $ImportConfirmation.IsEnabled = $false
         $ConfirmationHint.Text = "Importazione completata. La sessione resta attiva per il prossimo lotto."
-        $ImportPlanStatus.Text = "Importazione completata: $($Result.created_folder_count) cartelle, incluse $($Result.shared_created_folder_count) condivise, e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        $ImportPlanStatus.Text = "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
         foreach ($Row in @($ImportPlanGrid.ItemsSource)) {
             if ($Row.Action -eq "create") { $Row.ActionLabel = "Creata" }
         }
         $ImportPlanGrid.Items.Refresh()
-        Add-Activity "Importazione completata: $($Result.created_folder_count) cartelle, incluse $($Result.shared_created_folder_count) condivise, e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
-        [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
+        Add-Activity "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle personali riconciliate: $($Result.reconciled_shared_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
     } catch {
         $FailureMessage = [string]$_.Exception.Message
         if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
@@ -1563,7 +1574,7 @@ function Invoke-ConfirmedImport {
         }
         Reset-ImportPlan "Importazione interrotta. Ripetere il dry-run per riconciliare lo stato del server."
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.3", "OK", "Error") | Out-Null
     } finally {
         $ExecuteRequest = $null
         Update-ImportSessionState
@@ -1924,30 +1935,12 @@ $PassboltUrl.Add_TextChanged({
         $script:ConnectionVerified = $false
         $script:VerifiedUrl = ""
         $script:VerifiedFingerprint = ""
+        $DetectedFingerprint.Text = "Non ancora rilevata"
         Reset-ImportPlan "URL Passbolt modificato. Ripetere connessione e dry-run."
         $script:ClientDestinationMap = @{}
         Update-DestinationFolderOptions @() "" $false
         $ConnectionDot.Fill = Get-Brush "#98A5B1"
         $ConnectionStatus.Text = "URL modificato: ripetere la verifica"
-        $ConnectionStatus.Foreground = Get-Brush "#66737F"
-        Update-ConfigurationState
-    }
-})
-
-$ServerFingerprint.Add_TextChanged({
-    $CurrentFingerprint = (($ServerFingerprint.Text -replace '[^0-9A-Fa-f]', '')).ToUpperInvariant()
-    if ($script:VerifiedFingerprint -and $CurrentFingerprint -ne $script:VerifiedFingerprint) {
-        if (Test-ImportSessionActive) {
-            Stop-ImportSession "Sessione chiusa perche' la fingerprint Passbolt e' stata modificata." $false
-        }
-        $script:ConnectionVerified = $false
-        $script:VerifiedUrl = ""
-        $script:VerifiedFingerprint = ""
-        Reset-ImportPlan "Fingerprint Passbolt modificata. Ripetere connessione e dry-run."
-        $script:ClientDestinationMap = @{}
-        Update-DestinationFolderOptions @() "" $false
-        $ConnectionDot.Fill = Get-Brush "#98A5B1"
-        $ConnectionStatus.Text = "Fingerprint modificata: ripetere la verifica"
         $ConnectionStatus.Foreground = Get-Brush "#66737F"
         Update-ConfigurationState
     }
@@ -1962,17 +1955,41 @@ $VerifyButton.Add_Click({
     Update-Ui
     try {
         $Url = $PassboltUrl.Text.Trim()
-        $Fingerprint = $ServerFingerprint.Text.Trim()
-        $Result = Invoke-PythonJson $ProbeScript @("--base-url", $Url, "--expected-fingerprint", $Fingerprint, "--json")
-        if (-not $Result.fingerprint_matches_expected) { throw "La fingerprint del server non corrisponde al valore atteso." }
+        $Result = Invoke-PythonJson $ProbeScript @("--base-url", $Url, "--discover-fingerprint", "--json")
+        $DetectedValue = ([string]$Result.fingerprint).Trim().ToUpperInvariant()
+        if ($DetectedValue -notmatch '^[0-9A-F]{40}$') {
+            throw "La fingerprint rilevata dal server non e' valida."
+        }
+        $DetectedFingerprint.Text = $DetectedValue
+        $ConfirmationMessage = "Fingerprint OpenPGP rilevata:`n`n$DetectedValue`n`nIl valore e' stato fornito dall'istanza appena contattata. Il rilevamento automatico non dimostra da solo l'identita' del server. Alla prima connessione, confrontarlo con l'amministratore tramite un canale indipendente.`n`nConfermare questa fingerprint per la sessione corrente?"
+        $Confirmation = [System.Windows.MessageBox]::Show($ConfirmationMessage, "Conferma fingerprint Passbolt", "YesNo", "Warning")
+        if ([string]$Confirmation -ne "Yes") {
+            if (Test-ImportSessionActive) {
+                Stop-ImportSession "Sessione chiusa perche' la fingerprint Passbolt rilevata non e' stata confermata." $false
+            }
+            $script:ConnectionVerified = $false
+            $script:VerifiedUrl = ""
+            $script:VerifiedFingerprint = ""
+            Reset-ImportPlan "Fingerprint Passbolt non confermata. Ripetere la verifica."
+            $script:ClientDestinationMap = @{}
+            Update-DestinationFolderOptions @() "" $false
+            $ConnectionDot.Fill = Get-Brush "#B7791F"
+            $ConnectionStatus.Text = "Fingerprint rilevata ma non confermata"
+            $ConnectionStatus.Foreground = Get-Brush "#B7791F"
+            Add-Activity "Fingerprint Passbolt rilevata ma non confermata; connessione non autorizzata."
+            return
+        }
+        if ((Test-ImportSessionActive) -and $script:VerifiedFingerprint -and $script:VerifiedFingerprint -ne $DetectedValue) {
+            Stop-ImportSession "Sessione chiusa perche' la fingerprint Passbolt rilevata e' cambiata." $false
+        }
         $script:ConnectionVerified = $true
-        $script:VerifiedUrl = $Url
-        $script:VerifiedFingerprint = [string]$Result.fingerprint
+        $script:VerifiedUrl = [string]$Result.base_url
+        $script:VerifiedFingerprint = $DetectedValue
         if ($null -ne $script:ImportPlan) { Reset-ImportPlan "Connessione riverificata. Ripetere il dry-run autenticato." }
         $ConnectionDot.Fill = Get-Brush "#16875D"
-        $ConnectionStatus.Text = "Connesso - fingerprint verificata: $($Result.fingerprint)"
+        $ConnectionStatus.Text = "Connesso - fingerprint confermata: $DetectedValue"
         $ConnectionStatus.Foreground = Get-Brush "#16875D"
-        Add-Activity "Passbolt raggiungibile; healthcheck e fingerprint verificati."
+        Add-Activity "Passbolt raggiungibile; healthcheck verificato e fingerprint rilevata confermata dall'utente."
     } catch {
         $FailureMessage = [string]$_.Exception.Message
         if (Test-ImportSessionActive) {
@@ -1981,6 +1998,7 @@ $VerifyButton.Add_Click({
         $script:ConnectionVerified = $false
         $script:VerifiedUrl = ""
         $script:VerifiedFingerprint = ""
+        $DetectedFingerprint.Text = "Non disponibile"
         Reset-ImportPlan "Verifica pubblica non riuscita. Ripetere connessione e dry-run."
         $ConnectionDot.Fill = Get-Brush "#C43D4B"
         $ConnectionStatus.Text = "Verifica non riuscita"
@@ -2244,6 +2262,9 @@ for line in sys.stdin:
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
     }
+    if ($null -ne $Window.FindName("ServerFingerprint") -or [string]$DetectedFingerprint.Text -ne "Non ancora rilevata") {
+        throw "La configurazione deve rilevare la fingerprint senza richiedere un inserimento manuale."
+    }
     $script:ImportCandidates = @(
         [pscustomobject]@{ client = "Cliente Alfa" },
         [pscustomobject]@{ client = "Cliente Beta" }
@@ -2272,7 +2293,7 @@ for line in sys.stdin:
     $ClientMappingDialogProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.12.0"
+        version = "0.12.3"
         ui = "WPF"
         phases = 4
         controls = 73
@@ -2285,6 +2306,7 @@ for line in sys.stdin:
         client_mapping_ui = "OK"
         persistent_import_session = "OK"
         mfa_reused_without_reprompt = "OK"
+        automatic_fingerprint_confirmation = "OK"
         secrets_serialized = $false
         python = $PythonExecutable
         node = $NodeExecutable

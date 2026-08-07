@@ -22,7 +22,7 @@ const RESPONSE_LIMIT = 12 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_REDIRECTS = 5;
 const MAX_IMPORT_RESOURCES = 25;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.12';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.12.3';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -935,6 +935,30 @@ function normalizeFolderPermissions(value) {
   ));
 }
 
+function findPersonalFolderOwnerPermission(value, currentUserId, folderId) {
+  if (!Array.isArray(value)) return null;
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const id = String(item.id ?? '');
+    const aco = String(item.aco ?? 'Folder');
+    const acoForeignKey = String(item.aco_foreign_key ?? folderId);
+    const aro = String(item.aro ?? '');
+    const aroForeignKey = String(item.aro_foreign_key ?? '');
+    const type = normalizePermissionType(item.type);
+    if (id && aco === 'Folder' && acoForeignKey === folderId && aro === 'User' && aroForeignKey === currentUserId && type === 15) {
+      return {
+        id,
+        aco: 'Folder',
+        aco_foreign_key: folderId,
+        aro: 'User',
+        aro_foreign_key: currentUserId,
+        type,
+      };
+    }
+  }
+  return null;
+}
+
 async function buildShareDirectory(document, user, keyMaterial) {
   const body = apiBody(document);
   assert(Array.isArray(body), 'SHARE_DIRECTORY_INVALID', 'Passbolt non ha restituito un elenco valido di utenti e gruppi condivisibili.');
@@ -1101,6 +1125,10 @@ async function decryptExistingFolders(entries, user, keyMaterial, baseUrl, share
     const permissionType = normalizePermissionType(entry.permission?.type);
     const personal = typeof entry.personal === 'boolean' ? entry.personal : null;
     const permissions = normalizeFolderPermissions(entry.permissions);
+    const rawPermissionCount = Array.isArray(entry.permissions)
+      ? entry.permissions.filter((permission) => permission && typeof permission === 'object').length
+      : 0;
+    const personalOwnerPermission = findPersonalFolderOwnerPermission(entry.permissions, String(user.id ?? ''), id);
     const inferredShared = personal === false || permissions.length > 1 || permissions.some((permission) => (
       permission.aro === 'Group' || permission.aro_foreign_key !== String(user.id ?? '')
     ));
@@ -1121,6 +1149,8 @@ async function decryptExistingFolders(entries, user, keyMaterial, baseUrl, share
       share_failure: sharePlan.failure,
       share_permissions: permissions,
       share_recipients: sharePlan.recipients,
+      raw_permission_count: rawPermissionCount,
+      personal_owner_permission: personalOwnerPermission,
     };
     if (!isEncryptedMetadataFolder(entry)) {
       assert(typeof entry.name === 'string' && entry.name.length > 0, 'FOLDER_METADATA_UNAVAILABLE', 'I metadati di una cartella esistente non sono disponibili.');
@@ -1200,7 +1230,7 @@ function folderSharingFields(folder) {
   };
 }
 
-function planDestinations(candidates, existingFolders, destinationMode, folderFormat, destinationFolderId = null, clientDestinationMapping = null) {
+function planDestinations(candidates, existingFolders, existingResources, destinationMode, folderFormat, destinationFolderId = null, clientDestinationMapping = null) {
   if (destinationMode === 'root') {
     return {
       folders: [],
@@ -1344,27 +1374,41 @@ function planDestinations(candidates, existingFolders, destinationMode, folderFo
       && normalizeComparable(folder.name) === normalizeComparable(candidate.client)
     ));
     if (matches.length > 1) {
-      failure = `Esistono piu cartelle chiamate ${candidate.client} nello stesso contenitore Passbolt; la destinazione non e univoca.`;
+      const matchingIds = matches.map((folder) => folder.id).join(', ');
+      failure = `Esistono ${matches.length} cartelle chiamate ${candidate.client} nello stesso contenitore Passbolt (ID: ${matchingIds}). La destinazione non e univoca: eliminare in Passbolt le copie personali vuote in eccesso, lasciarne una sola e ripetere il dry-run.`;
     }
     const match = matches.length === 1 ? matches[0] : null;
+    let reconcilePersonalFolder = false;
     if (match && selectedFolder?.shared && !match.shared) {
-      failure = `La cartella ${match.path} esiste nel contenitore condiviso ma risulta personale. Non viene riutilizzata automaticamente per evitare di esporre contenuti con permessi inattesi; verificare la cartella ${match.id} in Passbolt e ripetere il dry-run.`;
+      const containsResources = existingResources.some((resource) => resource.folder_parent_id === match.id);
+      const containsFolders = existingFolders.some((folder) => folder.folder_parent_id === match.id);
+      const hasSoleVerifiedOwner = match.personal === true
+        && match.permission_type === 15
+        && match.raw_permission_count === 1
+        && match.share_permissions.length === 1
+        && Boolean(match.personal_owner_permission?.id);
+      if (!containsResources && !containsFolders && hasSoleVerifiedOwner) {
+        reconcilePersonalFolder = true;
+      } else {
+        failure = `La cartella ${match.path} esiste nel contenitore condiviso ma risulta personale e non puo essere riconciliata automaticamente. Per sicurezza deve essere vuota e avere come unico proprietario l'utente autenticato; verificare la cartella ${match.id} in Passbolt e ripetere il dry-run.`;
+      }
     } else if (match && !match.can_create) {
       failure = match.shared && match.share_failure
         ? `La cartella condivisa ${match.path} non e utilizzabile: ${match.share_failure}`
         : `Non disponi del permesso necessario per creare risorse nella cartella ${match.path}.`;
     }
     const folderPath = match?.path ?? (parentPath ? `${parentPath} / ${candidate.client}` : candidate.client);
-    const inheritedSharedFolder = !match && selectedFolder?.shared ? selectedFolder : null;
+    const inheritedSharedFolder = (!match || reconcilePersonalFolder) && selectedFolder?.shared ? selectedFolder : null;
     folderPlans.set(destinationKey, {
       destination_key: destinationKey,
       name: candidate.client,
       path: folderPath,
-      action: match ? 'reuse' : 'create',
+      action: reconcilePersonalFolder ? 'repair_share' : (match ? 'reuse' : 'create'),
       folder_id: match?.id ?? null,
       folder_parent_id: parentId,
       format: match ? null : folderFormat,
-      ...(match ? folderSharingFields(match) : folderSharingFields(inheritedSharedFolder)),
+      ...((match && !reconcilePersonalFolder) ? folderSharingFields(match) : folderSharingFields(inheritedSharedFolder)),
+      existing_permission: reconcilePersonalFolder ? match.personal_owner_permission : null,
       share_inherited_from_folder_id: inheritedSharedFolder?.id ?? null,
       share_inherited_from_path: inheritedSharedFolder?.path ?? null,
     });
@@ -1421,7 +1465,7 @@ function buildCandidatePlan(candidates, existingResources, duplicateDetectionAva
     const inDestination = exactMatches.find((resource) => (
       destination.folder_action === 'root'
         ? resource.folder_parent_id === null || resource.folder_parent_id === undefined
-        : destination.folder_action === 'reuse' && resource.folder_parent_id === destination.folder_id
+        : ['reuse', 'repair_share'].includes(destination.folder_action) && resource.folder_parent_id === destination.folder_id
     ));
     const elsewhere = !inDestination ? exactMatches[0] : null;
     const batchMatch = planned.find((item) => (
@@ -1646,6 +1690,7 @@ async function analyzeCapabilities(
   let destinationPlan = planDestinations(
     candidates,
     folderCatalog,
+    existingResources,
     destinationMode,
     selectedFolderFormat,
     destinationFolderId,
@@ -1685,6 +1730,7 @@ async function analyzeCapabilities(
       destinationPlan = planDestinations(
         candidates,
         folderCatalog,
+        existingResources,
         destinationMode,
         selectedFolderFormat,
         destinationFolderId,
@@ -1820,6 +1866,7 @@ async function analyzeCapabilities(
       .reduce((total, item) => total + (item.shared ? item.share_recipient_count : 1), 0),
     create_folder_count: folderPlan.filter((item) => item.action === 'create').length,
     create_shared_folder_count: sharedFolderCreateCount,
+    reconcile_shared_folder_count: folderPlan.filter((item) => item.action === 'repair_share').length,
     reuse_folder_count: folderPlan.filter((item) => item.action === 'reuse').length,
     plan_digest: digestPlan(digestPayload),
   };
@@ -2011,7 +2058,7 @@ function buildPermissionChanges(createdPermission, targetPermissions, aco, forei
         changes.push({ ...permission, id: currentId });
       }
     } else {
-      changes.push(permission);
+      changes.push({ ...permission, is_new: true });
     }
   }
   if (!currentRetained) {
@@ -2093,26 +2140,8 @@ async function shareCreatedResource(session, resourceId, createdPermission, plan
 
 async function shareCreatedFolder(session, folderId, createdPermission, planned) {
   const permissionChanges = buildFolderPermissionChanges(createdPermission, planned.share_permissions, folderId);
-  const simulation = await session.request(`/share/simulate/folder/${folderId}.json?api-version=v2`, {
-    method: 'POST',
-    body: { permissions: permissionChanges },
-    allowError: true,
-  });
-  if (simulation.status < 200 || simulation.status >= 300) {
-    throw new SafeError(
-      'FOLDER_SHARE_SIMULATION_FAILED',
-      apiMessage(simulation.document, `La simulazione della condivisione della cartella ha restituito HTTP ${simulation.status}.`),
-      { http_status: simulation.status },
-    );
-  }
-
-  const addedUserIds = simulatedAddedUserIds(simulation.document);
-  const plannedRecipientIds = new Set((Array.isArray(planned.share_recipients) ? planned.share_recipients : []).map((entry) => String(entry.user_id)));
-  for (const userId of addedUserIds) {
-    assert(plannedRecipientIds.has(userId), 'FOLDER_SHARE_SIMULATION_MISMATCH', 'La simulazione della cartella include un destinatario diverso dal piano confermato.');
-  }
-
-  const shared = await session.request(`/share/folder/${folderId}.json?api-version=v2`, {
+  const endpoint = `/share/folder/${folderId}.json?api-version=v2`;
+  const shared = await session.request(endpoint, {
     method: 'PUT',
     body: { permissions: permissionChanges },
     allowError: true,
@@ -2120,11 +2149,15 @@ async function shareCreatedFolder(session, folderId, createdPermission, planned)
   if (shared.status < 200 || shared.status >= 300) {
     throw new SafeError(
       'FOLDER_SHARE_APPLY_FAILED',
-      apiMessage(shared.document, `La condivisione della cartella ha restituito HTTP ${shared.status}.`),
-      { http_status: shared.status },
+      `Applicazione dei permessi della cartella non riuscita su PUT ${endpoint} (HTTP ${shared.status}): ${apiMessage(shared.document, 'errore non specificato')}`,
+      { http_status: shared.status, operation: 'folder_share_apply', endpoint },
     );
   }
-  return { permission_changes: permissionChanges.length, added_user_count: addedUserIds.length };
+  const currentUserId = String(createdPermission.aro === 'User' ? createdPermission.aro_foreign_key ?? '' : '');
+  const addedUserCount = (Array.isArray(planned.share_recipients) ? planned.share_recipients : [])
+    .filter((recipient) => String(recipient.user_id ?? '') !== currentUserId)
+    .length;
+  return { permission_changes: permissionChanges.length, added_user_count: addedUserCount };
 }
 
 function importResources(value, candidates) {
@@ -2147,11 +2180,48 @@ function importResources(value, candidates) {
 async function createPlannedContent(session, createPlan, resources, runtime, keyMaterial) {
   const created = [];
   const createdFolders = [];
+  const reconciledFolders = [];
   const resourceMap = new Map(resources.map((item) => [item.candidate_id, item]));
   const folderIds = new Map();
   for (const folder of runtime.folders) {
     if (folder.action === 'reuse') {
       folderIds.set(folder.destination_key, folder.folder_id);
+      continue;
+    }
+    if (folder.action === 'repair_share') {
+      folderIds.set(folder.destination_key, folder.folder_id);
+      try {
+        const shareResult = await shareCreatedFolder(session, folder.folder_id, folder.existing_permission, folder);
+        reconciledFolders.push({
+          destination_key: folder.destination_key,
+          folder_name: folder.name,
+          folder_id: folder.folder_id,
+          folder_parent_id: folder.folder_parent_id ?? null,
+          status: 'reconciled_shared',
+          shared: true,
+          permission_changes: shareResult.permission_changes,
+          added_user_count: shareResult.added_user_count,
+          share_recipient_count: Number(folder.share_recipient_count ?? 0),
+          share_inherited_from_folder_id: folder.share_inherited_from_folder_id ?? null,
+        });
+      } catch (error) {
+        const failureMessage = error instanceof SafeError ? error.message : 'La riconciliazione della cartella non e stata completata.';
+        throw new SafeError(
+          'IMPORT_PARTIAL_FAILURE',
+          `La cartella personale esistente ${folder.name} non ha ricevuto i permessi del contenitore condiviso: ${failureMessage}`,
+          {
+            created_folders: createdFolders,
+            reconciled_folders: reconciledFolders,
+            created,
+            failed_folder_name: folder.name,
+            existing_personal_folder_id: folder.folder_id,
+            sharing_failed: true,
+            folder_reconciliation_failed: true,
+            cause_code: error instanceof SafeError ? error.code : 'INTERNAL_ERROR',
+            http_status: error instanceof SafeError ? error.details?.http_status : undefined,
+          },
+        );
+      }
       continue;
     }
     const payload = await buildFolderPayload(folder, runtime, keyMaterial);
@@ -2164,7 +2234,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         apiMessage(response.document, `Creazione della cartella ${folder.name} non riuscita (HTTP ${response.status}).`),
-        { created_folders: createdFolders, created, failed_folder_name: folder.name, http_status: response.status },
+        { created_folders: createdFolders, reconciled_folders: reconciledFolders, created, failed_folder_name: folder.name, http_status: response.status },
       );
     }
     const body = apiBody(response.document);
@@ -2173,7 +2243,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         `Passbolt ha creato la cartella ${folder.name} senza restituire un identificatore utilizzabile.`,
-        { created_folders: createdFolders, created, failed_folder_name: folder.name, http_status: response.status },
+        { created_folders: createdFolders, reconciled_folders: reconciledFolders, created, failed_folder_name: folder.name, http_status: response.status },
       );
     }
     const createdFolder = {
@@ -2200,6 +2270,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
           `La cartella ${folder.name} e stata creata, ma non e stato possibile applicare i permessi ereditati: ${failureMessage}`,
           {
             created_folders: createdFolders,
+            reconciled_folders: reconciledFolders,
             created,
             failed_folder_name: folder.name,
             created_unshared_folder_id: folderId,
@@ -2231,7 +2302,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         apiMessage(response.document, `Creazione di ${resource.title} non riuscita (HTTP ${response.status}).`),
-        { created_folders: createdFolders, created, failed_candidate_id: resource.candidate_id, http_status: response.status },
+        { created_folders: createdFolders, reconciled_folders: reconciledFolders, created, failed_candidate_id: resource.candidate_id, http_status: response.status },
       );
     }
     const body = apiBody(response.document);
@@ -2240,7 +2311,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         `Passbolt ha creato ${resource.title} senza restituire un identificatore utilizzabile.`,
-        { created_folders: createdFolders, created, failed_candidate_id: resource.candidate_id, http_status: response.status },
+        { created_folders: createdFolders, reconciled_folders: reconciledFolders, created, failed_candidate_id: resource.candidate_id, http_status: response.status },
       );
     }
     const createdEntry = {
@@ -2264,6 +2335,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
           `${resource.title} e stata creata, ma non e stato possibile applicare la condivisione: ${failureMessage}`,
           {
             created_folders: createdFolders,
+            reconciled_folders: reconciledFolders,
             created,
             failed_candidate_id: resource.candidate_id,
             created_unshared_resource_id: resourceId,
@@ -2275,7 +2347,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       }
     }
   }
-  return { created, createdFolders };
+  return { created, createdFolders, reconciledFolders };
 }
 
 async function executeImport(input) {
@@ -2304,7 +2376,7 @@ async function executeImport(input) {
     assert(createPlan.length > 0, 'NOTHING_TO_IMPORT', 'Tutti i candidati selezionati risultano gia presenti.');
     assert(String(input.confirmation ?? '') === `IMPORTA ${createPlan.length}`, 'CONFIRMATION_MISMATCH', `Conferma richiesta: IMPORTA ${createPlan.length}`);
     const resources = importResources(input.resources, createPlan);
-    const { created, createdFolders } = await createPlannedContent(session, createPlan, resources, runtime, key);
+    const { created, createdFolders, reconciledFolders } = await createPlannedContent(session, createPlan, resources, runtime, key);
     return {
       command: 'import',
       authentication: mfaProvider ? 'GPGAuth + TOTP' : 'GPGAuth',
@@ -2315,11 +2387,13 @@ async function executeImport(input) {
       skipped_duplicate_count: capabilities.duplicate_count,
       created_folder_count: createdFolders.length,
       shared_created_folder_count: createdFolders.filter((item) => item.status === 'created_shared').length,
+      reconciled_shared_folder_count: reconciledFolders.length,
       reused_folder_count: capabilities.reuse_folder_count,
       resource_format: capabilities.resource_format_selected,
       folder_format: capabilities.folder_format_selected,
       resource_type: capabilities.resource_type,
       created_folders: createdFolders,
+      reconciled_folders: reconciledFolders,
       created,
       complete: true,
     };
@@ -2448,7 +2522,7 @@ class PersistentImportSession {
     assert(String(input.confirmation ?? '') === `IMPORTA ${createPlan.length}`, 'CONFIRMATION_MISMATCH', `Conferma richiesta: IMPORTA ${createPlan.length}`);
     const resources = importResources(input.resources, createPlan);
     try {
-      const { created, createdFolders } = await createPlannedContent(state.session, createPlan, resources, runtime, state.key);
+      const { created, createdFolders, reconciledFolders } = await createPlannedContent(state.session, createPlan, resources, runtime, state.key);
       return {
         command: 'import',
         session_id: state.sessionId,
@@ -2460,11 +2534,13 @@ class PersistentImportSession {
         skipped_duplicate_count: capabilities.duplicate_count,
         created_folder_count: createdFolders.length,
         shared_created_folder_count: createdFolders.filter((item) => item.status === 'created_shared').length,
+        reconciled_shared_folder_count: reconciledFolders.length,
         reused_folder_count: capabilities.reuse_folder_count,
         resource_format: capabilities.resource_format_selected,
         folder_format: capabilities.folder_format_selected,
         resource_type: capabilities.resource_type,
         created_folders: createdFolders,
+        reconciled_folders: reconciledFolders,
         created,
         complete: true,
       };
