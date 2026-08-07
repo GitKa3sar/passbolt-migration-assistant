@@ -4,7 +4,8 @@
 Reviewed candidates contain no cleartext secrets. Immediately before a dry-run
 or write, this module re-opens only the reviewed source files, verifies their
 SHA-256 digests, reconstructs the selected candidate records, and (for a write)
-passes the secrets directly to the local OpenPGP bridge over stdin.
+passes the secrets directly to the local OpenPGP bridge over stdin. Cleartext is
+returned to the desktop UI only by the explicit ``--reveal`` action.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.12.3"
+APP_VERSION = "0.12.4"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -54,6 +55,12 @@ class SelectedCandidate:
     title: str
     username: str
     uri: str
+    reviewed_client: str
+    reviewed_source_at_root: bool
+    reviewed_title: str
+    reviewed_username: str
+    reviewed_uri: str
+    password_overridden: bool
 
 
 def _candidate_request(value: object) -> SelectedCandidate:
@@ -67,6 +74,12 @@ def _candidate_request(value: object) -> SelectedCandidate:
     title = str(value.get("title", "")).strip()
     username = str(value.get("username", "")).strip()
     uri = str(value.get("uri", "")).strip()
+    reviewed_client = str(value.get("reviewed_client", client)).strip()
+    reviewed_source_at_root = value.get("reviewed_source_at_root", source_at_root)
+    reviewed_title = str(value.get("reviewed_title", title)).strip()
+    reviewed_username = str(value.get("reviewed_username", username)).strip()
+    reviewed_uri = str(value.get("reviewed_uri", uri)).strip()
+    password_overridden = value.get("password_overridden", False)
     if not candidate_id or len(candidate_id) > 200:
         raise ImportPreparationError("Un candidato non contiene un identificatore valido.")
     if not relative_path or len(relative_path) > 4096:
@@ -77,10 +90,24 @@ def _candidate_request(value: object) -> SelectedCandidate:
         raise ImportPreparationError("Un candidato non contiene un cliente valido.")
     if not isinstance(source_at_root, bool):
         raise ImportPreparationError("Un candidato non indica correttamente la posizione sorgente.")
+    if source_at_root != (client.casefold() == "(radice)"):
+        raise ImportPreparationError("Cliente e posizione di destinazione del candidato non coincidono.")
     if not title or len(title) > 255:
         raise ImportPreparationError("Ogni candidato deve avere un titolo di massimo 255 caratteri.")
     if len(username) > 255 or len(uri) > 2048:
         raise ImportPreparationError("Username o URL superano i limiti consentiti.")
+    if not reviewed_client or len(reviewed_client) > 256:
+        raise ImportPreparationError("I metadati originali non contengono un cliente valido.")
+    if not isinstance(reviewed_source_at_root, bool):
+        raise ImportPreparationError("La posizione sorgente originale non è valida.")
+    if reviewed_source_at_root != (reviewed_client.casefold() == "(radice)"):
+        raise ImportPreparationError("Cliente e posizione sorgente originali non coincidono.")
+    if not reviewed_title or len(reviewed_title) > 255:
+        raise ImportPreparationError("Il titolo originale del candidato non è valido.")
+    if len(reviewed_username) > 255 or len(reviewed_uri) > 2048:
+        raise ImportPreparationError("I metadati originali superano i limiti consentiti.")
+    if not isinstance(password_overridden, bool):
+        raise ImportPreparationError("Lo stato della password modificata non è valido.")
     return SelectedCandidate(
         candidate_id=candidate_id,
         source_relative_path=relative_path,
@@ -90,6 +117,12 @@ def _candidate_request(value: object) -> SelectedCandidate:
         title=title,
         username=username,
         uri=uri,
+        reviewed_client=reviewed_client,
+        reviewed_source_at_root=reviewed_source_at_root,
+        reviewed_title=reviewed_title,
+        reviewed_username=reviewed_username,
+        reviewed_uri=reviewed_uri,
+        password_overridden=password_overridden,
     )
 
 
@@ -123,6 +156,7 @@ def extract_resources(
     requests: Iterable[object],
     *,
     include_secrets: bool,
+    secret_overrides: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], int]:
     """Revalidate reviewed candidates and optionally return their secrets.
 
@@ -134,6 +168,23 @@ def extract_resources(
     if not root_path.is_dir():
         raise ImportPreparationError("La cartella clienti non esiste o non è accessibile.")
     selected = _selected_candidates(list(requests))
+    overrides = dict(secret_overrides or {})
+    required_override_ids = {
+        candidate.candidate_id for candidate in selected if candidate.password_overridden
+    }
+    if include_secrets and set(overrides) != required_override_ids:
+        raise ImportPreparationError(
+            "Le password modificate in memoria non corrispondono ai candidati selezionati."
+        )
+    if not include_secrets and overrides:
+        raise ImportPreparationError("Il controllo di integrità non accetta password in chiaro.")
+    for candidate_id, secret in overrides.items():
+        if not isinstance(candidate_id, str) or not isinstance(secret, str) or not secret:
+            raise ImportPreparationError("Una password modificata in memoria non è valida.")
+        if len(secret) > MAX_SECRET_CHARACTERS:
+            raise ImportPreparationError(
+                "Una password modificata supera il limite di 65.536 caratteri."
+            )
     by_path: dict[str, list[SelectedCandidate]] = {}
     for candidate in selected:
         by_path.setdefault(candidate.source_relative_path, []).append(candidate)
@@ -176,30 +227,33 @@ def extract_resources(
                     item for item in wanted if item.candidate_id == candidate.candidate_id
                 )
                 if (
-                    candidate.status != "ready"
-                    or candidate.client != request.client
-                    or source_at_root != request.source_at_root
-                    or candidate.title != request.title
-                    or candidate.username != request.username
-                    or candidate.uri != request.uri
+                    (candidate.status != "ready" and not request.password_overridden)
+                    or candidate.client != request.reviewed_client
+                    or source_at_root != request.reviewed_source_at_root
+                    or candidate.title != request.reviewed_title
+                    or candidate.username != request.reviewed_username
+                    or candidate.uri != request.reviewed_uri
                 ):
                     raise ImportPreparationError(
                         "I metadati di un candidato non corrispondono più alla revisione."
                     )
                 resource = {
                     "candidate_id": candidate.candidate_id,
-                    "title": candidate.title,
-                    "username": candidate.username,
-                    "uri": candidate.uri,
+                    "title": request.title,
+                    "username": request.username,
+                    "uri": request.uri,
                 }
                 if include_secrets:
-                    secret_found, secret = _find_field(
-                        record, SECRET_KEYS, allow_prefix=True
-                    )
-                    if not secret_found or not secret:
-                        raise ImportPreparationError(
-                            "La password di un candidato pronto non è più disponibile."
+                    if request.password_overridden:
+                        secret = overrides[request.candidate_id]
+                    else:
+                        secret_found, secret = _find_field(
+                            record, SECRET_KEYS, allow_prefix=True
                         )
+                        if not secret_found or not secret:
+                            raise ImportPreparationError(
+                                "La password di un candidato pronto non è più disponibile."
+                            )
                     if len(secret) > MAX_SECRET_CHARACTERS:
                         raise ImportPreparationError(
                             "La password di un candidato supera il limite di 65.536 caratteri."
@@ -272,6 +326,33 @@ def _validate_bridge(node_path: str, crypto_script: str) -> tuple[Path, Path]:
     return node, script
 
 
+def _secret_overrides(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, list):
+        raise ImportPreparationError("L’elenco delle password modificate non è valido.")
+    overrides: dict[str, str] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            raise ImportPreparationError("Una password modificata non è valida.")
+        candidate_id = str(item.get("candidate_id", "")).strip()
+        password = item.get("password")
+        if (
+            not candidate_id
+            or len(candidate_id) > 200
+            or candidate_id in overrides
+            or not isinstance(password, str)
+            or not password
+        ):
+            raise ImportPreparationError("Una password modificata non è valida.")
+        if len(password) > MAX_SECRET_CHARACTERS:
+            raise ImportPreparationError(
+                "Una password modificata supera il limite di 65.536 caratteri."
+            )
+        overrides[candidate_id] = password
+    return overrides
+
+
 def _prepare_import_resources(
     root: str | Path, request: dict[str, Any]
 ) -> tuple[list[object], list[dict[str, Any]]]:
@@ -303,8 +384,43 @@ def _prepare_import_resources(
         for item in candidates
         if isinstance(item, dict) and str(item.get("candidate_id", "")) in create_ids
     ]
-    resources, _ = extract_resources(root, create_requests, include_secrets=True)
+    parsed_create_requests = _selected_candidates(create_requests)
+    if any(not (candidate.username or candidate.uri) for candidate in parsed_create_requests):
+        raise ImportPreparationError(
+            "Ogni risorsa da creare deve avere almeno uno fra username e URL/host."
+        )
+    overrides = _secret_overrides(request.get("secret_overrides"))
+    if any(candidate_id not in create_ids for candidate_id in overrides):
+        overrides.clear()
+        raise ImportPreparationError(
+            "Le password modificate non corrispondono alle risorse da creare."
+        )
+    try:
+        resources, _ = extract_resources(
+            root,
+            create_requests,
+            include_secrets=True,
+            secret_overrides=overrides,
+        )
+    finally:
+        overrides.clear()
     return candidates, resources
+
+
+def reveal_secrets(root: str | Path, requests: Iterable[object]) -> dict[str, Any]:
+    """Explicitly reveal selected source secrets to the local desktop process."""
+
+    resources, _ = extract_resources(root, requests, include_secrets=True)
+    return {
+        "revealed_count": len(resources),
+        "secrets": [
+            {
+                "candidate_id": resource["candidate_id"],
+                "password": resource["password"],
+            }
+            for resource in resources
+        ],
+    }
 
 
 def execute_import(
@@ -617,6 +733,7 @@ def parse_args() -> argparse.Namespace:
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--integrity", action="store_true")
+    mode.add_argument("--reveal", action="store_true")
     mode.add_argument("--execute", action="store_true")
     mode.add_argument("--session", action="store_true")
     mode.add_argument("--self-test", action="store_true")
@@ -637,6 +754,7 @@ def main() -> int:
                     "max_import_candidates": MAX_IMPORT_CANDIDATES,
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
+                    "explicit_reveal_supported": True,
                     "secrets_serialized": False,
                 },
             }
@@ -661,6 +779,11 @@ def main() -> int:
             result = {
                 "ok": True,
                 "result": verify_integrity(args.root, request.get("candidates", [])),
+            }
+        elif args.reveal:
+            result = {
+                "ok": True,
+                "result": reveal_secrets(args.root, request.get("candidates", [])),
             }
         else:
             if not args.node or not args.crypto_script:

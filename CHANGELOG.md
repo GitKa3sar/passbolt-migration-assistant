@@ -2,6 +2,24 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.4 - 2026-08-07
+
+### Added
+
+- aggiunto nella fase 03 un toggle per mostrare e nascondere temporaneamente le password, mascherate per impostazione predefinita;
+- aggiunto un editor pre-importazione per cliente, titolo, username, URL/host e password;
+- aggiunto il riconoscimento di indirizzi IPv4 e IPv6 espliciti o incorporati nei campi non segreti quando URL/host non è valorizzato.
+
+### Changed
+
+- il controllo d'integrità conserva separatamente i metadati originali revisionati e i valori corretti dall'utente, così il dry-run e l'importazione usano le correzioni senza rinunciare alla verifica SHA-256 e alla ricostruzione del candidato;
+- una modifica in fase 03 invalida qualsiasi piano precedente e ricalcola immediatamente lo stato **Pronto** o **Da completare**.
+
+### Security
+
+- le password vengono rivelate soltanto dopo conferma esplicita, tramite canali locali reindirizzati, e le copie lette dai sorgenti vengono eliminate dalla UI quando si nascondono le password o si cambia fase;
+- le password modificate restano esclusivamente nella memoria della sessione, non entrano nel dry-run, nei log o nei file, e sono consegnate al bridge OpenPGP soltanto per le risorse confermate da creare.
+
 ## 0.12.3 - 2026-08-07
 
 ### Fixed

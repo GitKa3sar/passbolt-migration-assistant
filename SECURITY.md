@@ -32,3 +32,5 @@ Sono particolarmente rilevanti problemi che possano causare esposizione di segre
 ## Gestione sicura dei dati
 
 Le prove devono usare esclusivamente chiavi, account e documenti creati per il test. Dopo il test, revoca le credenziali temporanee ed elimina in modo sicuro gli artefatti locali. La cartella di lavoro non è un luogo adatto per conservare segreti: `.gitignore` è una difesa aggiuntiva, non sostituisce le procedure operative corrette.
+
+La visualizzazione delle password nella fase 03 è disattivata per impostazione predefinita e richiede una conferma esplicita. I valori vengono trasferiti soltanto fra processi locali tramite input/output standard reindirizzati, non vengono registrati né salvati e le copie lette dai sorgenti vengono rimosse dalla UI quando si ripristina la maschera o si cambia fase. Le password corrette manualmente restano in memoria fino alla scrittura confermata o alla chiusura dell'applicazione.

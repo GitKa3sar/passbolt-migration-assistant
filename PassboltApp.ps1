@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.12.3"
+        Title="Passbolt Migration Assistant - v0.12.4"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -303,7 +303,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                         <TextBlock x:Name="ReviewSummary" Text="Nessuna revisione eseguita" Foreground="#66737F" FontSize="12" Margin="0,4,0,0" />
                     </StackPanel>
                     <Border Grid.Column="1" Background="#E5F6EF" CornerRadius="4" Padding="12,7" VerticalAlignment="Center">
-                        <TextBlock Text="PASSWORD MASCHERATE" Foreground="#16875D" FontSize="11" FontWeight="Bold" />
+                        <TextBlock x:Name="ReviewPasswordState" Text="PASSWORD MASCHERATE" Foreground="#16875D" FontSize="11" FontWeight="Bold" />
                     </Border>
                 </Grid>
 
@@ -317,10 +317,12 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,12">
                     <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="190" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="170" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <ComboBox x:Name="ReviewStatusFilter" Grid.Column="0" />
                         <TextBox x:Name="ReviewSearchBox" Grid.Column="1" Margin="8,0,0,0" ToolTip="Cerca in cliente, titolo, username, URL o origine" />
-                        <TextBlock x:Name="ReviewFilterStatus" Grid.Column="2" Text="0 candidati" Foreground="#66737F" VerticalAlignment="Center" Margin="14,0,0,0" />
+                        <ToggleButton x:Name="ReviewPasswordToggle" Grid.Column="2" Content="Mostra password" Margin="8,0,0,0" Padding="12,7" VerticalAlignment="Stretch" ToolTip="Mostra temporaneamente le password dei candidati caricandole soltanto in memoria" />
+                        <Button x:Name="EditReviewCandidateButton" Grid.Column="3" Content="Modifica..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Padding="14,7" IsEnabled="False" ToolTip="Modifica il candidato selezionato prima dell'importazione" />
+                        <TextBlock x:Name="ReviewFilterStatus" Grid.Column="4" Text="0 candidati" Foreground="#66737F" VerticalAlignment="Center" Margin="14,0,0,0" />
                     </Grid>
                 </Border>
 
@@ -347,7 +349,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <Grid Grid.Row="4" Margin="0,12,0,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Button x:Name="ReviewBackButton" Content="&#x2190;  Torna all&#x2019;inventario" Style="{StaticResource SecondaryButton}" />
-                    <TextBlock Grid.Column="1" Text="Le password non sono mostrate, salvate o scritte nel registro." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" />
+                    <TextBlock Grid.Column="1" Text="Le password sono mascherate per impostazione predefinita; quando richieste restano solo in memoria e non vengono salvate o registrate." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
                     <Button x:Name="PrepareImportButton" Grid.Column="2" Content="Prepara importazione (0)" Style="{StaticResource PrimaryButton}" IsEnabled="False" />
                 </Grid>
             </Grid>
@@ -518,8 +520,11 @@ $ReviewMetricFiles = Get-Control "ReviewMetricFiles"
 $ReviewMetricCandidates = Get-Control "ReviewMetricCandidates"
 $ReviewMetricReady = Get-Control "ReviewMetricReady"
 $ReviewMetricIncomplete = Get-Control "ReviewMetricIncomplete"
+$ReviewPasswordState = Get-Control "ReviewPasswordState"
 $ReviewStatusFilter = Get-Control "ReviewStatusFilter"
 $ReviewSearchBox = Get-Control "ReviewSearchBox"
+$ReviewPasswordToggle = Get-Control "ReviewPasswordToggle"
+$EditReviewCandidateButton = Get-Control "EditReviewCandidateButton"
 $ReviewFilterStatus = Get-Control "ReviewFilterStatus"
 $ReviewCandidatesGrid = Get-Control "ReviewCandidatesGrid"
 $ReviewWarningsPanel = Get-Control "ReviewWarningsPanel"
@@ -559,7 +564,10 @@ $script:InventoryFolder = ""
 $script:AllInventoryRows = @()
 $script:ReviewResult = $null
 $script:AllReviewRows = @()
+$script:ReviewPasswordsVisible = $false
+$script:UpdatingReviewPasswordToggle = $false
 $script:ImportCandidates = @()
+$script:ImportSecretOverrides = @{}
 $script:ImportPlan = $null
 $script:ImportPlanKeyPath = ""
 $script:ImportCompleted = $false
@@ -1253,6 +1261,7 @@ function Show-ClientDestinationMappingDialog([switch]$BuildOnly) {
 
 function Reset-ImportWorkflow {
     $script:ImportCandidates = @()
+    $script:ImportSecretOverrides = @{}
     $script:ClientDestinationMap = @{}
     $ImportMetricSelected.Text = [string][char]0x2014
     $ImportSummary.Text = "Prepara i candidati dalla revisione"
@@ -1263,12 +1272,379 @@ function Reset-ImportWorkflow {
     Update-ImportSessionState
 }
 
+function Get-ReviewCandidateRequest($Row, [switch]$ForReveal) {
+    $PasswordOverridden = if ($ForReveal) { $false } else { [bool]$Row.PasswordOverridden }
+    return [pscustomobject][ordered]@{
+        candidate_id = [string]$Row.CandidateId
+        source_relative_path = [string]$Row.SourceRelativePath
+        source_sha256 = [string]$Row.SourceHash
+        client = [string]$Row.Client
+        source_at_root = ([string]$Row.Client).Trim().Equals("(radice)", [StringComparison]::OrdinalIgnoreCase)
+        title = [string]$Row.Title
+        username = [string]$Row.Username
+        uri = [string]$Row.Uri
+        reviewed_client = [string]$Row.OriginalClient
+        reviewed_source_at_root = [bool]$Row.OriginalSourceAtRoot
+        reviewed_title = [string]$Row.OriginalTitle
+        reviewed_username = [string]$Row.OriginalUsername
+        reviewed_uri = [string]$Row.OriginalUri
+        password_overridden = $PasswordOverridden
+    }
+}
+
+function Update-ReviewRowState($Row) {
+    $Client = ([string]$Row.Client).Trim()
+    $Title = ([string]$Row.Title).Trim()
+    $Username = ([string]$Row.Username).Trim()
+    $Uri = ([string]$Row.Uri).Trim()
+    $PasswordAvailable = [bool]$Row.SecretPresent -or [bool]$Row.PasswordOverridden
+    $Ready = (
+        $PasswordAvailable -and
+        $Client.Length -gt 0 -and $Client.Length -le 256 -and
+        $Title.Length -gt 0 -and $Title.Length -le 255 -and
+        $Username.Length -le 255 -and $Uri.Length -le 2048 -and
+        ($Username.Length -gt 0 -or $Uri.Length -gt 0)
+    )
+    $Row.Status = if ($Ready) { "ready" } else { "incomplete" }
+    $Row.IsEdited = (
+        $Client -cne [string]$Row.OriginalClient -or
+        $Title -cne [string]$Row.OriginalTitle -or
+        $Username -cne [string]$Row.OriginalUsername -or
+        $Uri -cne [string]$Row.OriginalUri -or
+        [bool]$Row.PasswordOverridden
+    )
+    if ($Ready) {
+        $Row.StatusLabel = if ([bool]$Row.IsEdited) { "Pronto (modificato)" } else { "Pronto" }
+    } else {
+        $Row.StatusLabel = if ([bool]$Row.IsEdited) { "Da completare (modificato)" } else { "Da completare" }
+    }
+    if ($script:ReviewPasswordsVisible -and ([bool]$Row.PasswordOverridden -or [bool]$Row.SecretCachedFromSource)) {
+        $Row.SecretDisplay = [string]$Row.SecretValue
+    } elseif ($PasswordAvailable) {
+        $Length = if ([bool]$Row.PasswordOverridden) { ([string]$Row.SecretValue).Length } else { [int]$Row.SecretLength }
+        $Row.SecretDisplay = "******** ($Length)"
+    } else {
+        $Row.SecretDisplay = "Mancante"
+    }
+}
+
+function Update-ReviewMetrics {
+    $ReadyCount = @($script:AllReviewRows | Where-Object { $_.Status -eq "ready" }).Count
+    $IncompleteCount = $script:AllReviewRows.Count - $ReadyCount
+    $ReviewMetricCandidates.Text = [string]$script:AllReviewRows.Count
+    $ReviewMetricReady.Text = [string]$ReadyCount
+    $ReviewMetricIncomplete.Text = [string]$IncompleteCount
+}
+
+function Read-ReviewSourceSecrets([object[]]$Rows) {
+    $PendingRows = @($Rows | Where-Object {
+        [bool]$_.SecretPresent -and -not [bool]$_.PasswordOverridden -and -not [bool]$_.SecretCachedFromSource
+    })
+    if ($PendingRows.Count -lt 1) { return }
+    $Requests = @($PendingRows | ForEach-Object { Get-ReviewCandidateRequest $_ -ForReveal })
+    $Envelope = $null
+    $ById = @{}
+    try {
+        $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--reveal", "--root", $script:InventoryFolder) ([pscustomobject]@{ candidates = $Requests })
+        if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+        foreach ($SecretItem in @($Envelope.result.secrets)) {
+            $ById[[string]$SecretItem.candidate_id] = [string]$SecretItem.password
+        }
+        foreach ($Row in $PendingRows) {
+            if (-not $ById.ContainsKey([string]$Row.CandidateId)) {
+                throw "La password richiesta non e' stata restituita dalla lettura locale."
+            }
+            $Row.SecretValue = [string]$ById[[string]$Row.CandidateId]
+            $Row.SecretCachedFromSource = $true
+        }
+        $ById.Clear()
+    } finally {
+        $ById.Clear()
+        $Requests = $null
+        if ($null -ne $Envelope -and $null -ne $Envelope.result) {
+            $Envelope.result.secrets = $null
+        }
+        $Envelope = $null
+    }
+}
+
+function Set-ReviewPasswordsVisible([bool]$Visible, [switch]$SkipPrompt) {
+    if ($Visible -and -not $script:ReviewPasswordsVisible) {
+        if (-not $SkipPrompt) {
+            $Decision = [System.Windows.MessageBox]::Show(
+                "Le password dei candidati verranno rilette dai file verificati e mostrate in chiaro sullo schermo. Rimarranno soltanto nella memoria della sessione e non saranno salvate o registrate. Continuare?",
+                "Mostra password",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Warning
+            )
+            if ($Decision -ne [System.Windows.MessageBoxResult]::Yes) {
+                $script:UpdatingReviewPasswordToggle = $true
+                try { $ReviewPasswordToggle.IsChecked = $false } finally { $script:UpdatingReviewPasswordToggle = $false }
+                return
+            }
+        }
+        try {
+            Read-ReviewSourceSecrets $script:AllReviewRows
+            $script:ReviewPasswordsVisible = $true
+            Add-Activity "Visualizzazione temporanea delle password attivata; nessun valore segreto e' stato registrato."
+        } catch {
+            $script:ReviewPasswordsVisible = $false
+            foreach ($Row in $script:AllReviewRows) {
+                if (-not [bool]$Row.PasswordOverridden) {
+                    $Row.SecretValue = ""
+                    $Row.SecretCachedFromSource = $false
+                }
+            }
+            $script:UpdatingReviewPasswordToggle = $true
+            try { $ReviewPasswordToggle.IsChecked = $false } finally { $script:UpdatingReviewPasswordToggle = $false }
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Password non disponibili", "OK", "Error") | Out-Null
+        }
+    } elseif (-not $Visible) {
+        $script:ReviewPasswordsVisible = $false
+        foreach ($Row in $script:AllReviewRows) {
+            if (-not [bool]$Row.PasswordOverridden) {
+                $Row.SecretValue = ""
+                $Row.SecretCachedFromSource = $false
+            }
+        }
+    }
+
+    foreach ($Row in $script:AllReviewRows) { Update-ReviewRowState $Row }
+    $ReviewPasswordState.Text = if ($script:ReviewPasswordsVisible) { "PASSWORD VISIBILI" } else { "PASSWORD MASCHERATE" }
+    $ReviewPasswordState.Foreground = if ($script:ReviewPasswordsVisible) { Get-Brush "#B42318" } else { Get-Brush "#16875D" }
+    $ReviewPasswordToggle.Content = if ($script:ReviewPasswordsVisible) { "Nascondi password" } else { "Mostra password" }
+    if ([bool]$ReviewPasswordToggle.IsChecked -ne $script:ReviewPasswordsVisible) {
+        $script:UpdatingReviewPasswordToggle = $true
+        try { $ReviewPasswordToggle.IsChecked = $script:ReviewPasswordsVisible } finally { $script:UpdatingReviewPasswordToggle = $false }
+    }
+    $ReviewCandidatesGrid.Items.Refresh()
+}
+
+function Show-ReviewCandidateEditor($Row = $null, [switch]$BuildOnly) {
+    if ($null -eq $Row) {
+        $Selected = @($ReviewCandidatesGrid.SelectedItems)
+        if ($Selected.Count -ne 1) { return }
+        $Row = $Selected[0]
+    }
+    if (-not $BuildOnly -and [bool]$Row.SecretPresent -and -not [bool]$Row.PasswordOverridden -and -not [bool]$Row.SecretCachedFromSource) {
+        try {
+            Read-ReviewSourceSecrets @($Row)
+        } catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Password non disponibile", "OK", "Error") | Out-Null
+            return
+        }
+    }
+
+    $Dialog = New-Object System.Windows.Window
+    $Dialog.Title = "Modifica candidato - Passbolt"
+    $Dialog.Width = 670
+    $Dialog.Height = 520
+    $Dialog.MinWidth = 570
+    $Dialog.MinHeight = 480
+    $Dialog.WindowStartupLocation = "CenterOwner"
+    if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
+    $Dialog.Background = Get-Brush "#F4F6F8"
+    $Dialog.FontFamily = "Segoe UI"
+
+    $Layout = New-Object System.Windows.Controls.Grid
+    $Layout.Margin = [System.Windows.Thickness]::new(22)
+    foreach ($Height in @("Auto", "*", "Auto", "Auto")) {
+        $Definition = New-Object System.Windows.Controls.RowDefinition
+        $Definition.Height = if ($Height -eq "*") { [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) } else { [System.Windows.GridLength]::Auto }
+        [void]$Layout.RowDefinitions.Add($Definition)
+    }
+
+    $Header = New-Object System.Windows.Controls.StackPanel
+    $Header.Margin = [System.Windows.Thickness]::new(0, 0, 0, 14)
+    $HeaderTitle = New-Object System.Windows.Controls.TextBlock
+    $HeaderTitle.Text = "Correggi i dati prima dell'importazione"
+    $HeaderTitle.FontSize = 20
+    $HeaderTitle.FontWeight = "Bold"
+    $HeaderText = New-Object System.Windows.Controls.TextBlock
+    $HeaderText.Text = "Le modifiche saranno usate nel dry-run e nella risorsa Passbolt. Il file sorgente non verra' modificato."
+    $HeaderText.TextWrapping = "Wrap"
+    $HeaderText.Foreground = Get-Brush "#66737F"
+    $HeaderText.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+    [void]$Header.Children.Add($HeaderTitle)
+    [void]$Header.Children.Add($HeaderText)
+    [void]$Layout.Children.Add($Header)
+
+    $FormBorder = New-Object System.Windows.Controls.Border
+    $FormBorder.Background = Get-Brush "#FFFFFF"
+    $FormBorder.BorderBrush = Get-Brush "#DDE3E8"
+    $FormBorder.BorderThickness = [System.Windows.Thickness]::new(1)
+    $FormBorder.CornerRadius = [System.Windows.CornerRadius]::new(5)
+    $FormBorder.Padding = [System.Windows.Thickness]::new(16)
+    [System.Windows.Controls.Grid]::SetRow($FormBorder, 1)
+    $Form = New-Object System.Windows.Controls.Grid
+    $LabelColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $LabelColumn.Width = [System.Windows.GridLength]::new(120)
+    $EditorColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $EditorColumn.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    [void]$Form.ColumnDefinitions.Add($LabelColumn)
+    [void]$Form.ColumnDefinitions.Add($EditorColumn)
+    1..5 | ForEach-Object {
+        $Definition = New-Object System.Windows.Controls.RowDefinition
+        $Definition.Height = [System.Windows.GridLength]::Auto
+        [void]$Form.RowDefinitions.Add($Definition)
+    }
+
+    $Editors = @{}
+    $FieldSpecs = @(
+        @("Cliente", "Client", [string]$Row.Client, 256),
+        @("Titolo", "Title", [string]$Row.Title, 255),
+        @("Username", "Username", [string]$Row.Username, 255),
+        @("URL / host", "Uri", [string]$Row.Uri, 2048)
+    )
+    for ($Index = 0; $Index -lt $FieldSpecs.Count; $Index++) {
+        $Spec = $FieldSpecs[$Index]
+        $Label = New-Object System.Windows.Controls.TextBlock
+        $Label.Text = [string]$Spec[0]
+        $Label.VerticalAlignment = "Center"
+        $Label.FontWeight = "SemiBold"
+        $Label.Margin = [System.Windows.Thickness]::new(0, 0, 10, 10)
+        [System.Windows.Controls.Grid]::SetRow($Label, $Index)
+        [void]$Form.Children.Add($Label)
+        $Editor = New-Object System.Windows.Controls.TextBox
+        $Editor.Text = [string]$Spec[2]
+        $Editor.MaxLength = [int]$Spec[3]
+        $Editor.Margin = [System.Windows.Thickness]::new(0, 0, 0, 10)
+        [System.Windows.Controls.Grid]::SetRow($Editor, $Index)
+        [System.Windows.Controls.Grid]::SetColumn($Editor, 1)
+        [void]$Form.Children.Add($Editor)
+        $Editors[[string]$Spec[1]] = $Editor
+    }
+
+    $PasswordLabel = New-Object System.Windows.Controls.TextBlock
+    $PasswordLabel.Text = "Password"
+    $PasswordLabel.VerticalAlignment = "Top"
+    $PasswordLabel.FontWeight = "SemiBold"
+    $PasswordLabel.Margin = [System.Windows.Thickness]::new(0, 8, 10, 0)
+    [System.Windows.Controls.Grid]::SetRow($PasswordLabel, 4)
+    [void]$Form.Children.Add($PasswordLabel)
+    $PasswordPanel = New-Object System.Windows.Controls.Grid
+    $PasswordEditorRow = New-Object System.Windows.Controls.RowDefinition
+    $PasswordEditorRow.Height = [System.Windows.GridLength]::Auto
+    $PasswordToggleRow = New-Object System.Windows.Controls.RowDefinition
+    $PasswordToggleRow.Height = [System.Windows.GridLength]::Auto
+    [void]$PasswordPanel.RowDefinitions.Add($PasswordEditorRow)
+    [void]$PasswordPanel.RowDefinitions.Add($PasswordToggleRow)
+    $PasswordBox = New-Object System.Windows.Controls.PasswordBox
+    $PasswordBox.MaxLength = 65536
+    $PasswordBox.Password = [string]$Row.SecretValue
+    $PasswordText = New-Object System.Windows.Controls.TextBox
+    $PasswordText.MaxLength = 65536
+    $PasswordText.Text = [string]$Row.SecretValue
+    $PasswordText.Visibility = "Collapsed"
+    $ShowPassword = New-Object System.Windows.Controls.CheckBox
+    $ShowPassword.Content = "Mostra password durante la modifica"
+    $ShowPassword.Margin = [System.Windows.Thickness]::new(0, 7, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($ShowPassword, 1)
+    $ShowPassword.Add_Checked({
+        $PasswordText.Text = $PasswordBox.Password
+        $PasswordBox.Visibility = "Collapsed"
+        $PasswordText.Visibility = "Visible"
+    })
+    $ShowPassword.Add_Unchecked({
+        $PasswordBox.Password = $PasswordText.Text
+        $PasswordText.Visibility = "Collapsed"
+        $PasswordBox.Visibility = "Visible"
+    })
+    [void]$PasswordPanel.Children.Add($PasswordBox)
+    [void]$PasswordPanel.Children.Add($PasswordText)
+    [void]$PasswordPanel.Children.Add($ShowPassword)
+    [System.Windows.Controls.Grid]::SetRow($PasswordPanel, 4)
+    [System.Windows.Controls.Grid]::SetColumn($PasswordPanel, 1)
+    [void]$Form.Children.Add($PasswordPanel)
+    $Editors["Password"] = $PasswordBox
+    $FormBorder.Child = $Form
+    [void]$Layout.Children.Add($FormBorder)
+
+    $Notice = New-Object System.Windows.Controls.TextBlock
+    $Notice.Text = "La password resta soltanto nella memoria della sessione e non viene scritta nel registro."
+    $Notice.Foreground = Get-Brush "#66737F"
+    $Notice.FontSize = 11
+    $Notice.Margin = [System.Windows.Thickness]::new(0, 10, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($Notice, 2)
+    [void]$Layout.Children.Add($Notice)
+
+    $Footer = New-Object System.Windows.Controls.StackPanel
+    $Footer.Orientation = "Horizontal"
+    $Footer.HorizontalAlignment = "Right"
+    $Footer.Margin = [System.Windows.Thickness]::new(0, 14, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($Footer, 3)
+    $CancelButton = New-Object System.Windows.Controls.Button
+    $CancelButton.Content = "Annulla"
+    $CancelButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
+    $CancelButton.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    $CancelButton.Add_Click({ $Dialog.DialogResult = $false })
+    $SaveButton = New-Object System.Windows.Controls.Button
+    $SaveButton.Content = "Salva modifiche"
+    $SaveButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
+    $SaveButton.Background = Get-Brush "#2878D0"
+    $SaveButton.Foreground = Get-Brush "#FFFFFF"
+    $SaveButton.BorderThickness = [System.Windows.Thickness]::new(0)
+    $SaveButton.Add_Click({
+        $Password = if ([bool]$ShowPassword.IsChecked) { [string]$PasswordText.Text } else { [string]$PasswordBox.Password }
+        $Client = $Editors.Client.Text.Trim()
+        $Title = $Editors.Title.Text.Trim()
+        $Username = $Editors.Username.Text.Trim()
+        $Uri = $Editors.Uri.Text.Trim()
+        if (-not $Client -or -not $Title -or -not $Password) {
+            [System.Windows.MessageBox]::Show("Cliente, titolo e password sono obbligatori.", "Dati incompleti", "OK", "Warning") | Out-Null
+            return
+        }
+        if (-not $Username -and -not $Uri) {
+            [System.Windows.MessageBox]::Show("Inserire almeno uno fra username e URL/host.", "Dati incompleti", "OK", "Warning") | Out-Null
+            return
+        }
+        $Dialog.Tag = [pscustomobject]@{ Client = $Client; Title = $Title; Username = $Username; Uri = $Uri; Password = $Password }
+        $Dialog.DialogResult = $true
+    })
+    [void]$Footer.Children.Add($CancelButton)
+    [void]$Footer.Children.Add($SaveButton)
+    [void]$Layout.Children.Add($Footer)
+    $Dialog.Content = $Layout
+
+    if ($BuildOnly) {
+        return [pscustomobject]@{ Window = $Dialog; Editors = $Editors; PasswordText = $PasswordText; ShowPassword = $ShowPassword }
+    }
+
+    $OriginalPassword = [string]$Row.SecretValue
+    if ($Dialog.ShowDialog() -ne $true) {
+        if (-not $script:ReviewPasswordsVisible -and -not [bool]$Row.PasswordOverridden) {
+            $Row.SecretValue = ""
+            $Row.SecretCachedFromSource = $false
+            Update-ReviewRowState $Row
+        }
+        return
+    }
+    $Result = $Dialog.Tag
+    $Row.Client = [string]$Result.Client
+    $Row.Title = [string]$Result.Title
+    $Row.Username = [string]$Result.Username
+    $Row.Uri = [string]$Result.Uri
+    $Row.PasswordOverridden = (-not [bool]$Row.SecretPresent) -or -not [string]::Equals([string]$Result.Password, $OriginalPassword, [StringComparison]::Ordinal)
+    $Row.SecretValue = [string]$Result.Password
+    $Row.SecretCachedFromSource = -not [bool]$Row.PasswordOverridden
+    if (-not $script:ReviewPasswordsVisible -and -not [bool]$Row.PasswordOverridden) {
+        $Row.SecretValue = ""
+        $Row.SecretCachedFromSource = $false
+    }
+    Update-ReviewRowState $Row
+    Update-ReviewMetrics
+    Reset-ImportWorkflow
+    Apply-ReviewFilters
+    Add-Activity "Candidato $($Row.CandidateId) modificato in memoria; nessun valore segreto e' stato registrato."
+}
+
 function Update-ImportSelectionState {
     $Selected = @($ReviewCandidatesGrid.SelectedItems)
     $ReadyCount = @($Selected | Where-Object { $_.Status -eq "ready" }).Count
     $AllReady = ($Selected.Count -gt 0 -and $ReadyCount -eq $Selected.Count)
     $PrepareImportButton.Content = "Prepara importazione ($($Selected.Count))"
     $PrepareImportButton.IsEnabled = ($AllReady -and $Selected.Count -le 25)
+    $EditReviewCandidateButton.IsEnabled = ($Selected.Count -eq 1)
     if ($Selected.Count -gt 25) {
         $PrepareImportButton.Content = "Massimo 25 candidati"
     } elseif ($Selected.Count -gt 0 -and -not $AllReady) {
@@ -1306,17 +1682,17 @@ function Open-ImportPreparation {
     }
 
     $Candidates = New-Object System.Collections.Generic.List[object]
+    $script:ImportSecretOverrides = @{}
     foreach ($Row in $Selected) {
-        $Candidates.Add([pscustomobject][ordered]@{
-            candidate_id = [string]$Row.CandidateId
-            source_relative_path = [string]$Row.SourceRelativePath
-            source_sha256 = [string]$Row.SourceHash
-            client = [string]$Row.Client
-            source_at_root = -not [bool][System.IO.Path]::GetDirectoryName([string]$Row.SourceRelativePath)
-            title = [string]$Row.Title
-            username = [string]$Row.Username
-            uri = [string]$Row.Uri
-        })
+        $Candidates.Add((Get-ReviewCandidateRequest $Row))
+        if ([bool]$Row.PasswordOverridden) {
+            if (-not [string]$Row.SecretValue) {
+                [System.Windows.MessageBox]::Show("La password modificata di un candidato non e' piu disponibile in memoria. Modificare nuovamente il candidato.", "Password non disponibile", "OK", "Error") | Out-Null
+                $script:ImportSecretOverrides = @{}
+                return
+            }
+            $script:ImportSecretOverrides[[string]$Row.CandidateId] = [string]$Row.SecretValue
+        }
     }
     $script:ImportCandidates = $Candidates.ToArray()
     $script:ClientDestinationMap = @{}
@@ -1510,6 +1886,21 @@ function Invoke-ConfirmedImport {
     )
     if ($Decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
 
+    $CreateCandidateIds = @($script:ImportPlan.candidates | Where-Object { $_.action -eq "create" } | ForEach-Object { [string]$_.candidate_id })
+    $SecretOverrides = New-Object System.Collections.Generic.List[object]
+    foreach ($CandidateId in $CreateCandidateIds) {
+        $Candidate = @($script:ImportCandidates | Where-Object { [string]$_.candidate_id -eq $CandidateId }) | Select-Object -First 1
+        if ($null -ne $Candidate -and [bool]$Candidate.password_overridden) {
+            if (-not $script:ImportSecretOverrides.ContainsKey($CandidateId) -or -not [string]$script:ImportSecretOverrides[$CandidateId]) {
+                [System.Windows.MessageBox]::Show("Una password modificata non e' piu disponibile in memoria. Tornare alla revisione e modificarla nuovamente.", "Password non disponibile", "OK", "Error") | Out-Null
+                return
+            }
+            $SecretOverrides.Add([pscustomobject][ordered]@{
+                candidate_id = $CandidateId
+                password = [string]$script:ImportSecretOverrides[$CandidateId]
+            })
+        }
+    }
     $ExecuteImportButton.IsEnabled = $false
     $DryRunButton.IsEnabled = $false
     $ExecuteRequest = [pscustomobject][ordered]@{
@@ -1521,7 +1912,8 @@ function Invoke-ConfirmedImport {
         destination_folder_id = [string]$script:ImportPlan.destination_folder_id
         client_destination_mapping = @($script:ImportPlan.client_destination_mapping)
         candidates = $script:ImportCandidates
-        create_candidate_ids = @($script:ImportPlan.candidates | Where-Object { $_.action -eq "create" } | ForEach-Object { [string]$_.candidate_id })
+        create_candidate_ids = $CreateCandidateIds
+        secret_overrides = $SecretOverrides.ToArray()
         plan_digest = [string]$script:ImportPlan.plan_digest
         confirmation = "IMPORTA $CreateCount"
     }
@@ -1557,6 +1949,18 @@ function Invoke-ConfirmedImport {
         $Result = $Envelope.result
         $script:ImportCompleted = $true
         $script:ImportPlan = $null
+        foreach ($CandidateId in $CreateCandidateIds) {
+            if ($script:ImportSecretOverrides.ContainsKey($CandidateId)) {
+                $script:ImportSecretOverrides.Remove($CandidateId)
+            }
+            foreach ($ReviewRow in @($script:AllReviewRows | Where-Object { [string]$_.CandidateId -eq $CandidateId })) {
+                $ReviewRow.SecretValue = ""
+                $ReviewRow.SecretCachedFromSource = $false
+                $ReviewRow.PasswordOverridden = $false
+                Update-ReviewRowState $ReviewRow
+            }
+        }
+        Update-ReviewMetrics
         $ImportConfirmation.Text = ""
         $ImportConfirmation.IsEnabled = $false
         $ConfirmationHint.Text = "Importazione completata. La sessione resta attiva per il prossimo lotto."
@@ -1574,8 +1978,10 @@ function Invoke-ConfirmedImport {
         }
         Reset-ImportPlan "Importazione interrotta. Ripetere il dry-run per riconciliare lo stato del server."
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.3", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.4", "OK", "Error") | Out-Null
     } finally {
+        if ($null -ne $ExecuteRequest) { $ExecuteRequest.secret_overrides = $null }
+        $SecretOverrides = $null
         $ExecuteRequest = $null
         Update-ImportSessionState
     }
@@ -1614,6 +2020,9 @@ function Update-ConfigurationState {
 }
 
 function Show-Page([ValidateSet("Configuration", "Inventory", "Review", "Import")][string]$Page) {
+    if ($Page -ne "Review" -and $script:ReviewPasswordsVisible) {
+        Set-ReviewPasswordsVisible $false
+    }
     $script:CurrentPage = $Page
     $ConfigurationPage.Visibility = "Collapsed"
     $InventoryPage.Visibility = "Collapsed"
@@ -1653,7 +2062,7 @@ function Show-Page([ValidateSet("Configuration", "Inventory", "Review", "Import"
         $StepReviewNumber.Foreground = Get-Brush "#62A8EA"
         $StepReviewText.Foreground = Get-Brush "#FFFFFF"
         $StepReviewText.FontWeight = "SemiBold"
-        $SafeModeText.Text = "Solo i file selezionati vengono aperti localmente. Le password restano mascherate."
+        $SafeModeText.Text = "Le password sono mascherate per impostazione predefinita e visibili soltanto su richiesta; le modifiche restano in memoria."
     } else {
         $ImportPage.Visibility = "Visible"
         $StepConfigurationNumber.Foreground = Get-Brush "#AEB8C2"
@@ -1771,6 +2180,7 @@ function Invoke-SelectedReview {
     )
     if ($Decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
 
+    Set-ReviewPasswordsVisible $false
     $Arguments = New-Object System.Collections.Generic.List[string]
     $Arguments.Add("--root")
     $Arguments.Add($script:InventoryFolder)
@@ -1791,7 +2201,8 @@ function Invoke-SelectedReview {
             foreach ($Candidate in @($Result.candidates)) {
                 $StatusLabel = if ($Candidate.status -eq "ready") { "Pronto" } else { "Da completare" }
                 $SecretDisplay = if ($Candidate.secret_present) { "******** ($($Candidate.secret_length))" } else { "Mancante" }
-                $ReviewRows.Add([pscustomobject]@{
+                $SourceAtRoot = -not [bool][System.IO.Path]::GetDirectoryName([string]$Candidate.source_relative_path)
+                $Row = [pscustomobject]@{
                     CandidateId = [string]$Candidate.candidate_id
                     Status = [string]$Candidate.status
                     StatusLabel = $StatusLabel
@@ -1799,22 +2210,33 @@ function Invoke-SelectedReview {
                     Title = [string]$Candidate.title
                     Username = [string]$Candidate.username
                     Uri = [string]$Candidate.uri
+                    OriginalClient = [string]$Candidate.client
+                    OriginalSourceAtRoot = $SourceAtRoot
+                    OriginalTitle = [string]$Candidate.title
+                    OriginalUsername = [string]$Candidate.username
+                    OriginalUri = [string]$Candidate.uri
+                    SecretPresent = [bool]$Candidate.secret_present
+                    SecretLength = [int]$Candidate.secret_length
+                    SecretValue = ""
+                    SecretCachedFromSource = $false
+                    PasswordOverridden = $false
+                    IsEdited = $false
                     SecretDisplay = $SecretDisplay
                     Source = "$($Candidate.source_relative_path) - $($Candidate.location)"
                     SourceRelativePath = [string]$Candidate.source_relative_path
                     Location = [string]$Candidate.location
                     SourceHash = [string]$Candidate.source_sha256
                     Confidence = [string]$Candidate.confidence
-                })
+                }
+                Update-ReviewRowState $Row
+                $ReviewRows.Add($Row)
             }
         }
         $script:ReviewResult = $Result
         $script:AllReviewRows = $ReviewRows.ToArray()
         Reset-ImportWorkflow
         $ReviewMetricFiles.Text = "$($Result.analyzed_files)/$($Result.selected_files)"
-        $ReviewMetricCandidates.Text = [string]$Result.candidate_count
-        $ReviewMetricReady.Text = [string]$Result.ready_count
-        $ReviewMetricIncomplete.Text = [string]$Result.incomplete_count
+        Update-ReviewMetrics
         $ReviewSummary.Text = "Revisione locale completata $(Get-Date -Format 'dd/MM/yyyy HH:mm')"
         Set-ReviewFilters
         Apply-ReviewFilters
@@ -2079,6 +2501,13 @@ $ReviewBackButton.Add_Click({ Show-Page "Inventory"; Apply-InventoryFilters })
 $ReviewStatusFilter.Add_SelectionChanged({ Apply-ReviewFilters })
 $ReviewSearchBox.Add_TextChanged({ Apply-ReviewFilters })
 $ReviewCandidatesGrid.Add_SelectionChanged({ Update-ImportSelectionState })
+$ReviewPasswordToggle.Add_Checked({
+    if (-not $script:UpdatingReviewPasswordToggle) { Set-ReviewPasswordsVisible $true }
+})
+$ReviewPasswordToggle.Add_Unchecked({
+    if (-not $script:UpdatingReviewPasswordToggle) { Set-ReviewPasswordsVisible $false }
+})
+$EditReviewCandidateButton.Add_Click({ Show-ReviewCandidateEditor })
 $PrepareImportButton.Add_Click({ Open-ImportPreparation })
 $ImportBackButton.Add_Click({ Show-Page "Review"; Apply-ReviewFilters })
 
@@ -2191,6 +2620,11 @@ $script:ImportSessionTimer.Start()
 
 $Window.Add_Closing({
     $script:ClosingApplication = $true
+    foreach ($Row in $script:AllReviewRows) {
+        $Row.SecretValue = ""
+        $Row.SecretCachedFromSource = $false
+    }
+    $script:ImportSecretOverrides = @{}
     if ($null -ne $script:ImportSessionTimer) { $script:ImportSessionTimer.Stop() }
     Stop-ImportSession "" $false
 })
@@ -2252,7 +2686,7 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
@@ -2291,12 +2725,43 @@ for line in sys.stdin:
         throw "La finestra UI della mappatura per cliente non puo essere costruita."
     }
     $ClientMappingDialogProbe.Window.Close()
+    if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
+        throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
+    }
+    $ReviewEditorRowProbe = [pscustomobject]@{
+        CandidateId = "review-editor-probe"
+        Client = "Cliente Alfa"
+        Title = "Portale"
+        Username = "utente"
+        Uri = "10.0.0.1"
+        OriginalClient = "Cliente Alfa"
+        OriginalSourceAtRoot = $false
+        OriginalTitle = "Portale"
+        OriginalUsername = "utente"
+        OriginalUri = "10.0.0.1"
+        SecretPresent = $true
+        SecretLength = 16
+        SecretValue = "self-test-secret"
+        SecretCachedFromSource = $true
+        PasswordOverridden = $false
+        IsEdited = $false
+        Status = "ready"
+        StatusLabel = "Pronto"
+        SecretDisplay = "******** (16)"
+        SourceRelativePath = "Cliente Alfa/portale.txt"
+        SourceHash = ("a" * 64)
+    }
+    $ReviewEditorProbe = Show-ReviewCandidateEditor $ReviewEditorRowProbe -BuildOnly
+    if ($null -eq $ReviewEditorProbe -or $ReviewEditorProbe.Editors.Count -ne 5) {
+        throw "L'editor dei candidati non espone i cinque campi previsti."
+    }
+    $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.12.3"
+        version = "0.12.4"
         ui = "WPF"
         phases = 4
-        controls = 73
+        controls = 76
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -2304,6 +2769,8 @@ for line in sys.stdin:
         process_argument_quoting = "OK"
         persistent_process_transport = "OK"
         client_mapping_ui = "OK"
+        review_password_toggle = "OK"
+        review_candidate_editor = "OK"
         persistent_import_session = "OK"
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"
