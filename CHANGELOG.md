@@ -2,6 +2,21 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.1 - 2026-08-07
+
+### Changed
+
+- rimosso l'inserimento manuale della fingerprint dalla fase 01;
+- aggiunti rilevamento automatico, visualizzazione in sola lettura e conferma esplicita della fingerprint;
+- corretto il marchio testuale nel pannello laterale da `passbolt` a `Passbolt`;
+- aggiornata la versione visualizzata e dichiarata dai backend.
+
+### Security
+
+- il rilevamento automatico deve essere richiesto esplicitamente con `--discover-fingerprint`, mentre il probe CLI standard conserva il confronto con una fingerprint attesa;
+- dopo la conferma, la fingerprint viene fissata per la sessione e confrontata con quella calcolata dalla chiave OpenPGP effettivamente ricevuta durante GPGAuth;
+- aggiunti test unitari per le modalita di rilevamento, confronto riuscito, mancata corrispondenza e selezione obbligatoria della modalita CLI.
+
 ## 0.12.0 - 2026-08-07
 
 ### Added
