@@ -22,7 +22,7 @@ const RESPONSE_LIMIT = 12 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_REDIRECTS = 5;
 const MAX_IMPORT_RESOURCES = 25;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.12.2';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.12.3';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -1374,7 +1374,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
       && normalizeComparable(folder.name) === normalizeComparable(candidate.client)
     ));
     if (matches.length > 1) {
-      failure = `Esistono piu cartelle chiamate ${candidate.client} nello stesso contenitore Passbolt; la destinazione non e univoca.`;
+      const matchingIds = matches.map((folder) => folder.id).join(', ');
+      failure = `Esistono ${matches.length} cartelle chiamate ${candidate.client} nello stesso contenitore Passbolt (ID: ${matchingIds}). La destinazione non e univoca: eliminare in Passbolt le copie personali vuote in eccesso, lasciarne una sola e ripetere il dry-run.`;
     }
     const match = matches.length === 1 ? matches[0] : null;
     let reconcilePersonalFolder = false;
@@ -2139,26 +2140,8 @@ async function shareCreatedResource(session, resourceId, createdPermission, plan
 
 async function shareCreatedFolder(session, folderId, createdPermission, planned) {
   const permissionChanges = buildFolderPermissionChanges(createdPermission, planned.share_permissions, folderId);
-  const simulation = await session.request(`/share/simulate/folder/${folderId}.json?api-version=v2`, {
-    method: 'POST',
-    body: { permissions: permissionChanges },
-    allowError: true,
-  });
-  if (simulation.status < 200 || simulation.status >= 300) {
-    throw new SafeError(
-      'FOLDER_SHARE_SIMULATION_FAILED',
-      apiMessage(simulation.document, `La simulazione della condivisione della cartella ha restituito HTTP ${simulation.status}.`),
-      { http_status: simulation.status },
-    );
-  }
-
-  const addedUserIds = simulatedAddedUserIds(simulation.document);
-  const plannedRecipientIds = new Set((Array.isArray(planned.share_recipients) ? planned.share_recipients : []).map((entry) => String(entry.user_id)));
-  for (const userId of addedUserIds) {
-    assert(plannedRecipientIds.has(userId), 'FOLDER_SHARE_SIMULATION_MISMATCH', 'La simulazione della cartella include un destinatario diverso dal piano confermato.');
-  }
-
-  const shared = await session.request(`/share/folder/${folderId}.json?api-version=v2`, {
+  const endpoint = `/share/folder/${folderId}.json?api-version=v2`;
+  const shared = await session.request(endpoint, {
     method: 'PUT',
     body: { permissions: permissionChanges },
     allowError: true,
@@ -2166,11 +2149,15 @@ async function shareCreatedFolder(session, folderId, createdPermission, planned)
   if (shared.status < 200 || shared.status >= 300) {
     throw new SafeError(
       'FOLDER_SHARE_APPLY_FAILED',
-      apiMessage(shared.document, `La condivisione della cartella ha restituito HTTP ${shared.status}.`),
-      { http_status: shared.status },
+      `Applicazione dei permessi della cartella non riuscita su PUT ${endpoint} (HTTP ${shared.status}): ${apiMessage(shared.document, 'errore non specificato')}`,
+      { http_status: shared.status, operation: 'folder_share_apply', endpoint },
     );
   }
-  return { permission_changes: permissionChanges.length, added_user_count: addedUserIds.length };
+  const currentUserId = String(createdPermission.aro === 'User' ? createdPermission.aro_foreign_key ?? '' : '');
+  const addedUserCount = (Array.isArray(planned.share_recipients) ? planned.share_recipients : [])
+    .filter((recipient) => String(recipient.user_id ?? '') !== currentUserId)
+    .length;
+  return { permission_changes: permissionChanges.length, added_user_count: addedUserCount };
 }
 
 function importResources(value, candidates) {

@@ -2,6 +2,15 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.3 - 2026-08-07
+
+### Fixed
+
+- rimossa la chiamata non supportata `POST /share/simulate/folder/{id}`: il dry-run dell'endpoint `/share/simulate` opera sulle risorse, non sulle cartelle;
+- allineata la condivisione cartelle al client e al backend ufficiali Passbolt tramite `PUT /share/folder/{id}`;
+- aggiunti endpoint, metodo e stato HTTP al messaggio di errore della condivisione cartelle;
+- aggiunti versione al titolo degli errori di importazione e ID delle cartelle duplicate al blocco del dry-run.
+
 ## 0.12.2 - 2026-08-07
 
 ### Fixed

@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.12.2"
+        Title="Passbolt Migration Assistant - v0.12.3"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -1497,7 +1497,7 @@ function Invoke-ConfirmedImport {
         " Di queste, $SharedCreateCount risorse erediteranno i permessi delle cartelle condivise; saranno prodotte $EncryptedSecretCopyCount copie cifrate complessive dei segreti. Ogni condivisione verra' prima simulata da Passbolt."
     } else { "" }
     $FolderSharingConfirmation = if ($CreateSharedFolderCount -gt 0) {
-        " $CreateSharedFolderCount nuove cartelle saranno create nel contenitore condiviso e riceveranno la sua maschera completa di permessi. La condivisione di ogni cartella verra' simulata e applicata prima di creare le relative risorse."
+        " $CreateSharedFolderCount nuove cartelle saranno create nel contenitore condiviso e riceveranno la sua maschera completa di permessi prima di creare le relative risorse."
     } else { "" }
     $FolderReconciliationConfirmation = if ($ReconcileSharedFolderCount -gt 0) {
         " $ReconcileSharedFolderCount cartelle personali gia' esistenti, verificate come vuote e di proprieta' dell'utente autenticato, riceveranno la maschera di permessi del contenitore prima della creazione delle risorse."
@@ -1574,7 +1574,7 @@ function Invoke-ConfirmedImport {
         }
         Reset-ImportPlan "Importazione interrotta. Ripetere il dry-run per riconciliare lo stato del server."
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.3", "OK", "Error") | Out-Null
     } finally {
         $ExecuteRequest = $null
         Update-ImportSessionState
@@ -2293,7 +2293,7 @@ for line in sys.stdin:
     $ClientMappingDialogProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.12.2"
+        version = "0.12.3"
         ui = "WPF"
         phases = 4
         controls = 73
