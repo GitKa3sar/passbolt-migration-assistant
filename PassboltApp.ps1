@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.12.1"
+        Title="Passbolt Migration Assistant - v0.12.2"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -1445,13 +1445,16 @@ function Invoke-ImportReadiness {
             $SharedFolderSummary = if ([int]$Result.create_shared_folder_count -gt 0) {
                 " Cartelle condivise da creare con permessi ereditati: $([int]$Result.create_shared_folder_count)."
             } else { "" }
+            $ReconciledFolderSummary = if ([int]$Result.reconcile_shared_folder_count -gt 0) {
+                " Cartelle personali vuote da riconciliare con i permessi del contenitore: $([int]$Result.reconcile_shared_folder_count)."
+            } else { "" }
             $SharingSummary = if ([int]$Result.shared_create_count -gt 0) {
                 " Risorse condivise: $([int]$Result.shared_create_count); copie cifrate complessive: $([int]$Result.encrypted_secret_copy_count)."
             } else { "" }
-            $ImportPlanStatus.Text = "Dry-run completato. Nessuna modifica eseguita; cartelle nuove: $($Result.create_folder_count), cartelle riutilizzate: $($Result.reuse_folder_count).$SharedFolderSummary$SharingSummary Le cartelle Passbolt sono caricate: se cambi la destinazione, ripeti il dry-run."
+            $ImportPlanStatus.Text = "Dry-run completato. Nessuna modifica eseguita; cartelle nuove: $($Result.create_folder_count), da riconciliare: $($Result.reconcile_shared_folder_count), cartelle riutilizzate: $($Result.reuse_folder_count).$SharedFolderSummary$ReconciledFolderSummary$SharingSummary Le cartelle Passbolt sono caricate: se cambi la destinazione, ripeti il dry-run."
             $ConfirmationHint.Text = "Sessione sicura attiva. Digita: $ExpectedPhrase"
             $ImportConfirmation.IsEnabled = $true
-            Add-Activity "Dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, incluse $($Result.create_shared_folder_count) condivise; $($Result.duplicate_count) duplicati nella destinazione."
+            Add-Activity "Dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, $($Result.reconcile_shared_folder_count) cartelle da riconciliare, incluse $($Result.create_shared_folder_count) nuove condivise; $($Result.duplicate_count) duplicati nella destinazione."
         } elseif ([bool]$Result.can_import) {
             $ImportPlanStatus.Text = "Dry-run completato: tutti i candidati selezionati risultano gia' presenti."
             $ConfirmationHint.Text = "Nessuna nuova risorsa da creare."
@@ -1486,6 +1489,7 @@ function Invoke-ConfirmedImport {
     $DuplicateCount = [int]$script:ImportPlan.duplicate_count
     $CreateFolderCount = [int]$script:ImportPlan.create_folder_count
     $CreateSharedFolderCount = [int]$script:ImportPlan.create_shared_folder_count
+    $ReconcileSharedFolderCount = [int]$script:ImportPlan.reconcile_shared_folder_count
     $ReuseFolderCount = [int]$script:ImportPlan.reuse_folder_count
     $SharedCreateCount = [int]$script:ImportPlan.shared_create_count
     $EncryptedSecretCopyCount = [int]$script:ImportPlan.encrypted_secret_copy_count
@@ -1495,8 +1499,11 @@ function Invoke-ConfirmedImport {
     $FolderSharingConfirmation = if ($CreateSharedFolderCount -gt 0) {
         " $CreateSharedFolderCount nuove cartelle saranno create nel contenitore condiviso e riceveranno la sua maschera completa di permessi. La condivisione di ogni cartella verra' simulata e applicata prima di creare le relative risorse."
     } else { "" }
+    $FolderReconciliationConfirmation = if ($ReconcileSharedFolderCount -gt 0) {
+        " $ReconcileSharedFolderCount cartelle personali gia' esistenti, verificate come vuote e di proprieta' dell'utente autenticato, riceveranno la maschera di permessi del contenitore prima della creazione delle risorse."
+    } else { "" }
     $Decision = [System.Windows.MessageBox]::Show(
-        "Passbolt creera' $CreateFolderCount cartelle e $CreateCount risorse, riutilizzera' $ReuseFolderCount cartelle e saltera' $DuplicateCount duplicati nella destinazione.$FolderSharingConfirmation$SharingConfirmation Le creazioni sono sequenziali: in caso di interruzione verra' mostrato quante sono riuscite. Continuare?",
+        "Passbolt creera' $CreateFolderCount cartelle e $CreateCount risorse, riconciliera' $ReconcileSharedFolderCount cartelle personali, riutilizzera' $ReuseFolderCount cartelle e saltera' $DuplicateCount duplicati nella destinazione.$FolderSharingConfirmation$FolderReconciliationConfirmation$SharingConfirmation Le operazioni sono sequenziali: in caso di interruzione verra' mostrato quante sono riuscite. Continuare?",
         "Conferma scrittura su Passbolt",
         [System.Windows.MessageBoxButton]::YesNo,
         [System.Windows.MessageBoxImage]::Warning
@@ -1538,7 +1545,9 @@ function Invoke-ConfirmedImport {
             if ($CreatedBeforeFailure -gt 0 -or $CreatedFoldersBeforeFailure -gt 0) {
                 $Message += "`n`nAttenzione: $CreatedFoldersBeforeFailure cartelle e $CreatedBeforeFailure risorse risultano create prima dell'errore. Ripetere il dry-run per riconciliare lo stato; non verranno eliminate automaticamente."
             }
-            if ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_sharing_failed) {
+            if ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_reconciliation_failed) {
+                $Message += "`n`nLa cartella personale $($Envelope.error.details.existing_personal_folder_id) non e' stata riconciliata con i permessi del contenitore. Nessuna risorsa del cliente e' stata inserita al suo interno. Ripetere il dry-run per verificare lo stato corrente."
+            } elseif ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_sharing_failed) {
                 $Message += "`n`nLa cartella $($Envelope.error.details.created_unshared_folder_id) e' stata creata ma i permessi ereditati non sono stati applicati. Al momento resta personale; nessuna risorsa del cliente e' stata inserita al suo interno. Ripetere il dry-run per riconciliare lo stato."
             } elseif ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.sharing_failed) {
                 $Message += "`n`nLa risorsa $($Envelope.error.details.created_unshared_resource_id) e' stata creata ma la condivisione non e' stata applicata. Al momento resta personale e deve essere riconciliata con un nuovo dry-run prima di continuare."
@@ -1551,13 +1560,13 @@ function Invoke-ConfirmedImport {
         $ImportConfirmation.Text = ""
         $ImportConfirmation.IsEnabled = $false
         $ConfirmationHint.Text = "Importazione completata. La sessione resta attiva per il prossimo lotto."
-        $ImportPlanStatus.Text = "Importazione completata: $($Result.created_folder_count) cartelle, incluse $($Result.shared_created_folder_count) condivise, e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        $ImportPlanStatus.Text = "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
         foreach ($Row in @($ImportPlanGrid.ItemsSource)) {
             if ($Row.Action -eq "create") { $Row.ActionLabel = "Creata" }
         }
         $ImportPlanGrid.Items.Refresh()
-        Add-Activity "Importazione completata: $($Result.created_folder_count) cartelle, incluse $($Result.shared_created_folder_count) condivise, e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
-        [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
+        Add-Activity "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle personali riconciliate: $($Result.reconciled_shared_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
     } catch {
         $FailureMessage = [string]$_.Exception.Message
         if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
@@ -2284,7 +2293,7 @@ for line in sys.stdin:
     $ClientMappingDialogProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.12.1"
+        version = "0.12.2"
         ui = "WPF"
         phases = 4
         controls = 73

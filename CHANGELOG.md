@@ -2,6 +2,15 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.2 - 2026-08-07
+
+### Fixed
+
+- aggiunto il marcatore `is_new` richiesto dall'API Passbolt per i nuovi permessi di cartelle e risorse condivise;
+- aggiunta la riconciliazione sicura delle cartelle personali rimaste dopo una condivisione interrotta, limitata a cartelle vuote con un unico proprietario verificato;
+- impedita la creazione di una cartella cliente duplicata durante il recupero da un errore parziale;
+- estesi dry-run, conferma e riepilogo finale per distinguere cartelle create, riutilizzate e riconciliate.
+
 ## 0.12.1 - 2026-08-07
 
 ### Changed
