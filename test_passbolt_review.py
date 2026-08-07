@@ -73,6 +73,52 @@ class ReviewTests(unittest.TestCase):
         self.assertTrue(candidate.secret_present)
         self.assertNotIn("db-secret", json.dumps(asdict(result)))
 
+    def test_ip_address_label_populates_uri(self) -> None:
+        source = self.root / "Cliente Alfa" / "router.txt"
+        source.write_text(
+            "Titolo: Router sede\n"
+            "Username: admin\n"
+            "Password: router-secret\n"
+            "Indirizzo IP: 192.168.10.254\n",
+            encoding="utf-8",
+        )
+
+        result = analyze_files(self.root, ["Cliente Alfa/router.txt"])
+
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(result.candidates[0].uri, "192.168.10.254")
+
+    def test_embedded_ip_fills_missing_uri_but_never_reads_password_as_host(self) -> None:
+        source = self.root / "Cliente Alfa" / "firewall.json"
+        source.write_text(
+            json.dumps(
+                {
+                    "titolo": "Firewall",
+                    "username": "admin",
+                    "password": "not-a-host-10.0.0.99",
+                    "dettagli": "Gestione disponibile su 10.20.30.40 porta 443",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = analyze_files(self.root, ["Cliente Alfa/firewall.json"])
+
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(result.candidates[0].uri, "10.20.30.40")
+
+    def test_ipv6_address_populates_uri(self) -> None:
+        source = self.root / "Cliente Beta" / "nas.env"
+        source.write_text(
+            "TITLE=NAS\nUSERNAME=admin\nPASSWORD=nas-secret\nIPV6=2001:db8::25\n",
+            encoding="utf-8",
+        )
+
+        result = analyze_files(self.root, ["Cliente Beta/nas.env"])
+
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(result.candidates[0].uri, "2001:db8::25")
+
     def test_csv_and_nested_json_records(self) -> None:
         csv_source = self.root / "Cliente Alfa" / "credenziali.csv"
         csv_source.write_text(

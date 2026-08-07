@@ -10,7 +10,13 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.12.3` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.12.4` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Revisione modificabile e rilevamento IP 0.12.4
+
+La fase 03 mantiene le password mascherate per impostazione predefinita, ma consente di mostrarle temporaneamente dopo una conferma esplicita e di correggere cliente, titolo, username, URL/host e password prima del dry-run. I metadati originali e quelli corretti restano distinti: il backend ricostruisce il candidato originale e verifica l'hash del file, mentre il piano e la risorsa Passbolt usano i valori corretti.
+
+Se non è presente un URL o host esplicito, la revisione riconosce indirizzi IPv4 e IPv6 validi anche in etichette come `Indirizzo IP`, `IP address`, `IPv4` e `IPv6`, oppure incorporati in un altro campo non segreto. Un indirizzo che compare nel campo password non viene mai usato come host.
 
 ### Rilevamento automatico della fingerprint 0.12.1
 
@@ -140,22 +146,24 @@ La revisione apre il contenuto **soltanto dei file selezionati dall'utente** e s
 
 La fase:
 
-- riconosce campi comuni in italiano e inglese, come titolo, username, password, URL e host;
+- riconosce campi comuni in italiano e inglese, come titolo, username, password, URL, host e indirizzi IP;
 - riconosce anche chiavi di configurazione con prefisso, per esempio `DB_USERNAME`, `DB_PASSWORD` e `DB_HOST`;
 - mostra i candidati come **Pronti** o **Da completare**;
 - permette di filtrare per stato e cercare in cliente, titolo, username, URL e origine;
-- mostra una maschera fissa al posto della password e soltanto la sua lunghezza;
+- mostra per impostazione predefinita una maschera fissa al posto della password e soltanto la sua lunghezza;
+- consente, dopo conferma esplicita, di mostrare o nascondere temporaneamente le password;
+- consente di modificare cliente, titolo, username, URL/host e password, ricalcolando lo stato del candidato e invalidando un eventuale piano precedente;
 - calcola l'hash SHA-256 del documento sorgente, tenuto in memoria, per poter rilevare future modifiche prima dell'importazione;
 - consente di selezionare fino a 25 candidati **Pronti** per il lotto di importazione;
 - non crea risorse in Passbolt durante la revisione.
 
-La password in chiaro può essere presente temporaneamente nella memoria del processo Python durante il riconoscimento, ma:
+La password in chiaro può essere presente temporaneamente nella memoria locale durante il riconoscimento, la visualizzazione esplicita, la modifica o l'importazione, ma:
 
-- non viene restituita dal backend alla UI;
-- non viene inclusa nel JSON;
+- non viene restituita dal backend di revisione ordinario alla UI e non viene inclusa nel relativo JSON;
+- viene restituita dal gate di importazione alla UI soltanto per l'azione esplicita di visualizzazione o modifica, attraverso input/output standard reindirizzati localmente;
 - non viene scritta nel registro attività;
 - non viene salvata in file temporanei o report;
-- non viene mostrata nell'interfaccia.
+- viene nuovamente mascherata e rimossa dalla UI quando l'utente disattiva la visualizzazione o cambia fase; una password corretta manualmente resta in memoria fino all'importazione o alla chiusura.
 
 ## 04 — Importazione controllata
 
@@ -166,7 +174,7 @@ La fase 04 implementa un'importazione Passbolt v4/v5 condizionata da un dry-run 
 1. L'utente seleziona soltanto candidati con stato **Pronto**.
 2. L'utente seleziona il file della propria chiave privata OpenPGP, inserisce la passphrase e, se l'account lo richiede, il codice MFA TOTP a 6 cifre, quindi usa **Avvia sessione**.
 3. Il bridge locale verifica la chiave del server contro la fingerprint rilevata e confermata nella fase 01, esegue GPGAuth, completa TOTP nella stessa sessione e controlla che la chiave privata corrisponda all'identita Passbolt autenticata. Passphrase e TOTP vengono immediatamente rimossi dalla richiesta e dai campi UI.
-4. Per ogni dry-run l'app ricalcola SHA-256 e ricostruisce i candidati dai documenti. Se un documento, il record o i metadati sono cambiati dopo la revisione, il flusso si interrompe.
+4. Per ogni dry-run l'app ricalcola SHA-256 e ricostruisce i candidati dai documenti usando i metadati originali della revisione. Se un documento o il record sono cambiati, il flusso si interrompe; le correzioni effettuate nell'editor restano separate e vengono usate nel piano.
 5. L'app verifica che la sessione e l'identita siano ancora valide, quindi legge impostazioni, cartelle, maschere dei permessi, utenti, gruppi, chiavi pubbliche, tipi di risorsa e metadati delle risorse accessibili all'utente. Se incontra cartelle o risorse v5, decifra localmente i metadati con la chiave personale o con la copia verificata della chiave condivisa.
 6. Il catalogo delle cartelle viene mostrato nella UI. Se l'utente cambia contenitore, destinazione diretta, modalita oppure una singola associazione cliente-cartella, il piano appena prodotto viene invalidato e il dry-run deve essere ripetuto nella stessa sessione.
 7. Viene costruito il mapping cliente-destinazione con cartelle **Da creare**, **Da creare e condividere con permessi ereditati**, **Esistenti da riutilizzare**, **Mappate per cliente**, **Cartella diretta** oppure **Radice Passbolt**.
@@ -193,7 +201,7 @@ Il pulsante di importazione si abilita soltanto se:
 - l'utente ha digitato la frase `IMPORTA N`, dove `N` è il numero esatto di nuove risorse;
 - l'utente accetta una seconda finestra di conferma.
 
-Subito prima della scrittura, la validita della sessione viene ricontrollata e i sorgenti vengono nuovamente aperti e verificati. Le nuove cartelle vengono create per prime con `POST /folders.json`; se devono ereditare una condivisione, la relativa simulazione e applicazione devono riuscire prima che il loro identificatore venga usato come `folder_parent_id` nelle risorse. Le password vengono estratte soltanto in quel momento, passate al bridge OpenPGP persistente tramite input standard e cifrate localmente con la chiave pubblica dell'utente; il messaggio cifrato viene anche firmato con la chiave privata. Per una destinazione condivisa, dopo la simulazione viene prodotta una copia cifrata e firmata per ogni nuovo destinatario concreto indicato da Passbolt. Per cartelle e risorse v5 anche i metadati vengono cifrati e firmati localmente. Chiave, passphrase, TOTP e password non sono inseriti negli argomenti dei processi, nelle variabili d'ambiente, nei log o nei file temporanei. La sessione resta attiva dopo un'importazione riuscita, cosi puo essere usata per il lotto successivo.
+Subito prima della scrittura, la validita della sessione viene ricontrollata e i sorgenti vengono nuovamente aperti e verificati. Le nuove cartelle vengono create per prime con `POST /folders.json`; se devono ereditare una condivisione, la relativa simulazione e applicazione devono riuscire prima che il loro identificatore venga usato come `folder_parent_id` nelle risorse. Le password non modificate vengono estratte dai sorgenti soltanto in quel momento; quelle corrette nella fase 03 sono mantenute esclusivamente in memoria. Entrambe vengono passate al bridge OpenPGP persistente tramite input standard e cifrate localmente con la chiave pubblica dell'utente; il messaggio cifrato viene anche firmato con la chiave privata. Per una destinazione condivisa, dopo la simulazione viene prodotta una copia cifrata e firmata per ogni nuovo destinatario concreto indicato da Passbolt. Per cartelle e risorse v5 anche i metadati vengono cifrati e firmati localmente. Chiave, passphrase, TOTP e password non sono inseriti negli argomenti dei processi, nelle variabili d'ambiente, nei log o nei file temporanei. La sessione resta attiva dopo un'importazione riuscita, cosi puo essere usata per il lotto successivo.
 
 Le creazioni sono sequenziali e Passbolt non espone una transazione unica per l'intero lotto. Se una richiesta fallisce dopo alcune creazioni, l'app mostra separatamente cartelle e risorse gia create, non elimina automaticamente nulla e obbliga a ripetere il dry-run: il nuovo confronto riutilizza le cartelle riuscite e riconcilia le risorse riuscite come duplicati.
 
@@ -269,7 +277,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 
 L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.12.3 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.12.4 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati.
 
 Per eseguire soltanto il controllo da riga di comando:
 

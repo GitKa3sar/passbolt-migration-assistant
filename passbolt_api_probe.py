@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
-USER_AGENT = "Passbolt-Migration-Assistant-Probe/0.12.3"
+USER_AGENT = "Passbolt-Migration-Assistant-Probe/0.12.4"
 
 
 class ProbeError(RuntimeError):

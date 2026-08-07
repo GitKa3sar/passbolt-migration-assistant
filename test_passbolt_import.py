@@ -69,6 +69,79 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(resources[0]["password"], self.secret)
         self.assertEqual(resources[0]["candidate_id"], self.request["candidate_id"])
 
+    def test_edited_metadata_is_imported_while_original_review_stays_verified(self) -> None:
+        edited = dict(self.request)
+        edited.update(
+            {
+                "reviewed_client": self.request["client"],
+                "reviewed_source_at_root": self.request["source_at_root"],
+                "reviewed_title": self.request["title"],
+                "reviewed_username": self.request["username"],
+                "reviewed_uri": self.request["uri"],
+                "client": "Cliente Corretto",
+                "title": "Titolo corretto",
+                "username": "utente-corretto",
+                "uri": "10.20.30.40",
+                "password_overridden": False,
+            }
+        )
+
+        resources, _ = extract_resources(self.root, [edited], include_secrets=True)
+
+        self.assertEqual(resources[0]["title"], "Titolo corretto")
+        self.assertEqual(resources[0]["username"], "utente-corretto")
+        self.assertEqual(resources[0]["uri"], "10.20.30.40")
+        self.assertEqual(resources[0]["password"], self.secret)
+
+    def test_password_override_is_used_only_when_explicitly_supplied(self) -> None:
+        edited = dict(self.request)
+        edited["password_overridden"] = True
+        replacement = "Password-corretta-in-memoria"
+
+        resources, _ = extract_resources(
+            self.root,
+            [edited],
+            include_secrets=True,
+            secret_overrides={edited["candidate_id"]: replacement},
+        )
+
+        self.assertEqual(resources[0]["password"], replacement)
+        with self.assertRaisesRegex(ImportPreparationError, "password modificate"):
+            extract_resources(self.root, [edited], include_secrets=True)
+
+    def test_missing_source_password_can_be_completed_in_review(self) -> None:
+        incomplete_source = self.root / "Cliente Alfa" / "router.txt"
+        incomplete_source.write_text(
+            "Titolo: Router\nUsername: admin\nIndirizzo IP: 192.168.1.1\nPassword:\n",
+            encoding="utf-8",
+        )
+        review = analyze_files(self.root, ["Cliente Alfa/router.txt"])
+        candidate = asdict(review.candidates[0])
+        request = {
+            key: candidate[key]
+            for key in (
+                "candidate_id",
+                "source_relative_path",
+                "source_sha256",
+                "client",
+                "title",
+                "username",
+                "uri",
+            )
+        }
+        request["source_at_root"] = False
+        request["password_overridden"] = True
+
+        resources, _ = extract_resources(
+            self.root,
+            [request],
+            include_secrets=True,
+            secret_overrides={request["candidate_id"]: "password-aggiunta"},
+        )
+
+        self.assertEqual(resources[0]["password"], "password-aggiunta")
+        self.assertEqual(resources[0]["uri"], "192.168.1.1")
+
     def test_persistent_session_readiness_verifies_without_secrets(self) -> None:
         bridge_request, resources = _session_bridge_request(
             self.root,
@@ -111,6 +184,31 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(bridge_request["resources"][0]["password"], self.secret)
         self.assertNotIn("passphrase", bridge_request)
         self.assertNotIn("mfa_totp", bridge_request)
+
+    def test_persistent_import_hands_off_edited_password(self) -> None:
+        edited = dict(self.request)
+        edited["password_overridden"] = True
+        replacement = "Password-corretta-in-memoria"
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-import",
+                "session_id": "session-id",
+                "resource_format": "v5",
+                "destination_mode": "root",
+                "folder_format": "auto",
+                "candidates": [edited],
+                "create_candidate_ids": [edited["candidate_id"]],
+                "secret_overrides": [
+                    {"candidate_id": edited["candidate_id"], "password": replacement}
+                ],
+                "plan_digest": "digest",
+                "confirmation": "IMPORTA 1",
+            },
+        )
+
+        self.assertEqual(resources[0]["password"], replacement)
+        self.assertEqual(bridge_request["resources"][0]["password"], replacement)
 
     def test_persistent_coordinator_reuses_one_authenticated_bridge(self) -> None:
         fake_bridge = self.root / "fake_session_bridge.py"

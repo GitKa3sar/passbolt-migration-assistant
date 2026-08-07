@@ -11,6 +11,7 @@ import argparse
 import configparser
 import csv
 import hashlib
+import ipaddress
 import io
 import json
 import logging
@@ -26,7 +27,7 @@ from typing import Iterable, Iterator
 from xml.etree import ElementTree
 
 
-APP_VERSION = "0.12.3"
+APP_VERSION = "0.12.4"
 ROOT_CLIENT_LABEL = "(radice)"
 MAX_SELECTED_FILES = 50
 MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -163,7 +164,15 @@ URI_KEYS = {
         "hostname",
         "server",
         "ip",
+        "ip address",
+        "server ip",
+        "ip server",
+        "ipv4",
+        "ipv6",
         "indirizzo",
+        "indirizzo ip",
+        "indirizzo ipv4",
+        "indirizzo ipv6",
     )
 }
 ALL_CREDENTIAL_KEYS = TITLE_KEYS | USERNAME_KEYS | SECRET_KEYS | URI_KEYS
@@ -202,6 +211,54 @@ def _find_field(
     return False, ""
 
 
+IPV4_CANDIDATE_PATTERN = re.compile(
+    r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])"
+)
+
+
+def _ip_from_scalar(value: object) -> str:
+    """Return the first valid IP address embedded in a scalar value."""
+
+    text = _scalar(value)
+    if not text:
+        return ""
+    for match in IPV4_CANDIDATE_PATTERN.finditer(text):
+        try:
+            return str(ipaddress.ip_address(match.group(0)))
+        except ValueError:
+            continue
+
+    # IPv6 is deliberately considered only from compact tokens. This avoids
+    # treating ordinary prose containing colons as a host address.
+    for token in re.split(r"[\s,;]+", text):
+        candidate = token.strip("()[]{}<>'\"")
+        if candidate.count(":") < 2:
+            continue
+        if "/" in candidate:
+            candidate = candidate.split("/", 1)[0]
+        if "%" in candidate:
+            candidate = candidate.split("%", 1)[0]
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if address.version == 6:
+            return str(address)
+    return ""
+
+
+def _find_ip_address(record: dict[object, object]) -> str:
+    """Find an IP in non-secret fields when no explicit URL/host was found."""
+
+    for key, value in record.items():
+        if _matches_field_key(key, SECRET_KEYS, True):
+            continue
+        address = _ip_from_scalar(value)
+        if address:
+            return address
+    return ""
+
+
 def _has_credential_key(record: dict[object, object]) -> bool:
     return any(
         _matches_field_key(key, TITLE_KEYS, False)
@@ -224,6 +281,10 @@ def _make_candidate(
     username_found, username = _find_field(record, USERNAME_KEYS, allow_prefix=True)
     secret_found, secret = _find_field(record, SECRET_KEYS, allow_prefix=True)
     uri_found, uri = _find_field(record, URI_KEYS, allow_prefix=True)
+    if not uri:
+        detected_ip = _find_ip_address(record)
+        if detected_ip:
+            uri_found, uri = True, detected_ip
 
     secret_present = bool(secret_found and secret)
     if not secret_found and not (username_found and (title_found or uri_found)):
