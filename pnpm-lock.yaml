@@ -1,0 +1,28 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      openpgp:
+        specifier: 6.3.1
+        version: 6.3.1
+
+packages:
+
+  openpgp@6.3.1:
+    resolution: {integrity: sha512-7oSPvmlKPojxFoyelT5DWPIAVmqWZh4qU/5pO6bdoShEtRpCw9Sye9IXUQj6EFM3XpgGssqccAr705YtTcLNQw==}
+    engines: {node: '>= 18.0.0', typescript: '>= 5.0.0'}
+    peerDependencies:
+      '@openpgp/web-stream-tools': ~0.3.0
+    peerDependenciesMeta:
+      '@openpgp/web-stream-tools':
+        optional: true
+
+snapshots:
+
+  openpgp@6.3.1: {}

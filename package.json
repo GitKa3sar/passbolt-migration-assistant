@@ -1,0 +1,26 @@
+{
+  "name": "passbolt-migration-assistant",
+  "version": "0.12.0",
+  "private": true,
+  "type": "module",
+  "description": "Windows desktop assistant for safely inventorying, reviewing and importing credentials into Passbolt",
+  "license": "AGPL-3.0-only",
+  "author": "Cesare Polidoro",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GitKa3sar/passbolt-migration-assistant.git"
+  },
+  "homepage": "https://github.com/GitKa3sar/passbolt-migration-assistant#readme",
+  "bugs": {
+    "url": "https://github.com/GitKa3sar/passbolt-migration-assistant/issues"
+  },
+  "scripts": {
+    "test": "node test_passbolt_crypto.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "openpgp": "6.3.1"
+  }
+}
