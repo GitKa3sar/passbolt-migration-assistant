@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -17,6 +18,25 @@ from passbolt_import import (
     verify_integrity,
 )
 from passbolt_review import analyze_files
+
+
+def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
+    from msoffcrypto.format.ooxml import OOXMLFile
+    from openpyxl import Workbook
+
+    plaintext = io.BytesIO()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["Titolo", "Username", "Password", "Host"])
+    sheet.append(["VPN protetta", "vpn-user", credential_password, "vpn.example.test"])
+    workbook.save(plaintext)
+    workbook.close()
+    plaintext.seek(0)
+    try:
+        with path.open("wb") as encrypted_output:
+            OOXMLFile(plaintext).encrypt(document_password, encrypted_output)
+    finally:
+        plaintext.close()
 
 
 class ImportPreparationTests(unittest.TestCase):
@@ -210,6 +230,74 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(resources[0]["password"], replacement)
         self.assertEqual(bridge_request["resources"][0]["password"], replacement)
 
+    def test_protected_xlsx_password_is_reused_but_never_forwarded_to_bridge(self) -> None:
+        encrypted_path = self.root / "Cliente Alfa" / "protetto.xlsx"
+        relative_path = "Cliente Alfa/protetto.xlsx"
+        document_password = "Password-file-Excel-import"
+        credential_password = "Password-risorsa-Passbolt"
+        write_encrypted_xlsx(encrypted_path, document_password, credential_password)
+        review = analyze_files(
+            self.root,
+            [relative_path],
+            file_passwords={relative_path: document_password},
+        )
+        candidate = asdict(review.candidates[0])
+        request = {
+            key: candidate[key]
+            for key in (
+                "candidate_id",
+                "source_relative_path",
+                "source_sha256",
+                "client",
+                "title",
+                "username",
+                "uri",
+                "source_password_required",
+            )
+        }
+        request["source_at_root"] = False
+        password_entries = [
+            {"relative_path": relative_path, "password": document_password}
+        ]
+
+        with self.assertRaisesRegex(ImportPreparationError, "password dei file Excel"):
+            verify_integrity(self.root, [request])
+        verified = verify_integrity(
+            self.root,
+            [request],
+            source_file_passwords={relative_path: document_password},
+        )
+        self.assertTrue(verified["verified"])
+
+        readiness_request, readiness_resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-readiness",
+                "session_id": "session-id",
+                "candidates": [request],
+                "source_file_passwords": password_entries,
+            },
+        )
+        self.assertEqual(readiness_resources, [])
+        self.assertNotIn("source_file_passwords", readiness_request)
+        self.assertNotIn(document_password, json.dumps(readiness_request))
+
+        import_request, import_resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-import",
+                "session_id": "session-id",
+                "candidates": [request],
+                "create_candidate_ids": [request["candidate_id"]],
+                "source_file_passwords": password_entries,
+                "plan_digest": "digest",
+                "confirmation": "IMPORTA 1",
+            },
+        )
+        self.assertEqual(import_resources[0]["password"], credential_password)
+        self.assertNotIn("source_file_passwords", import_request)
+        self.assertNotIn(document_password, json.dumps(import_request))
+
     def test_persistent_coordinator_reuses_one_authenticated_bridge(self) -> None:
         fake_bridge = self.root / "fake_session_bridge.py"
         fake_bridge.write_text(
@@ -319,8 +407,10 @@ for raw in sys.stdin:
     def test_change_during_read_is_rejected(self) -> None:
         from passbolt_review import _records_for_file as real_records_for_file
 
-        def changing_records(path: Path, extension: str):
-            records = list(real_records_for_file(path, extension))
+        def changing_records(path: Path, extension: str, *, file_password: str | None = None):
+            records = list(
+                real_records_for_file(path, extension, file_password=file_password)
+            )
             path.write_text(
                 path.read_text(encoding="utf-8") + "\nNota: cambio concorrente\n",
                 encoding="utf-8",

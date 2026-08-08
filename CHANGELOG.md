@@ -2,6 +2,20 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.5 - 2026-08-08
+
+### Added
+
+- aggiunto nella fase 03 il rilevamento dei file `.xlsx` protetti e un prompt mascherato per inserire la password del documento;
+- aggiunto il riuso in memoria della password Excel durante visualizzazione esplicita, modifica, dry-run, verifica SHA-256 e importazione;
+- aggiunti test automatici con documenti Office realmente cifrati per password mancante, password errata e apertura riuscita.
+
+### Security
+
+- il file Excel viene decifrato soltanto in un buffer volatile, senza produrre copie in chiaro o file temporanei;
+- la password del documento passa ai backend locali tramite input standard reindirizzato, viene rimossa dalle strutture di richiesta e non viene inoltrata al bridge Passbolt, inclusa la sessione persistente;
+- il backend di revisione continua a serializzare soltanto maschera, lunghezza e metadati della credenziale, senza esporre né la password del documento né quella contenuta nel foglio.
+
 ## 0.12.4 - 2026-08-07
 
 ### Added

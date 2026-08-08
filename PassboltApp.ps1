@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.12.4"
+        Title="Passbolt Migration Assistant - v0.12.5"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -564,10 +564,12 @@ $script:InventoryFolder = ""
 $script:AllInventoryRows = @()
 $script:ReviewResult = $null
 $script:AllReviewRows = @()
+$script:ReviewFilePasswords = @{}
 $script:ReviewPasswordsVisible = $false
 $script:UpdatingReviewPasswordToggle = $false
 $script:ImportCandidates = @()
 $script:ImportSecretOverrides = @{}
+$script:ImportSourceFilePasswords = @{}
 $script:ImportPlan = $null
 $script:ImportPlanKeyPath = ""
 $script:ImportCompleted = $false
@@ -1262,6 +1264,7 @@ function Show-ClientDestinationMappingDialog([switch]$BuildOnly) {
 function Reset-ImportWorkflow {
     $script:ImportCandidates = @()
     $script:ImportSecretOverrides = @{}
+    $script:ImportSourceFilePasswords = @{}
     $script:ClientDestinationMap = @{}
     $ImportMetricSelected.Text = [string][char]0x2014
     $ImportSummary.Text = "Prepara i candidati dalla revisione"
@@ -1289,7 +1292,44 @@ function Get-ReviewCandidateRequest($Row, [switch]$ForReveal) {
         reviewed_username = [string]$Row.OriginalUsername
         reviewed_uri = [string]$Row.OriginalUri
         password_overridden = $PasswordOverridden
+        source_password_required = [bool]$Row.SourcePasswordRequired
     }
+}
+
+function Get-ReviewSourceFilePasswordPayload([object[]]$Rows) {
+    $Payload = New-Object System.Collections.Generic.List[object]
+    $Seen = @{}
+    foreach ($Row in @($Rows | Where-Object { [bool]$_.SourcePasswordRequired })) {
+        $RelativePath = [string]$Row.SourceRelativePath
+        if ($Seen.ContainsKey($RelativePath)) { continue }
+        if (-not $script:ReviewFilePasswords.ContainsKey($RelativePath) -or -not [string]$script:ReviewFilePasswords[$RelativePath]) {
+            throw "La password del file Excel $RelativePath non e' piu disponibile in memoria. Ripetere la revisione."
+        }
+        $Payload.Add([pscustomobject][ordered]@{
+            relative_path = $RelativePath
+            password = [string]$script:ReviewFilePasswords[$RelativePath]
+        })
+        $Seen[$RelativePath] = $true
+    }
+    return $Payload.ToArray()
+}
+
+function Get-ImportSourceFilePasswordPayload([object[]]$Candidates) {
+    $Payload = New-Object System.Collections.Generic.List[object]
+    $Seen = @{}
+    foreach ($Candidate in @($Candidates | Where-Object { [bool]$_.source_password_required })) {
+        $RelativePath = [string]$Candidate.source_relative_path
+        if ($Seen.ContainsKey($RelativePath)) { continue }
+        if (-not $script:ImportSourceFilePasswords.ContainsKey($RelativePath) -or -not [string]$script:ImportSourceFilePasswords[$RelativePath]) {
+            throw "La password del file Excel $RelativePath non e' piu disponibile in memoria. Tornare alla revisione."
+        }
+        $Payload.Add([pscustomobject][ordered]@{
+            relative_path = $RelativePath
+            password = [string]$script:ImportSourceFilePasswords[$RelativePath]
+        })
+        $Seen[$RelativePath] = $true
+    }
+    return $Payload.ToArray()
 }
 
 function Update-ReviewRowState($Row) {
@@ -1344,8 +1384,15 @@ function Read-ReviewSourceSecrets([object[]]$Rows) {
     $Requests = @($PendingRows | ForEach-Object { Get-ReviewCandidateRequest $_ -ForReveal })
     $Envelope = $null
     $ById = @{}
+    $SourceFilePasswords = @()
+    $SecureRequest = $null
     try {
-        $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--reveal", "--root", $script:InventoryFolder) ([pscustomobject]@{ candidates = $Requests })
+        $SourceFilePasswords = @(Get-ReviewSourceFilePasswordPayload $PendingRows)
+        $SecureRequest = [pscustomobject]@{
+            candidates = $Requests
+            source_file_passwords = $SourceFilePasswords
+        }
+        $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--reveal", "--root", $script:InventoryFolder) $SecureRequest
         if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
         foreach ($SecretItem in @($Envelope.result.secrets)) {
             $ById[[string]$SecretItem.candidate_id] = [string]$SecretItem.password
@@ -1361,6 +1408,10 @@ function Read-ReviewSourceSecrets([object[]]$Rows) {
     } finally {
         $ById.Clear()
         $Requests = $null
+        foreach ($Entry in $SourceFilePasswords) { $Entry.password = $null }
+        if ($null -ne $SecureRequest) { $SecureRequest.source_file_passwords = $null }
+        $SourceFilePasswords = @()
+        $SecureRequest = $null
         if ($null -ne $Envelope -and $null -ne $Envelope.result) {
             $Envelope.result.secrets = $null
         }
@@ -1683,12 +1734,24 @@ function Open-ImportPreparation {
 
     $Candidates = New-Object System.Collections.Generic.List[object]
     $script:ImportSecretOverrides = @{}
+    $script:ImportSourceFilePasswords = @{}
     foreach ($Row in $Selected) {
         $Candidates.Add((Get-ReviewCandidateRequest $Row))
+        if ([bool]$Row.SourcePasswordRequired) {
+            $RelativePath = [string]$Row.SourceRelativePath
+            if (-not $script:ReviewFilePasswords.ContainsKey($RelativePath) -or -not [string]$script:ReviewFilePasswords[$RelativePath]) {
+                [System.Windows.MessageBox]::Show("La password del file Excel $RelativePath non e' piu disponibile in memoria. Ripetere la revisione.", "Password Excel non disponibile", "OK", "Error") | Out-Null
+                $script:ImportSecretOverrides = @{}
+                $script:ImportSourceFilePasswords = @{}
+                return
+            }
+            $script:ImportSourceFilePasswords[$RelativePath] = [string]$script:ReviewFilePasswords[$RelativePath]
+        }
         if ([bool]$Row.PasswordOverridden) {
             if (-not [string]$Row.SecretValue) {
                 [System.Windows.MessageBox]::Show("La password modificata di un candidato non e' piu disponibile in memoria. Modificare nuovamente il candidato.", "Password non disponibile", "OK", "Error") | Out-Null
                 $script:ImportSecretOverrides = @{}
+                $script:ImportSourceFilePasswords = @{}
                 return
             }
             $script:ImportSecretOverrides[[string]$Row.CandidateId] = [string]$Row.SecretValue
@@ -1729,6 +1792,7 @@ function Invoke-ImportReadiness {
     Reset-ImportPlan "Controllo integrita' e dry-run nella sessione autenticata in corso..."
     $DryRunButton.IsEnabled = $false
     $ReadinessRequest = $null
+    $ReadinessSourceFilePasswords = @()
     $Envelope = $null
     $CloseSessionForError = $false
     $RequestedResourceFormat = [string]$ResourceFormat.SelectedItem.Tag
@@ -1742,6 +1806,7 @@ function Invoke-ImportReadiness {
     Add-Activity "Avvio dry-run nella sessione GPGAuth attiva (risorse $RequestedResourceFormat, cartelle $RequestedFolderFormat)."
     Update-Ui
     try {
+        $ReadinessSourceFilePasswords = @(Get-ImportSourceFilePasswordPayload $script:ImportCandidates)
         $ReadinessRequest = [pscustomobject][ordered]@{
             command = "session-readiness"
             session_id = $script:ImportSessionId
@@ -1751,6 +1816,7 @@ function Invoke-ImportReadiness {
             destination_folder_id = $RequestedDestinationFolderId
             client_destination_mapping = $RequestedClientDestinationMapping
             candidates = $script:ImportCandidates
+            source_file_passwords = $ReadinessSourceFilePasswords
         }
         $Envelope = Invoke-ImportSessionJson $ReadinessRequest
         if (-not [bool]$Envelope.ok) {
@@ -1849,6 +1915,9 @@ function Invoke-ImportReadiness {
         Add-Activity "Dry-run non riuscito: $FailureMessage"
         [System.Windows.MessageBox]::Show($FailureMessage, "Dry-run non riuscito", "OK", "Error") | Out-Null
     } finally {
+        foreach ($Entry in $ReadinessSourceFilePasswords) { $Entry.password = $null }
+        if ($null -ne $ReadinessRequest) { $ReadinessRequest.source_file_passwords = $null }
+        $ReadinessSourceFilePasswords = @()
         $ReadinessRequest = $null
         Update-ImportSessionState
     }
@@ -1901,6 +1970,16 @@ function Invoke-ConfirmedImport {
             })
         }
     }
+    $CreateCandidates = @($script:ImportCandidates | Where-Object { [string]$_.candidate_id -in $CreateCandidateIds })
+    $WriteSourceFilePasswords = @()
+    try {
+        $WriteSourceFilePasswords = @(Get-ImportSourceFilePasswordPayload $CreateCandidates)
+    } catch {
+        foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
+        $SecretOverrides.Clear()
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Password Excel non disponibile", "OK", "Error") | Out-Null
+        return
+    }
     $ExecuteImportButton.IsEnabled = $false
     $DryRunButton.IsEnabled = $false
     $ExecuteRequest = [pscustomobject][ordered]@{
@@ -1914,6 +1993,7 @@ function Invoke-ConfirmedImport {
         candidates = $script:ImportCandidates
         create_candidate_ids = $CreateCandidateIds
         secret_overrides = $SecretOverrides.ToArray()
+        source_file_passwords = $WriteSourceFilePasswords
         plan_digest = [string]$script:ImportPlan.plan_digest
         confirmation = "IMPORTA $CreateCount"
     }
@@ -1978,9 +2058,15 @@ function Invoke-ConfirmedImport {
         }
         Reset-ImportPlan "Importazione interrotta. Ripetere il dry-run per riconciliare lo stato del server."
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.4", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.5", "OK", "Error") | Out-Null
     } finally {
-        if ($null -ne $ExecuteRequest) { $ExecuteRequest.secret_overrides = $null }
+        foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
+        foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
+        if ($null -ne $ExecuteRequest) {
+            $ExecuteRequest.secret_overrides = $null
+            $ExecuteRequest.source_file_passwords = $null
+        }
+        $WriteSourceFilePasswords = @()
         $SecretOverrides = $null
         $ExecuteRequest = $null
         Update-ImportSessionState
@@ -2164,6 +2250,141 @@ function Apply-ReviewFilters {
     Update-ImportSelectionState
 }
 
+function Show-ExcelPasswordDialog([string]$RelativePath, [switch]$Retry, [switch]$BuildOnly) {
+    $Dialog = New-Object System.Windows.Window
+    $Dialog.Title = if ($Retry) { "Password Excel non corretta" } else { "Password Excel richiesta" }
+    $Dialog.Width = 560
+    $Dialog.Height = 300
+    $Dialog.MinWidth = 500
+    $Dialog.MinHeight = 280
+    $Dialog.WindowStartupLocation = "CenterOwner"
+    if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
+    $Dialog.Background = Get-Brush "#F4F6F8"
+    $Dialog.FontFamily = "Segoe UI"
+
+    $Layout = New-Object System.Windows.Controls.Grid
+    $Layout.Margin = [System.Windows.Thickness]::new(22)
+    foreach ($Height in @("Auto", "Auto", "Auto", "*", "Auto")) {
+        $Definition = New-Object System.Windows.Controls.RowDefinition
+        $Definition.Height = if ($Height -eq "*") { [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) } else { [System.Windows.GridLength]::Auto }
+        [void]$Layout.RowDefinitions.Add($Definition)
+    }
+
+    $Title = New-Object System.Windows.Controls.TextBlock
+    $Title.Text = if ($Retry) { "La password inserita non ha aperto il file" } else { "Questo file Excel e' protetto da password" }
+    $Title.FontSize = 20
+    $Title.FontWeight = "Bold"
+    [void]$Layout.Children.Add($Title)
+    $Description = New-Object System.Windows.Controls.TextBlock
+    $Description.Text = "$RelativePath`nInserisci la password del file. Verra' usata soltanto in memoria per revisione, controlli di integrita' e importazione."
+    $Description.TextWrapping = "Wrap"
+    $Description.Foreground = Get-Brush "#66737F"
+    $Description.Margin = [System.Windows.Thickness]::new(0, 7, 0, 14)
+    [System.Windows.Controls.Grid]::SetRow($Description, 1)
+    [void]$Layout.Children.Add($Description)
+
+    $PasswordHost = New-Object System.Windows.Controls.Grid
+    [System.Windows.Controls.Grid]::SetRow($PasswordHost, 2)
+    $PasswordBox = New-Object System.Windows.Controls.PasswordBox
+    $PasswordBox.MaxLength = 1024
+    $PasswordText = New-Object System.Windows.Controls.TextBox
+    $PasswordText.MaxLength = 1024
+    $PasswordText.Visibility = "Collapsed"
+    [void]$PasswordHost.Children.Add($PasswordBox)
+    [void]$PasswordHost.Children.Add($PasswordText)
+    [void]$Layout.Children.Add($PasswordHost)
+
+    $ShowPassword = New-Object System.Windows.Controls.CheckBox
+    $ShowPassword.Content = "Mostra password durante l'inserimento"
+    $ShowPassword.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($ShowPassword, 3)
+    $ShowPassword.VerticalAlignment = "Top"
+    $ShowPassword.Add_Checked({
+        $PasswordText.Text = $PasswordBox.Password
+        $PasswordBox.Visibility = "Collapsed"
+        $PasswordText.Visibility = "Visible"
+        $PasswordText.Focus() | Out-Null
+        $PasswordText.CaretIndex = $PasswordText.Text.Length
+    })
+    $ShowPassword.Add_Unchecked({
+        $PasswordBox.Password = $PasswordText.Text
+        $PasswordText.Visibility = "Collapsed"
+        $PasswordBox.Visibility = "Visible"
+        $PasswordBox.Focus() | Out-Null
+    })
+    [void]$Layout.Children.Add($ShowPassword)
+
+    $Footer = New-Object System.Windows.Controls.StackPanel
+    $Footer.Orientation = "Horizontal"
+    $Footer.HorizontalAlignment = "Right"
+    [System.Windows.Controls.Grid]::SetRow($Footer, 4)
+    $CancelButton = New-Object System.Windows.Controls.Button
+    $CancelButton.Content = "Annulla revisione"
+    $CancelButton.IsCancel = $true
+    $CancelButton.Padding = [System.Windows.Thickness]::new(16, 8, 16, 8)
+    $CancelButton.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    $CancelButton.Add_Click({ $Dialog.DialogResult = $false })
+    $ContinueButton = New-Object System.Windows.Controls.Button
+    $ContinueButton.Content = "Apri file Excel"
+    $ContinueButton.IsDefault = $true
+    $ContinueButton.Padding = [System.Windows.Thickness]::new(16, 8, 16, 8)
+    $ContinueButton.Background = Get-Brush "#2878D0"
+    $ContinueButton.Foreground = Get-Brush "#FFFFFF"
+    $ContinueButton.BorderThickness = [System.Windows.Thickness]::new(0)
+    $ContinueButton.Add_Click({
+        $Password = if ([bool]$ShowPassword.IsChecked) { [string]$PasswordText.Text } else { [string]$PasswordBox.Password }
+        if (-not $Password) {
+            [System.Windows.MessageBox]::Show("Inserire la password del file Excel.", "Password mancante", "OK", "Warning") | Out-Null
+            return
+        }
+        $Dialog.Tag = $Password
+        $Dialog.DialogResult = $true
+    })
+    [void]$Footer.Children.Add($CancelButton)
+    [void]$Footer.Children.Add($ContinueButton)
+    [void]$Layout.Children.Add($Footer)
+    $Dialog.Content = $Layout
+
+    if ($BuildOnly) {
+        return [pscustomobject]@{ Window = $Dialog; PasswordBox = $PasswordBox; PasswordText = $PasswordText; ShowPassword = $ShowPassword }
+    }
+    $PasswordBox.Focus() | Out-Null
+    if ($Dialog.ShowDialog() -ne $true) {
+        $PasswordBox.Clear()
+        $PasswordText.Text = ""
+        return $null
+    }
+    $Result = [string]$Dialog.Tag
+    $Dialog.Tag = $null
+    $PasswordBox.Clear()
+    $PasswordText.Text = ""
+    return $Result
+}
+
+function Invoke-SecureExcelReview([string[]]$Files, [hashtable]$Passwords) {
+    $PasswordEntries = New-Object System.Collections.Generic.List[object]
+    foreach ($RelativePath in @($Passwords.Keys | Sort-Object)) {
+        $PasswordEntries.Add([pscustomobject][ordered]@{
+            relative_path = [string]$RelativePath
+            password = [string]$Passwords[$RelativePath]
+        })
+    }
+    $Request = [pscustomobject]@{
+        files = $Files
+        file_passwords = $PasswordEntries.ToArray()
+    }
+    try {
+        $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ReviewScript, "--secure-json", "--root", $script:InventoryFolder) $Request
+        if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+        return $Envelope.result
+    } finally {
+        foreach ($Entry in $PasswordEntries) { $Entry.password = $null }
+        $Request.file_passwords = $null
+        $PasswordEntries.Clear()
+        $Request = $null
+    }
+}
+
 function Invoke-SelectedReview {
     $SelectedCount = $FilesGrid.SelectedItems.Count
     if ($SelectedCount -lt 1) { return }
@@ -2185,17 +2406,53 @@ function Invoke-SelectedReview {
     $Arguments.Add("--root")
     $Arguments.Add($script:InventoryFolder)
     $Arguments.Add("--json")
+    $SelectedFiles = New-Object System.Collections.Generic.List[string]
     foreach ($SelectedItem in $FilesGrid.SelectedItems) {
         $Arguments.Add("--file")
         $Arguments.Add([string]$SelectedItem.RelativePath)
+        $SelectedFiles.Add([string]$SelectedItem.RelativePath)
     }
 
     $ReviewSelectionButton.IsEnabled = $false
     $ReviewSelectionButton.Content = "Analisi locale in corso..."
     Add-Activity "Avvio revisione locale di $SelectedCount file selezionati."
     Update-Ui
+    $script:ReviewFilePasswords = @{}
+    $ExcelPasswords = @{}
     try {
         $Result = Invoke-PythonJson $ReviewScript ($Arguments.ToArray())
+        $PromptAttempts = 0
+        while (@($Result.protected_excel_issues).Count -gt 0) {
+            $PromptAttempts++
+            if ($PromptAttempts -gt 10) {
+                throw "Impossibile completare la lettura dei file Excel protetti dopo troppi tentativi."
+            }
+            foreach ($Issue in @($Result.protected_excel_issues)) {
+                $RelativePath = [string]$Issue.relative_path
+                $IssueStatus = [string]$Issue.status
+                if ($IssueStatus -eq "reader_unavailable") {
+                    throw "Il lettore dei file Excel cifrati non e' installato. Eseguire: python -m pip install -r requirements.txt"
+                }
+                if ($IssueStatus -notin @("password_required", "password_rejected")) {
+                    throw "Il file Excel protetto $RelativePath non puo essere letto in sicurezza."
+                }
+                $Password = Show-ExcelPasswordDialog $RelativePath -Retry:($IssueStatus -eq "password_rejected")
+                if ($null -eq $Password) {
+                    $ExcelPasswords.Clear()
+                    Add-Activity "Revisione annullata durante la richiesta della password di un file Excel."
+                    return
+                }
+                $ExcelPasswords[$RelativePath] = [string]$Password
+                $Password = $null
+            }
+            Add-Activity "Nuovo tentativo di lettura locale di $($ExcelPasswords.Count) file Excel protetti; nessuna password e' stata registrata."
+            $Result = Invoke-SecureExcelReview ($SelectedFiles.ToArray()) $ExcelPasswords
+        }
+        $script:ReviewFilePasswords = @{}
+        foreach ($RelativePath in $ExcelPasswords.Keys) {
+            $script:ReviewFilePasswords[[string]$RelativePath] = [string]$ExcelPasswords[$RelativePath]
+        }
+        $ExcelPasswords.Clear()
         $ReviewRows = New-Object System.Collections.Generic.List[object]
         if ($null -ne $Result.candidates) {
             foreach ($Candidate in @($Result.candidates)) {
@@ -2221,6 +2478,7 @@ function Invoke-SelectedReview {
                     SecretCachedFromSource = $false
                     PasswordOverridden = $false
                     IsEdited = $false
+                    SourcePasswordRequired = [bool]$Candidate.source_password_required
                     SecretDisplay = $SecretDisplay
                     Source = "$($Candidate.source_relative_path) - $($Candidate.location)"
                     SourceRelativePath = [string]$Candidate.source_relative_path
@@ -2255,9 +2513,12 @@ function Invoke-SelectedReview {
         Add-Activity "Revisione completata: $($Result.candidate_count) candidati; valori segreti non registrati."
         Show-Page "Review"
     } catch {
+        $script:ReviewFilePasswords = @{}
+        $ExcelPasswords.Clear()
         Add-Activity "Revisione non riuscita: $($_.Exception.Message)"
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Revisione non riuscita", "OK", "Error") | Out-Null
     } finally {
+        $ExcelPasswords.Clear()
         Update-ReviewSelectionState
     }
 }
@@ -2273,6 +2534,7 @@ function Invoke-Inventory {
 
     $script:ReviewResult = $null
     $script:AllReviewRows = @()
+    $script:ReviewFilePasswords = @{}
     Reset-ImportWorkflow
     $ReviewCandidatesGrid.ItemsSource = $null
     $StepReviewNumber.Foreground = Get-Brush "#667683"
@@ -2625,6 +2887,8 @@ $Window.Add_Closing({
         $Row.SecretCachedFromSource = $false
     }
     $script:ImportSecretOverrides = @{}
+    $script:ReviewFilePasswords = @{}
+    $script:ImportSourceFilePasswords = @{}
     if ($null -ne $script:ImportSessionTimer) { $script:ImportSessionTimer.Stop() }
     Stop-ImportSession "" $false
 })
@@ -2682,11 +2946,11 @@ for line in sys.stdin:
         Stop-ImportSession "" $false
     }
     $ReviewBackendTest = Invoke-PythonJson $ReviewScript @("--self-test")
-    if ($ReviewBackendTest.secrets_serialized) {
+    if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported) {
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
@@ -2728,6 +2992,11 @@ for line in sys.stdin:
     if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
     }
+    $ExcelPasswordDialogProbe = Show-ExcelPasswordDialog "Cliente Alfa/credenziali.xlsx" -BuildOnly
+    if ($null -eq $ExcelPasswordDialogProbe -or $ExcelPasswordDialogProbe.PasswordBox.MaxLength -ne 1024 -or $ExcelPasswordDialogProbe.PasswordText.Visibility -ne "Collapsed") {
+        throw "La richiesta protetta della password Excel non puo essere costruita nello stato previsto."
+    }
+    $ExcelPasswordDialogProbe.Window.Close()
     $ReviewEditorRowProbe = [pscustomobject]@{
         CandidateId = "review-editor-probe"
         Client = "Cliente Alfa"
@@ -2748,6 +3017,7 @@ for line in sys.stdin:
         Status = "ready"
         StatusLabel = "Pronto"
         SecretDisplay = "******** (16)"
+        SourcePasswordRequired = $false
         SourceRelativePath = "Cliente Alfa/portale.txt"
         SourceHash = ("a" * 64)
     }
@@ -2758,7 +3028,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.12.4"
+        version = "0.12.5"
         ui = "WPF"
         phases = 4
         controls = 76
@@ -2771,6 +3041,7 @@ for line in sys.stdin:
         client_mapping_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
+        protected_excel_password_prompt = "OK"
         persistent_import_session = "OK"
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"

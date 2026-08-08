@@ -10,7 +10,13 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.12.4` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.12.5` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### File Excel protetti 0.12.5
+
+Quando la fase 03 riconosce un documento Office `.xlsx` cifrato, apre un prompt con campo password mascherato e consente di mostrarne temporaneamente il contenuto durante l'inserimento. Una password errata riapre il prompt con un messaggio specifico; l'annullamento interrompe la revisione senza aprire il documento.
+
+La decifratura avviene esclusivamente in un buffer di memoria. La password del documento resta disponibile soltanto nello stato volatile dell'app per rileggere lo stesso sorgente durante visualizzazione, modifica, controllo d'integrita, dry-run e importazione. Non viene inserita negli argomenti dei processi, nei log, nel JSON di risultato, nei file temporanei o nella richiesta inviata al bridge Passbolt. Una nuova revisione, un nuovo inventario o la chiusura dell'app eliminano la password dallo stato applicativo. Il supporto riguarda il formato moderno `.xlsx`; il formato legacy `.xls` continua a richiedere una conversione preventiva.
 
 ### Revisione modificabile e rilevamento IP 0.12.4
 
@@ -151,6 +157,7 @@ La fase:
 - mostra i candidati come **Pronti** o **Da completare**;
 - permette di filtrare per stato e cercare in cliente, titolo, username, URL e origine;
 - mostra per impostazione predefinita una maschera fissa al posto della password e soltanto la sua lunghezza;
+- riconosce i file `.xlsx` cifrati e richiede la password del documento soltanto quando necessaria;
 - consente, dopo conferma esplicita, di mostrare o nascondere temporaneamente le password;
 - consente di modificare cliente, titolo, username, URL/host e password, ricalcolando lo stato del candidato e invalidando un eventuale piano precedente;
 - calcola l'hash SHA-256 del documento sorgente, tenuto in memoria, per poter rilevare future modifiche prima dell'importazione;
@@ -164,6 +171,8 @@ La password in chiaro può essere presente temporaneamente nella memoria locale 
 - non viene scritta nel registro attività;
 - non viene salvata in file temporanei o report;
 - viene nuovamente mascherata e rimossa dalla UI quando l'utente disattiva la visualizzazione o cambia fase; una password corretta manualmente resta in memoria fino all'importazione o alla chiusura.
+
+La password usata per aprire un `.xlsx` protetto è distinta dalle credenziali contenute nel foglio. Viene passata soltanto ai parser locali attraverso input standard reindirizzato, riutilizzata per i controlli successivi e rimossa dallo stato alla nuova revisione, al nuovo inventario o alla chiusura. Il documento decifrato non viene mai scritto su disco.
 
 ## 04 — Importazione controllata
 
@@ -250,7 +259,7 @@ Ogni sessione di revisione applica questi limiti:
 - rifiuto degli XML contenenti DTD o dichiarazioni di entità;
 - nessuna esecuzione di macro, formule Excel, script o collegamenti Office esterni.
 
-I documenti Office vengono aperti in modalità di lettura. Le formule presenti in XLSX non vengono calcolate né eseguite.
+I documenti Office vengono aperti in modalità di lettura. Le formule presenti in XLSX non vengono calcolate né eseguite. Per gli XLSX protetti, anche il contenuto decifrato resta esclusivamente in memoria; i file legacy XLS non sono aperti.
 
 ## Verifica preliminare delle API
 
@@ -277,7 +286,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 
 L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.12.4 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.12.5 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati.
 
 Per eseguire soltanto il controllo da riga di comando:
 
@@ -289,9 +298,10 @@ Per eseguire soltanto il controllo da riga di comando:
 
 ## Controlli per lo sviluppo
 
-Il bridge OpenPGP usa `openpgp` 6.3.1. Dopo un nuovo clone o se manca `node_modules`, installare la dipendenza bloccata dal lockfile senza eseguire script di pacchetto:
+I parser locali, incluso il supporto Office cifrato, sono bloccati in `requirements.txt`. Il bridge OpenPGP usa `openpgp` 6.3.1. Dopo un nuovo clone, installare le dipendenze Python e, se manca `node_modules`, la dipendenza Node bloccata dal lockfile senza eseguire script di pacchetto:
 
 ```powershell
+python -m pip install --requirement .\requirements.txt
 pnpm install --frozen-lockfile --ignore-scripts
 ```
 

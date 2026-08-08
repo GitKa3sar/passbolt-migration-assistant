@@ -58,3 +58,4 @@ report*.csv
 *.pdf
 *.rtf
 *.txt
+!requirements.txt

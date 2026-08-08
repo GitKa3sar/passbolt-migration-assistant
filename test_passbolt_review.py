@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from dataclasses import asdict
@@ -8,6 +11,28 @@ from pathlib import Path
 from unittest import mock
 
 from passbolt_review import MAX_SELECTED_FILES, ReviewError, analyze_files
+
+
+def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
+    from msoffcrypto.format.ooxml import OOXMLFile
+    from openpyxl import Workbook
+
+    plaintext = io.BytesIO()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Accessi"
+    sheet.append(["Titolo", "Utente", "Password", "URL"])
+    sheet.append(
+        ["Gestionale protetto", "utente-protetto", credential_password, "10.30.40.50"]
+    )
+    workbook.save(plaintext)
+    workbook.close()
+    plaintext.seek(0)
+    try:
+        with path.open("wb") as encrypted_output:
+            OOXMLFile(plaintext).encrypt(document_password, encrypted_output)
+    finally:
+        plaintext.close()
 
 
 class ReviewTests(unittest.TestCase):
@@ -213,6 +238,77 @@ class ReviewTests(unittest.TestCase):
         serialized = json.dumps(asdict(result))
         for secret in ("gest-secret", "extra-secret", "fw-secret"):
             self.assertNotIn(secret, serialized)
+
+    def test_password_protected_xlsx_prompts_rejects_and_decrypts_in_memory(self) -> None:
+        path = self.root / "Cliente Alfa" / "protetto.xlsx"
+        document_password = "Password-file-Excel-42"
+        credential_password = "Segreto-nel-foglio-99"
+        relative_path = "Cliente Alfa/protetto.xlsx"
+        write_encrypted_xlsx(path, document_password, credential_password)
+
+        locked = analyze_files(self.root, [relative_path])
+        self.assertEqual(locked.analyzed_files, 0)
+        self.assertEqual(locked.candidate_count, 0)
+        self.assertEqual(len(locked.protected_excel_issues), 1)
+        self.assertEqual(locked.protected_excel_issues[0].status, "password_required")
+
+        rejected = analyze_files(
+            self.root,
+            [relative_path],
+            file_passwords={relative_path: "password-sbagliata"},
+        )
+        self.assertEqual(rejected.protected_excel_issues[0].status, "password_rejected")
+
+        unlocked = analyze_files(
+            self.root,
+            [relative_path],
+            file_passwords={relative_path: document_password},
+        )
+        self.assertEqual(unlocked.analyzed_files, 1)
+        self.assertEqual(unlocked.candidate_count, 1)
+        self.assertEqual(unlocked.protected_excel_issues, [])
+        self.assertTrue(unlocked.candidates[0].source_password_required)
+        self.assertEqual(unlocked.candidates[0].uri, "10.30.40.50")
+        serialized = json.dumps(asdict(unlocked), ensure_ascii=False)
+        self.assertNotIn(document_password, serialized)
+        self.assertNotIn(credential_password, serialized)
+        self.assertEqual([item.name for item in path.parent.iterdir()], ["protetto.xlsx"])
+
+    def test_secure_review_cli_never_echoes_excel_passwords(self) -> None:
+        path = self.root / "Cliente Beta" / "protetto.xlsx"
+        document_password = "Password-documento-non-serializzare"
+        credential_password = "Password-credenziale-non-serializzare"
+        relative_path = "Cliente Beta/protetto.xlsx"
+        write_encrypted_xlsx(path, document_password, credential_password)
+        request = {
+            "files": [relative_path],
+            "file_passwords": [
+                {"relative_path": relative_path, "password": document_password}
+            ],
+        }
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("passbolt_review.py")),
+                "--secure-json",
+                "--root",
+                str(self.root),
+            ],
+            input=json.dumps(request).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+        envelope = json.loads(completed.stdout)
+        self.assertTrue(envelope["ok"])
+        self.assertEqual(envelope["result"]["candidate_count"], 1)
+        process_output = (completed.stdout + completed.stderr).decode("utf-8")
+        self.assertNotIn(document_password, process_output)
+        self.assertNotIn(credential_password, process_output)
 
     def test_path_traversal_and_legacy_xls_become_safe_warnings(self) -> None:
         outside = self.root.parent / "outside-review.txt"

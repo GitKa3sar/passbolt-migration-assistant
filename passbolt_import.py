@@ -22,18 +22,21 @@ from typing import Any, Iterable
 
 from passbolt_review import (
     MAX_FILE_BYTES,
+    MAX_OFFICE_PASSWORD_CHARACTERS,
     REVIEWABLE_EXTENSIONS,
     SECRET_KEYS,
     ReviewError,
     _find_field,
+    _is_ole_compound_file,
     _make_candidate,
+    _normalized_supplied_path,
     _records_for_file,
     _safe_selected_path,
     _sha256,
 )
 
 
-APP_VERSION = "0.12.4"
+APP_VERSION = "0.12.5"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -61,6 +64,7 @@ class SelectedCandidate:
     reviewed_username: str
     reviewed_uri: str
     password_overridden: bool
+    source_password_required: bool
 
 
 def _candidate_request(value: object) -> SelectedCandidate:
@@ -80,6 +84,7 @@ def _candidate_request(value: object) -> SelectedCandidate:
     reviewed_username = str(value.get("reviewed_username", username)).strip()
     reviewed_uri = str(value.get("reviewed_uri", uri)).strip()
     password_overridden = value.get("password_overridden", False)
+    source_password_required = value.get("source_password_required", False)
     if not candidate_id or len(candidate_id) > 200:
         raise ImportPreparationError("Un candidato non contiene un identificatore valido.")
     if not relative_path or len(relative_path) > 4096:
@@ -108,6 +113,8 @@ def _candidate_request(value: object) -> SelectedCandidate:
         raise ImportPreparationError("I metadati originali superano i limiti consentiti.")
     if not isinstance(password_overridden, bool):
         raise ImportPreparationError("Lo stato della password modificata non è valido.")
+    if not isinstance(source_password_required, bool):
+        raise ImportPreparationError("Lo stato di protezione del file Excel non è valido.")
     return SelectedCandidate(
         candidate_id=candidate_id,
         source_relative_path=relative_path,
@@ -123,6 +130,7 @@ def _candidate_request(value: object) -> SelectedCandidate:
         reviewed_username=reviewed_username,
         reviewed_uri=reviewed_uri,
         password_overridden=password_overridden,
+        source_password_required=source_password_required,
     )
 
 
@@ -151,12 +159,13 @@ def _extension_for(path: Path) -> str:
     return extension
 
 
-def extract_resources(
+def _extract_resources_impl(
     root: str | Path,
     requests: Iterable[object],
     *,
     include_secrets: bool,
     secret_overrides: dict[str, str] | None = None,
+    source_file_passwords: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], int]:
     """Revalidate reviewed candidates and optionally return their secrets.
 
@@ -168,7 +177,28 @@ def extract_resources(
     if not root_path.is_dir():
         raise ImportPreparationError("La cartella clienti non esiste o non è accessibile.")
     selected = _selected_candidates(list(requests))
-    overrides = dict(secret_overrides or {})
+    file_passwords = source_file_passwords or {}
+    selected_paths = {candidate.source_relative_path for candidate in selected}
+    required_password_paths = {
+        candidate.source_relative_path
+        for candidate in selected
+        if candidate.source_password_required
+    }
+    if set(file_passwords) != required_password_paths:
+        raise ImportPreparationError(
+            "Le password dei file Excel in memoria non corrispondono ai sorgenti selezionati."
+        )
+    if any(path not in selected_paths for path in file_passwords):
+        raise ImportPreparationError("È stata fornita una password per un sorgente non selezionato.")
+    for relative_path, password in file_passwords.items():
+        if (
+            not isinstance(relative_path, str)
+            or not isinstance(password, str)
+            or not password
+            or len(password) > MAX_OFFICE_PASSWORD_CHARACTERS
+        ):
+            raise ImportPreparationError("Una password di file Excel in memoria non è valida.")
+    overrides = secret_overrides or {}
     required_override_ids = {
         candidate.candidate_id for candidate in selected if candidate.password_overridden
     }
@@ -211,15 +241,30 @@ def extract_resources(
         relative_parts = Path(relative_path).parts
         client = relative_parts[0] if len(relative_parts) > 1 else "(radice)"
         source_at_root = len(relative_parts) == 1
+        source_password_required = (
+            extension == ".xlsx" and _is_ole_compound_file(path)
+        )
+        if any(
+            candidate.source_password_required != source_password_required
+            for candidate in wanted
+        ):
+            raise ImportPreparationError(
+                "Lo stato di protezione del file Excel non corrisponde più alla revisione."
+            )
         wanted_ids = {candidate.candidate_id for candidate in wanted}
         try:
-            for location, record in _records_for_file(path, extension):
+            for location, record in _records_for_file(
+                path,
+                extension,
+                file_password=file_passwords.get(relative_path),
+            ):
                 candidate = _make_candidate(
                     record,
                     relative_path=relative_path,
                     source_hash=current_hash,
                     client=client,
                     location=location,
+                    source_password_required=source_password_required,
                 )
                 if candidate is None or candidate.candidate_id not in wanted_ids:
                     continue
@@ -233,6 +278,7 @@ def extract_resources(
                     or candidate.title != request.reviewed_title
                     or candidate.username != request.reviewed_username
                     or candidate.uri != request.reviewed_uri
+                    or candidate.source_password_required != request.source_password_required
                 ):
                     raise ImportPreparationError(
                         "I metadati di un candidato non corrispondono più alla revisione."
@@ -290,9 +336,42 @@ def extract_resources(
     return [extracted[candidate.candidate_id] for candidate in selected], len(by_path)
 
 
-def verify_integrity(root: str | Path, requests: Iterable[object]) -> dict[str, Any]:
+def extract_resources(
+    root: str | Path,
+    requests: Iterable[object],
+    *,
+    include_secrets: bool,
+    secret_overrides: dict[str, str] | None = None,
+    source_file_passwords: dict[str, str] | None = None,
+) -> tuple[list[dict[str, str]], int]:
+    """Revalidate candidates while limiting cleartext password-map lifetime."""
+
+    overrides = dict(secret_overrides or {})
+    file_passwords = dict(source_file_passwords or {})
+    try:
+        return _extract_resources_impl(
+            root,
+            requests,
+            include_secrets=include_secrets,
+            secret_overrides=overrides,
+            source_file_passwords=file_passwords,
+        )
+    finally:
+        overrides.clear()
+        file_passwords.clear()
+
+
+def verify_integrity(
+    root: str | Path,
+    requests: Iterable[object],
+    *,
+    source_file_passwords: dict[str, str] | None = None,
+) -> dict[str, Any]:
     resources, source_count = extract_resources(
-        root, requests, include_secrets=False
+        root,
+        requests,
+        include_secrets=False,
+        source_file_passwords=source_file_passwords,
     )
     return {
         "verified": True,
@@ -353,6 +432,29 @@ def _secret_overrides(value: object) -> dict[str, str]:
     return overrides
 
 
+def _source_file_passwords(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, list):
+        raise ImportPreparationError("L’elenco delle password dei file Excel non è valido.")
+    passwords: dict[str, str] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            raise ImportPreparationError("Una password di file Excel non è valida.")
+        relative_path = _normalized_supplied_path(item.get("relative_path", ""))
+        password = item.get("password")
+        if (
+            not relative_path
+            or relative_path in passwords
+            or not isinstance(password, str)
+            or not password
+            or len(password) > MAX_OFFICE_PASSWORD_CHARACTERS
+        ):
+            raise ImportPreparationError("Una password di file Excel non è valida.")
+        passwords[relative_path] = password
+    return passwords
+
+
 def _prepare_import_resources(
     root: str | Path, request: dict[str, Any]
 ) -> tuple[list[object], list[dict[str, Any]]]:
@@ -390,8 +492,10 @@ def _prepare_import_resources(
             "Ogni risorsa da creare deve avere almeno uno fra username e URL/host."
         )
     overrides = _secret_overrides(request.get("secret_overrides"))
+    file_passwords = _source_file_passwords(request.get("source_file_passwords"))
     if any(candidate_id not in create_ids for candidate_id in overrides):
         overrides.clear()
+        file_passwords.clear()
         raise ImportPreparationError(
             "Le password modificate non corrispondono alle risorse da creare."
         )
@@ -401,16 +505,28 @@ def _prepare_import_resources(
             create_requests,
             include_secrets=True,
             secret_overrides=overrides,
+            source_file_passwords=file_passwords,
         )
     finally:
         overrides.clear()
+        file_passwords.clear()
     return candidates, resources
 
 
-def reveal_secrets(root: str | Path, requests: Iterable[object]) -> dict[str, Any]:
+def reveal_secrets(
+    root: str | Path,
+    requests: Iterable[object],
+    *,
+    source_file_passwords: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Explicitly reveal selected source secrets to the local desktop process."""
 
-    resources, _ = extract_resources(root, requests, include_secrets=True)
+    resources, _ = extract_resources(
+        root,
+        requests,
+        include_secrets=True,
+        source_file_passwords=source_file_passwords,
+    )
     return {
         "revealed_count": len(resources),
         "secrets": [
@@ -510,7 +626,15 @@ def _session_bridge_request(
         )
     if command == "session-readiness":
         candidates = request.get("candidates")
-        verify_integrity(root, candidates if isinstance(candidates, list) else [])
+        file_passwords = _source_file_passwords(request.get("source_file_passwords"))
+        try:
+            verify_integrity(
+                root,
+                candidates if isinstance(candidates, list) else [],
+                source_file_passwords=file_passwords,
+            )
+        finally:
+            file_passwords.clear()
         return (
             {
                 "command": "session-readiness",
@@ -694,6 +818,12 @@ def run_import_session(
                     bridge_request.pop("resources", None)
                     bridge_request.clear()
                 if request is not None:
+                    for key in ("source_file_passwords", "secret_overrides"):
+                        entries = request.get(key)
+                        if isinstance(entries, list):
+                            for entry in entries:
+                                if isinstance(entry, dict) and "password" in entry:
+                                    entry["password"] = None
                     request["passphrase"] = None
                     request["mfa_totp"] = None
                     request.clear()
@@ -755,12 +885,15 @@ def main() -> int:
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
                     "explicit_reveal_supported": True,
+                    "protected_excel_integrity_supported": True,
                     "secrets_serialized": False,
                 },
             }
         )
         return 0
 
+    request: dict[str, Any] | None = None
+    file_passwords: dict[str, str] = {}
     try:
         if not args.root:
             raise ImportPreparationError("La cartella clienti non è configurata.")
@@ -776,14 +909,24 @@ def main() -> int:
             )
         request = _read_stdin_json()
         if args.integrity:
+            file_passwords = _source_file_passwords(request.get("source_file_passwords"))
             result = {
                 "ok": True,
-                "result": verify_integrity(args.root, request.get("candidates", [])),
+                "result": verify_integrity(
+                    args.root,
+                    request.get("candidates", []),
+                    source_file_passwords=file_passwords,
+                ),
             }
         elif args.reveal:
+            file_passwords = _source_file_passwords(request.get("source_file_passwords"))
             result = {
                 "ok": True,
-                "result": reveal_secrets(args.root, request.get("candidates", [])),
+                "result": reveal_secrets(
+                    args.root,
+                    request.get("candidates", []),
+                    source_file_passwords=file_passwords,
+                ),
             }
         else:
             if not args.node or not args.crypto_script:
@@ -807,6 +950,18 @@ def main() -> int:
             }
         )
         return 2
+    finally:
+        file_passwords.clear()
+        if request is not None:
+            for key in ("source_file_passwords", "secret_overrides"):
+                entries = request.get(key)
+                if isinstance(entries, list):
+                    for entry in entries:
+                        if isinstance(entry, dict) and "password" in entry:
+                            entry["password"] = None
+            request["passphrase"] = None
+            request["mfa_totp"] = None
+            request.clear()
     _write_json(result)
     return 0 if result.get("ok") else 2
 

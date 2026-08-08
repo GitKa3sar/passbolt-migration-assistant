@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.12.4 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.12.5 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -15,6 +15,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 
 - inventario metadati di file TXT, CSV, JSON, XML, XLSX, DOCX e ODT;
 - revisione locale con password mascherate per impostazione predefinita, visualizzazione esplicita temporanea ed editor dei cinque campi importabili;
+- riconoscimento dei file `.xlsx` protetti da password, con richiesta interattiva e decifratura esclusivamente in memoria;
 - rilevamento automatico di indirizzi IPv4 e IPv6 per il campo URL/host quando manca un URL esplicito;
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
@@ -34,15 +35,16 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - pnpm, oppure Corepack con pnpm abilitato;
 - connettività HTTPS verso l'istanza Passbolt di destinazione.
 
-Le dipendenze applicative sono ridotte a `openpgp` 6.3.1 e sono bloccate da `pnpm-lock.yaml`.
+Le dipendenze Node sono bloccate da `pnpm-lock.yaml`; i parser Python e il supporto Office cifrato sono bloccati da `requirements.txt`.
 
 ## Installazione e avvio
 
-Clonare il repository e installare le dipendenze Node senza eseguire script di pacchetto:
+Clonare il repository e installare le dipendenze Python e Node. L'installazione Node non esegue script di pacchetto:
 
 ```powershell
 git clone https://github.com/GitKa3sar/passbolt-migration-assistant.git
 Set-Location .\passbolt-migration-assistant
+python -m pip install --requirement .\requirements.txt
 pnpm install --frozen-lockfile --ignore-scripts
 ```
 
@@ -82,7 +84,7 @@ Prima di usare il progetto:
 - controllare manualmente il piano, il digest e la cartella Passbolt di destinazione;
 - conservare un backup verificato e applicare il principio del minimo privilegio all'account usato.
 
-La chiave privata viene selezionata dalla GUI. Passphrase e TOTP sono inviati al bridge locale soltanto per aprire la sessione, rimossi subito dalla richiesta e non scritti nei log. I cookie di sessione restano in memoria e il logout viene tentato alla chiusura. Nella revisione le password vengono mostrate soltanto dopo una conferma esplicita; quelle lette dai sorgenti vengono rimosse dalla UI quando si torna alla maschera o si cambia fase, mentre eventuali correzioni restano in memoria esclusivamente fino all'importazione o alla chiusura.
+La chiave privata viene selezionata dalla GUI. Passphrase e TOTP sono inviati al bridge locale soltanto per aprire la sessione, rimossi subito dalla richiesta e non scritti nei log. I cookie di sessione restano in memoria e il logout viene tentato alla chiusura. Nella revisione le password vengono mostrate soltanto dopo una conferma esplicita; quelle lette dai sorgenti vengono rimosse dalla UI quando si torna alla maschera o si cambia fase, mentre eventuali correzioni restano in memoria esclusivamente fino all'importazione o alla chiusura. Se un `.xlsx` è protetto, la password del documento viene chiesta soltanto dopo il rilevamento della cifratura, resta in memoria per revisione, verifica d'integrità e importazione e non viene inoltrata a Passbolt. Il formato legacy `.xls` protetto non è supportato.
 
 Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavorare con materiale sensibile.
 
@@ -104,7 +106,7 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
-La versione 0.12.4 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti.
+La versione 0.12.5 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
 
 La fase 0.13 prevista introduce un registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. Le fasi successive potranno estendere provider MFA, gestione controllata dei permessi e operazioni sicure sulle risorse esistenti.
 

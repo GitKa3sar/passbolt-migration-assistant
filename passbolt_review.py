@@ -23,11 +23,11 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, Mapping
 from xml.etree import ElementTree
 
 
-APP_VERSION = "0.12.4"
+APP_VERSION = "0.12.5"
 ROOT_CLIENT_LABEL = "(radice)"
 MAX_SELECTED_FILES = 50
 MAX_FILE_BYTES = 20 * 1024 * 1024
@@ -36,6 +36,9 @@ MAX_TEXT_CHARACTERS = 2_000_000
 MAX_RECORDS_PER_FILE = 5_000
 MAX_PDF_PAGES = 200
 MAX_CANDIDATES = 2_000
+MAX_SECURE_REVIEW_STDIN_BYTES = 2 * 1024 * 1024
+MAX_OFFICE_PASSWORD_CHARACTERS = 1_024
+OLE_COMPOUND_FILE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 
 # Third-party document readers can emit advisory warnings on stderr. The CLI
 # stdout is a strict JSON contract consumed by Windows PowerShell 5.1, so known
@@ -68,6 +71,18 @@ class ReviewError(RuntimeError):
     """A safe, user-facing review error."""
 
 
+class ExcelPasswordRequired(ReviewError):
+    """A modern Excel document is encrypted and needs a password."""
+
+
+class ExcelPasswordRejected(ReviewError):
+    """The supplied Excel document password was rejected."""
+
+
+class ExcelEncryptionReaderUnavailable(ReviewError):
+    """The optional in-memory Office decryption dependency is unavailable."""
+
+
 @dataclass(frozen=True)
 class CredentialCandidate:
     candidate_id: str
@@ -83,7 +98,14 @@ class CredentialCandidate:
     secret_length: int
     status: str
     confidence: str
+    source_password_required: bool = False
     fields_detected: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ProtectedExcelIssue:
+    relative_path: str
+    status: str
 
 
 @dataclass(frozen=True)
@@ -97,6 +119,7 @@ class ReviewResult:
     incomplete_count: int
     candidates: list[CredentialCandidate] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    protected_excel_issues: list[ProtectedExcelIssue] = field(default_factory=list)
 
 
 def _normalized_key(value: object) -> str:
@@ -276,6 +299,7 @@ def _make_candidate(
     source_hash: str,
     client: str,
     location: str,
+    source_password_required: bool = False,
 ) -> CredentialCandidate | None:
     title_found, title = _find_field(record, TITLE_KEYS)
     username_found, username = _find_field(record, USERNAME_KEYS, allow_prefix=True)
@@ -325,6 +349,7 @@ def _make_candidate(
         secret_length=len(secret) if secret_present else 0,
         status="ready" if ready else "incomplete",
         confidence=confidence,
+        source_password_required=source_password_required,
         fields_detected=fields_detected,
     )
 
@@ -467,9 +492,11 @@ def _ini_records(text: str) -> Iterator[tuple[str, dict[str, str]]]:
         yield "sezione [DEFAULT]", dict(parser.defaults())
 
 
-def _preflight_zip(path: Path) -> None:
+def _preflight_zip(source: Path | io.BytesIO) -> None:
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
     try:
-        with zipfile.ZipFile(path) as archive:
+        with zipfile.ZipFile(source) as archive:
             total = sum(member.file_size for member in archive.infolist())
             if total > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
                 raise ReviewError("Archivio Office troppo grande dopo la decompressione.")
@@ -477,16 +504,86 @@ def _preflight_zip(path: Path) -> None:
                 raise ReviewError("Archivio Office cifrato non supportato.")
     except zipfile.BadZipFile as exc:
         raise ReviewError("Documento Office non valido o danneggiato.") from exc
+    finally:
+        if isinstance(source, io.BytesIO):
+            source.seek(0)
 
 
-def _xlsx_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
-    _preflight_zip(path)
+def _is_ole_compound_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as stream:
+            return stream.read(len(OLE_COMPOUND_FILE_SIGNATURE)) == OLE_COMPOUND_FILE_SIGNATURE
+    except OSError:
+        return False
+
+
+def _decrypt_xlsx_in_memory(path: Path, password: str | None) -> io.BytesIO:
+    if password is not None and (
+        not password or len(password) > MAX_OFFICE_PASSWORD_CHARACTERS
+    ):
+        raise ExcelPasswordRejected("La password del file Excel non è valida.")
+    try:
+        import msoffcrypto
+        from msoffcrypto import exceptions as msoffcrypto_exceptions
+    except ImportError as exc:
+        raise ExcelEncryptionReaderUnavailable(
+            "Supporto Excel cifrato non disponibile: installare msoffcrypto-tool 6.0.0."
+        ) from exc
+
+    decrypted = io.BytesIO()
+    try:
+        with path.open("rb") as encrypted_stream:
+            office_file = msoffcrypto.OfficeFile(encrypted_stream)
+            if not office_file.is_encrypted():
+                raise ReviewError("Documento Excel OLE non cifrato o non riconosciuto.")
+            if password is None:
+                raise ExcelPasswordRequired("Il file Excel è protetto da password.")
+            office_file.load_key(password=password, verify_password=True)
+            office_file.decrypt(decrypted, verify_integrity=True)
+        decrypted.seek(0)
+        _preflight_zip(decrypted)
+        return decrypted
+    except msoffcrypto_exceptions.InvalidKeyError as exc:
+        decrypted.close()
+        raise ExcelPasswordRejected("Password del file Excel non corretta.") from exc
+    except msoffcrypto_exceptions.DecryptionError as exc:
+        decrypted.close()
+        raise ExcelPasswordRejected("Password del file Excel non corretta o file danneggiato.") from exc
+    except (msoffcrypto_exceptions.FileFormatError, msoffcrypto_exceptions.ParseError) as exc:
+        decrypted.close()
+        raise ReviewError("Formato del file Excel cifrato non riconosciuto.") from exc
+    except Exception:
+        decrypted.close()
+        raise
+
+
+def _xlsx_records(
+    path: Path, password: str | None = None
+) -> Iterator[tuple[str, dict[str, str]]]:
+    decrypted: io.BytesIO | None = None
+    workbook_source: Path | io.BytesIO = path
+    if zipfile.is_zipfile(path):
+        _preflight_zip(path)
+    elif _is_ole_compound_file(path):
+        decrypted = _decrypt_xlsx_in_memory(path, password)
+        workbook_source = decrypted
+    else:
+        _preflight_zip(path)
     try:
         from openpyxl import load_workbook
     except ImportError as exc:
+        if decrypted is not None:
+            decrypted.close()
         raise ReviewError("Parser XLSX non disponibile.") from exc
 
-    workbook = load_workbook(path, read_only=True, data_only=False, keep_links=False)
+    try:
+        workbook = load_workbook(
+            workbook_source, read_only=True, data_only=False, keep_links=False
+        )
+    except Exception:
+        if decrypted is not None:
+            decrypted.close()
+        raise
     try:
         emitted = 0
         for worksheet in workbook.worksheets:
@@ -515,6 +612,8 @@ def _xlsx_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
                 return
     finally:
         workbook.close()
+        if decrypted is not None:
+            decrypted.close()
 
 
 def _docx_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
@@ -567,11 +666,13 @@ def _pdf_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
         yield from _key_value_records(text, f"pagina {page_number}")
 
 
-def _records_for_file(path: Path, extension: str) -> Iterable[tuple[str, dict[object, object]]]:
+def _records_for_file(
+    path: Path, extension: str, *, file_password: str | None = None
+) -> Iterable[tuple[str, dict[object, object]]]:
     if extension == ".xls":
         raise ReviewError("Formato XLS legacy non disponibile; salvare una copia come XLSX.")
     if extension == ".xlsx":
-        return _xlsx_records(path)
+        return _xlsx_records(path, file_password)
     if extension == ".docx":
         return _docx_records(path)
     if extension == ".pdf":
@@ -617,7 +718,16 @@ def _safe_selected_path(root: Path, supplied: str) -> tuple[Path, str]:
     return candidate, normalized_relative.as_posix()
 
 
-def analyze_files(root: str | Path, selected_files: Iterable[str]) -> ReviewResult:
+def _normalized_supplied_path(value: object) -> str:
+    return str(value).replace("\\", "/").strip()
+
+
+def analyze_files(
+    root: str | Path,
+    selected_files: Iterable[str],
+    *,
+    file_passwords: Mapping[str, str] | None = None,
+) -> ReviewResult:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
         raise ReviewError("La cartella clienti non esiste o non è accessibile.")
@@ -628,14 +738,30 @@ def analyze_files(root: str | Path, selected_files: Iterable[str]) -> ReviewResu
     if len(supplied_files) > MAX_SELECTED_FILES:
         raise ReviewError(f"Selezionare al massimo {MAX_SELECTED_FILES} file per ogni revisione.")
 
+    supplied_keys = {_normalized_supplied_path(value) for value in supplied_files}
+    password_map: dict[str, str] = {}
+    for supplied_path, password in dict(file_passwords or {}).items():
+        normalized_path = _normalized_supplied_path(supplied_path)
+        if normalized_path not in supplied_keys:
+            raise ReviewError("È stata fornita una password per un file non selezionato.")
+        if not isinstance(password, str) or not password:
+            raise ReviewError("La password di un file Excel selezionato non è valida.")
+        if len(password) > MAX_OFFICE_PASSWORD_CHARACTERS:
+            raise ReviewError(
+                f"La password di un file Excel supera {MAX_OFFICE_PASSWORD_CHARACTERS} caratteri."
+            )
+        password_map[normalized_path] = password
+
     candidates: list[CredentialCandidate] = []
     warnings: list[str] = []
+    protected_excel_issues: list[ProtectedExcelIssue] = []
     analyzed_files = 0
 
     for supplied in supplied_files:
         if len(candidates) >= MAX_CANDIDATES:
             warnings.append(f"Limite complessivo di {MAX_CANDIDATES} candidati raggiunto.")
             break
+        relative_path = _normalized_supplied_path(supplied)
         try:
             path, relative_path = _safe_selected_path(root_path, supplied)
             extension = path.suffix.lower()
@@ -650,14 +776,21 @@ def analyze_files(root: str | Path, selected_files: Iterable[str]) -> ReviewResu
             source_hash = _sha256(path)
             relative_parts = Path(relative_path).parts
             client = relative_parts[0] if len(relative_parts) > 1 else ROOT_CLIENT_LABEL
+            file_password = password_map.get(relative_path)
+            source_password_required = (
+                extension == ".xlsx" and _is_ole_compound_file(path)
+            )
             file_candidates = 0
-            for location, record in _records_for_file(path, extension):
+            for location, record in _records_for_file(
+                path, extension, file_password=file_password
+            ):
                 candidate = _make_candidate(
                     record,
                     relative_path=relative_path,
                     source_hash=source_hash,
                     client=client,
                     location=location,
+                    source_password_required=source_password_required,
                 )
                 if candidate is not None:
                     candidates.append(candidate)
@@ -667,6 +800,18 @@ def analyze_files(root: str | Path, selected_files: Iterable[str]) -> ReviewResu
             analyzed_files += 1
             if file_candidates == 0:
                 warnings.append(f"{relative_path}: nessun candidato riconosciuto.")
+        except ExcelPasswordRequired:
+            protected_excel_issues.append(
+                ProtectedExcelIssue(relative_path=relative_path, status="password_required")
+            )
+        except ExcelPasswordRejected:
+            protected_excel_issues.append(
+                ProtectedExcelIssue(relative_path=relative_path, status="password_rejected")
+            )
+        except ExcelEncryptionReaderUnavailable:
+            protected_excel_issues.append(
+                ProtectedExcelIssue(relative_path=relative_path, status="reader_unavailable")
+            )
         except (OSError, ReviewError, ValueError, zipfile.BadZipFile) as exc:
             warnings.append(f"{supplied}: {exc}")
         except Exception as exc:
@@ -683,7 +828,42 @@ def analyze_files(root: str | Path, selected_files: Iterable[str]) -> ReviewResu
         incomplete_count=len(candidates) - ready_count,
         candidates=candidates,
         warnings=warnings,
+        protected_excel_issues=protected_excel_issues,
     )
+
+
+def _read_secure_review_request() -> tuple[list[str], dict[str, str]]:
+    raw = sys.stdin.buffer.read(MAX_SECURE_REVIEW_STDIN_BYTES + 1)
+    if len(raw) > MAX_SECURE_REVIEW_STDIN_BYTES:
+        raise ReviewError("La richiesta di revisione protetta è troppo grande.")
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewError("La richiesta di revisione protetta non contiene JSON valido.") from exc
+    if not isinstance(document, dict):
+        raise ReviewError("La richiesta di revisione protetta deve essere un oggetto JSON.")
+    files = document.get("files")
+    if not isinstance(files, list) or not files or not all(isinstance(item, str) for item in files):
+        raise ReviewError("La richiesta protetta non contiene file selezionati validi.")
+    password_entries = document.get("file_passwords", [])
+    if not isinstance(password_entries, list):
+        raise ReviewError("L’elenco delle password Excel non è valido.")
+    passwords: dict[str, str] = {}
+    for entry in password_entries:
+        if not isinstance(entry, dict):
+            raise ReviewError("Una password Excel non è valida.")
+        relative_path = _normalized_supplied_path(entry.get("relative_path", ""))
+        password = entry.get("password")
+        if (
+            not relative_path
+            or relative_path in passwords
+            or not isinstance(password, str)
+            or not password
+            or len(password) > MAX_OFFICE_PASSWORD_CHARACTERS
+        ):
+            raise ReviewError("Una password Excel non è valida.")
+        passwords[relative_path] = password
+    return files, passwords
 
 
 def parse_args() -> argparse.Namespace:
@@ -691,6 +871,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", help="Cartella principale configurata nell'app.")
     parser.add_argument("--file", action="append", default=[], help="Percorso relativo selezionato; ripetibile.")
     parser.add_argument("--json", action="store_true", help="Stampa il report JSON con segreti mascherati.")
+    parser.add_argument(
+        "--secure-json",
+        action="store_true",
+        help="Legge file e password Excel da stdin e restituisce una busta JSON.",
+    )
     parser.add_argument("--self-test", action="store_true")
     return parser.parse_args()
 
@@ -704,11 +889,42 @@ def main() -> int:
                     "version": APP_VERSION,
                     "max_selected_files": MAX_SELECTED_FILES,
                     "reviewable_extensions": len(REVIEWABLE_EXTENSIONS),
+                    "excel_password_prompt_supported": True,
                     "secrets_serialized": False,
                 }
             )
         )
         return 0
+    if args.secure_json:
+        files: list[str] = []
+        passwords: dict[str, str] = {}
+        try:
+            if not args.root:
+                raise ReviewError("La cartella clienti non è configurata.")
+            files, passwords = _read_secure_review_request()
+            result = analyze_files(args.root, files, file_passwords=passwords)
+            envelope = {"ok": True, "result": asdict(result)}
+            print(json.dumps(envelope, ensure_ascii=True, separators=(",", ":")))
+            return 0
+        except ReviewError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "SECURE_REVIEW_FAILED",
+                            "message": str(exc),
+                        },
+                    },
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 2
+        finally:
+            passwords.clear()
+            files.clear()
+
     if not args.root or not args.file:
         print("ERRORE: indicare --root e almeno un --file.", file=sys.stderr)
         return 2
