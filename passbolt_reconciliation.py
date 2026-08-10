@@ -26,6 +26,7 @@ MAX_JOURNAL_BYTES = 16 * 1024 * 1024
 MAX_EVENT_BYTES = 64 * 1024
 MAX_EVENTS = 10_000
 MAX_CANDIDATES = 5_000
+MAX_JOURNALS = 2_000
 
 _JOURNAL_NAME = re.compile(
     r"^batch-(?P<batch_id>[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
@@ -71,11 +72,13 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "candidates",
             }
         ),
-        frozenset(),
+        frozenset({"destination_mapping_hash"}),
     ),
     "operation_intent": (
         frozenset({"operation_id", "object_type", "action"}),
-        frozenset({"candidate_id", "destination_key_hash"}),
+        frozenset(
+            {"candidate_id", "destination_key_hash", "permission_mask_hash"}
+        ),
     ),
     "folder_created": (
         frozenset({"operation_id", "folder_id", "status"}),
@@ -109,6 +112,31 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
             }
         ),
     ),
+    "operation_verified": (
+        frozenset(
+            {"recovery_id", "operation_id", "object_type", "resolution"}
+        ),
+        frozenset(
+            {
+                "candidate_id",
+                "destination_key_hash",
+                "folder_id",
+                "resource_id",
+            }
+        ),
+    ),
+    "recovery_verified": (
+        frozenset(
+            {
+                "recovery_id",
+                "verification_digest",
+                "verified_operation_count",
+                "remote_success_count",
+                "retry_count",
+            }
+        ),
+        frozenset(),
+    ),
     "batch_completed": (
         frozenset(
             {
@@ -134,6 +162,7 @@ _OBJECT_TYPES = {"folder", "resource"}
 _FOLDER_STATUSES = {"created", "created_unshared", "created_shared", "reconciled_shared"}
 _RESOURCE_STATUSES = {"created", "created_unshared", "created_shared"}
 _FAILURE_OUTCOMES = {"not_started", "unknown", "partial", "confirmed"}
+_VERIFICATION_RESOLUTIONS = {"remote_success", "not_applied"}
 _DUPLICATE_KINDS = {"batch", "server_destination"}
 _DESTINATION_MODES = {"client_folders", "client_mapping", "direct_folder", "root"}
 _FORMATS = {"auto", "v4", "v5", "none"}
@@ -183,6 +212,53 @@ class JournalSnapshot:
         return str(self.events[-1]["record_hash"])
 
 
+@dataclass(frozen=True)
+class ReconciliationBatchSummary:
+    batch_id: str
+    recorded_at: str | None
+    status: str
+    candidate_count: int | None
+    event_count: int | None
+    truncated_tail: bool
+
+
+class ReconciliationJournalLease:
+    """Process-held exclusive lease preventing concurrent recovery of one batch."""
+
+    def __init__(self, path: Path, handle: BinaryIO) -> None:
+        self.path = path
+        self._handle: BinaryIO | None = handle
+
+    def close(self) -> None:
+        handle = self._handle
+        if handle is None:
+            return
+        self._handle = None
+        try:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
+
+    def __enter__(self) -> "ReconciliationJournalLease":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+def _batch_uuid(value: object) -> str:
+    return _uuid(value, "Identificativo lotto", version_four=True)
+
+
 def default_journal_root() -> Path:
     """Return the per-user journal directory, always outside the repository."""
 
@@ -201,6 +277,41 @@ def hash_user_identifier(user_id: str) -> str:
     if not normalized or len(normalized) > 256:
         raise ReconciliationJournalError("Identificativo utente non valido.")
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def hash_client_destination_mapping(value: object) -> str:
+    """Hash a client mapping without persisting client labels."""
+
+    if value is None:
+        entries: list[dict[str, str | None]] = []
+    elif isinstance(value, (list, tuple)) and len(value) <= MAX_CANDIDATES:
+        entries = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, Mapping) or set(item) != {"client", "folder_id"}:
+                raise ReconciliationJournalError(
+                    "Mappatura delle destinazioni non valida."
+                )
+            client = str(item["client"]).strip().casefold()
+            if not client or len(client) > 256 or client in seen:
+                raise ReconciliationJournalError(
+                    "Mappatura delle destinazioni non valida."
+                )
+            seen.add(client)
+            entries.append(
+                {
+                    "client_hash": hashlib.sha256(
+                        client.encode("utf-8")
+                    ).hexdigest(),
+                    "folder_id": _optional_uuid(
+                        item["folder_id"], "Cartella della mappatura"
+                    ),
+                }
+            )
+        entries.sort(key=lambda item: str(item["client_hash"]))
+    else:
+        raise ReconciliationJournalError("Mappatura delle destinazioni non valida.")
+    return hashlib.sha256(_canonical_json(entries)).hexdigest()
 
 
 def _utc_now() -> str:
@@ -381,6 +492,17 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
             "folder_format": folder_format,
             "destination_mode": destination_mode,
             "destination_folder_id": destination_folder_id,
+            **(
+                {
+                    "destination_mapping_hash": _hex(
+                        data["destination_mapping_hash"],
+                        _SHA256,
+                        "Hash mappatura destinazioni",
+                    )
+                }
+                if "destination_mapping_hash" in data
+                else {}
+            ),
             "candidate_count": candidate_count,
             "candidates": candidates,
         }
@@ -396,6 +518,18 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
     if "destination_key_hash" in data:
         data["destination_key_hash"] = _hex(
             data["destination_key_hash"], _SHA256, "Hash destinazione"
+        )
+    if "permission_mask_hash" in data:
+        data["permission_mask_hash"] = _hex(
+            data["permission_mask_hash"], _SHA256, "Hash permessi"
+        )
+    if "verification_digest" in data:
+        data["verification_digest"] = _hex(
+            data["verification_digest"], _SHA256, "Digest verifica"
+        )
+    if "recovery_id" in data:
+        data["recovery_id"] = _uuid(
+            data["recovery_id"], "Identificativo recupero", version_four=True
         )
     for field in ("folder_id", "resource_id"):
         if field in data:
@@ -413,6 +547,9 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
         "created_resource_count",
         "shared_resource_count",
         "skipped_duplicate_count",
+        "verified_operation_count",
+        "remote_success_count",
+        "retry_count",
     ):
         if field in data:
             data[field] = _count(data[field], field.replace("_", " ").capitalize())
@@ -472,6 +609,10 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
                 or not 100 <= status_code <= 599
             ):
                 raise ReconciliationJournalError("Stato HTTP non valido.")
+    if event_type == "operation_verified":
+        data["resolution"] = str(data["resolution"]).strip().lower()
+        if data["resolution"] not in _VERIFICATION_RESOLUTIONS:
+            raise ReconciliationJournalError("Esito della verifica non valido.")
     return data
 
 
@@ -503,6 +644,8 @@ def _make_record(
 def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
     operations: dict[str, dict[str, Any]] = {}
     completed_operations: set[str] = set()
+    verifications: dict[str, dict[str, dict[str, Any]]] = {}
+    completed_recoveries: set[str] = set()
     folder_actions = {"create_folder", "share_folder", "reconcile_folder"}
     resource_actions = {"create_resource", "share_resource"}
 
@@ -561,6 +704,86 @@ def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
                 if payload["status"] != expected_status:
                     raise ReconciliationJournalError("Stato cartella non coerente.")
             completed_operations.add(operation_id)
+            continue
+
+        if event_type == "operation_verified":
+            operation_id = str(payload["operation_id"])
+            recovery_id = str(payload["recovery_id"])
+            intent = operations.get(operation_id)
+            if intent is None:
+                raise ReconciliationJournalError(
+                    "Verifica senza operazione registrata."
+                )
+            if recovery_id in completed_recoveries:
+                raise ReconciliationJournalError(
+                    "Verifica aggiunta dopo la chiusura del recupero."
+                )
+            recovery_items = verifications.setdefault(recovery_id, {})
+            if operation_id in recovery_items:
+                raise ReconciliationJournalError(
+                    "Operazione verificata due volte nello stesso recupero."
+                )
+            if payload["object_type"] != intent["object_type"]:
+                raise ReconciliationJournalError(
+                    "Tipo di oggetto della verifica non coerente."
+                )
+            for field in ("candidate_id", "destination_key_hash"):
+                if field in intent and field not in payload:
+                    raise ReconciliationJournalError(
+                        "Identità tecnica della verifica mancante."
+                    )
+                if field in payload and payload[field] != intent.get(field):
+                    raise ReconciliationJournalError(
+                        "Identità tecnica della verifica non coerente."
+                    )
+            action = str(intent["action"])
+            resolution = str(payload["resolution"])
+            object_id_field = (
+                "folder_id" if intent["object_type"] == "folder" else "resource_id"
+            )
+            if resolution == "remote_success" and object_id_field not in payload:
+                raise ReconciliationJournalError(
+                    "Verifica remota riuscita senza identificatore dell’oggetto."
+                )
+            if action in {"share_folder", "reconcile_folder", "share_resource"}:
+                if object_id_field not in payload:
+                    raise ReconciliationJournalError(
+                        "Verifica della condivisione senza identificatore remoto."
+                    )
+            recovery_items[operation_id] = dict(payload)
+            continue
+
+        if event_type == "recovery_verified":
+            recovery_id = str(payload["recovery_id"])
+            if recovery_id in completed_recoveries:
+                raise ReconciliationJournalError("Recupero duplicato nel registro.")
+            recovery_items = verifications.get(recovery_id, {})
+            if set(recovery_items) != set(operations):
+                raise ReconciliationJournalError(
+                    "Il recupero non ha verificato tutte le operazioni registrate."
+                )
+            if payload["verified_operation_count"] != len(recovery_items):
+                raise ReconciliationJournalError(
+                    "Conteggio delle operazioni verificate non coerente."
+                )
+            remote_success_count = sum(
+                item["resolution"] == "remote_success"
+                for item in recovery_items.values()
+            )
+            if payload["remote_success_count"] != remote_success_count:
+                raise ReconciliationJournalError(
+                    "Conteggio delle verifiche remote non coerente."
+                )
+            retry_count = sum(
+                item["resolution"] == "not_applied"
+                for item in recovery_items.values()
+            )
+            if payload["retry_count"] != retry_count:
+                raise ReconciliationJournalError(
+                    "Conteggio delle operazioni da ripetere non coerente."
+                )
+            completed_operations.update(recovery_items)
+            completed_recoveries.add(recovery_id)
             continue
 
         if event_type == "batch_completed":
@@ -768,6 +991,209 @@ def read_journal(path: str | Path) -> JournalSnapshot:
     return _decode_journal(journal_path, raw)
 
 
+def journal_path_for_batch(
+    batch_id: object, root: str | Path | None = None
+) -> Path:
+    """Resolve a journal only by its canonical v4 UUID inside the journal root."""
+
+    normalized = _batch_uuid(batch_id)
+    journal_root = Path(root) if root is not None else default_journal_root()
+    if not journal_root.is_dir() or journal_root.is_symlink():
+        raise ReconciliationJournalError("Directory del registro non disponibile.")
+    path = journal_root / f"batch-{normalized}.jsonl"
+    if path.parent != journal_root:
+        raise ReconciliationJournalError("Identificativo lotto non valido.")
+    return path
+
+
+def read_batch(
+    batch_id: object, root: str | Path | None = None
+) -> JournalSnapshot:
+    """Read one exact batch without accepting a caller-controlled path."""
+
+    return read_journal(journal_path_for_batch(batch_id, root))
+
+
+def acquire_journal_lease(
+    journal: "ReconciliationJournal",
+) -> ReconciliationJournalLease:
+    """Hold a separate one-byte lock for the whole verify/apply lifecycle."""
+
+    snapshot = journal.read()
+    lock_path = snapshot.path.with_suffix(".lock")
+    if lock_path.exists() and (not lock_path.is_file() or lock_path.is_symlink()):
+        raise ReconciliationJournalError("File di lock del registro non valido.")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+        handle = os.fdopen(descriptor, "r+b", buffering=0)
+    except OSError as exc:
+        raise ReconciliationJournalError(
+            "Impossibile aprire il lock del registro."
+        ) from exc
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            _write_all(handle.fileno(), b"\0")
+            os.fsync(handle.fileno())
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise ReconciliationJournalBusy(
+            "Il lotto è già utilizzato da un’altra sessione."
+        ) from exc
+    return ReconciliationJournalLease(lock_path, handle)
+
+
+def list_reconciliation_batches(
+    root: str | Path | None = None,
+    *,
+    incomplete_only: bool = True,
+) -> tuple[ReconciliationBatchSummary, ...]:
+    """List bounded, secret-free journal summaries for the future recovery UI."""
+
+    journal_root = Path(root) if root is not None else default_journal_root()
+    if not journal_root.exists():
+        return ()
+    if not journal_root.is_dir() or journal_root.is_symlink():
+        raise ReconciliationJournalError("Directory del registro non valida.")
+    try:
+        candidates = sorted(
+            (
+                path
+                for path in journal_root.iterdir()
+                if _JOURNAL_NAME.fullmatch(path.name)
+            ),
+            key=lambda path: path.name,
+        )
+    except OSError as exc:
+        raise ReconciliationJournalError("Elenco dei registri non disponibile.") from exc
+    if len(candidates) > MAX_JOURNALS:
+        raise ReconciliationJournalError("Sono presenti troppi registri locali.")
+
+    summaries: list[ReconciliationBatchSummary] = []
+    for path in candidates:
+        match = _JOURNAL_NAME.fullmatch(path.name)
+        assert match is not None
+        batch_id = str(uuid.UUID(match.group("batch_id")))
+        try:
+            snapshot = read_journal(path)
+            header = snapshot.events[0]
+            status = (
+                "complete"
+                if snapshot.complete
+                else "truncated"
+                if snapshot.truncated_tail
+                else "recovery_required"
+            )
+            if incomplete_only and status == "complete":
+                continue
+            summaries.append(
+                ReconciliationBatchSummary(
+                    batch_id=batch_id,
+                    recorded_at=str(header["recorded_at"]),
+                    status=status,
+                    candidate_count=int(header["payload"]["candidate_count"]),
+                    event_count=len(snapshot.events),
+                    truncated_tail=snapshot.truncated_tail,
+                )
+            )
+        except ReconciliationJournalError:
+            summaries.append(
+                ReconciliationBatchSummary(
+                    batch_id=batch_id,
+                    recorded_at=None,
+                    status="corrupt",
+                    candidate_count=None,
+                    event_count=None,
+                    truncated_tail=False,
+                )
+            )
+    return tuple(
+        sorted(
+            summaries,
+            key=lambda item: (item.recorded_at or "", item.batch_id),
+            reverse=True,
+        )
+    )
+
+
+def build_recovery_state(snapshot: JournalSnapshot) -> dict[str, Any]:
+    """Build the bounded, secret-free technical state sent to the Node bridge."""
+
+    if snapshot.complete:
+        raise ReconciliationJournalError("Il lotto è già completato.")
+    if snapshot.truncated_tail:
+        raise ReconciliationJournalCorrupt(
+            "Il registro contiene una scrittura incompleta; la ripresa automatica è bloccata."
+        )
+    if not snapshot.events or snapshot.events[0]["event_type"] != "batch_started":
+        raise ReconciliationJournalCorrupt("Intestazione del registro mancante.")
+
+    header = dict(snapshot.events[0]["payload"])
+    operations: dict[str, dict[str, Any]] = {}
+    duplicate_candidates: list[dict[str, Any]] = []
+    for event in snapshot.events[1:]:
+        event_type = str(event["event_type"])
+        payload = dict(event["payload"])
+        if event_type == "operation_intent":
+            operation_id = str(payload["operation_id"])
+            operations[operation_id] = {
+                **payload,
+                "recorded_outcome": None,
+            }
+        elif event_type in {
+            "folder_created",
+            "folder_shared",
+            "resource_created",
+            "resource_shared",
+            "operation_failed",
+        }:
+            operation = operations.get(str(payload["operation_id"]))
+            if operation is None:
+                raise ReconciliationJournalCorrupt(
+                    "Esito senza operazione nel registro."
+                )
+            operation["recorded_outcome"] = {
+                "event_type": event_type,
+                **payload,
+            }
+        elif event_type == "duplicate_skipped":
+            duplicate_candidates.append(payload)
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "batch_id": snapshot.batch_id,
+        "server_origin": header["server_origin"],
+        "server_fingerprint": header["server_fingerprint"],
+        "user_id_hash": header["user_id_hash"],
+        "plan_digest": header["plan_digest"],
+        "resource_format": header["resource_format"],
+        "folder_format": header["folder_format"],
+        "destination_mode": header["destination_mode"],
+        "destination_folder_id": header["destination_folder_id"],
+        **(
+            {"destination_mapping_hash": header["destination_mapping_hash"]}
+            if "destination_mapping_hash" in header
+            else {}
+        ),
+        "candidate_count": header["candidate_count"],
+        "candidates": list(header["candidates"]),
+        "operations": list(operations.values()),
+        "duplicate_candidates": duplicate_candidates,
+    }
+
+
 class ReconciliationJournal:
     """Single-writer durable event journal for one import batch."""
 
@@ -789,6 +1215,7 @@ class ReconciliationJournal:
         destination_mode: str,
         destination_folder_id: str | None,
         candidates: Sequence[CandidateProof | Mapping[str, str]],
+        destination_mapping_hash: str | None = None,
         root: str | Path | None = None,
     ) -> "ReconciliationJournal":
         journal_root = Path(root) if root is not None else default_journal_root()
@@ -805,6 +1232,11 @@ class ReconciliationJournal:
             "folder_format": folder_format,
             "destination_mode": destination_mode,
             "destination_folder_id": destination_folder_id,
+            **(
+                {"destination_mapping_hash": destination_mapping_hash}
+                if destination_mapping_hash is not None
+                else {}
+            ),
             "candidate_count": len(candidates),
             "candidates": list(candidates),
         }

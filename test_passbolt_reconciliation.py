@@ -7,9 +7,14 @@ from pathlib import Path
 from unittest import mock
 
 from passbolt_reconciliation import (
+    acquire_journal_lease,
+    build_recovery_state,
     CandidateProof,
+    hash_client_destination_mapping,
+    list_reconciliation_batches,
     ReconciliationJournal,
     ReconciliationJournalCorrupt,
+    ReconciliationJournalBusy,
     ReconciliationJournalError,
     default_journal_root,
     hash_user_identifier,
@@ -315,6 +320,165 @@ class ReconciliationJournalTests(unittest.TestCase):
         journal.path.rename(renamed)
         with self.assertRaises(ReconciliationJournalCorrupt):
             read_journal(renamed)
+
+    def test_authenticated_recovery_cycle_can_close_and_retry_an_operation(self) -> None:
+        journal = self.create_journal()
+        first_operation_id = str(uuid.uuid4())
+        journal.append(
+            "operation_intent",
+            operation_id=first_operation_id,
+            object_type="resource",
+            action="create_resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+            destination_key_hash="3" * 64,
+        )
+        recovery_id = str(uuid.uuid4())
+        journal.append(
+            "operation_verified",
+            recovery_id=recovery_id,
+            operation_id=first_operation_id,
+            object_type="resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+            destination_key_hash="3" * 64,
+            resolution="not_applied",
+        )
+        journal.append(
+            "recovery_verified",
+            recovery_id=recovery_id,
+            verification_digest="4" * 64,
+            verified_operation_count=1,
+            remote_success_count=0,
+            retry_count=1,
+        )
+        retry_operation_id = str(uuid.uuid4())
+        journal.append(
+            "operation_intent",
+            operation_id=retry_operation_id,
+            object_type="resource",
+            action="create_resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+            destination_key_hash="3" * 64,
+        )
+        journal.append(
+            "resource_created",
+            operation_id=retry_operation_id,
+            resource_id=str(uuid.uuid4()),
+            candidate_id="aaaaaaaaaaaaaaaa",
+            status="created",
+        )
+        journal.append(
+            "batch_completed",
+            created_folder_count=0,
+            reconciled_folder_count=0,
+            created_resource_count=1,
+            shared_resource_count=0,
+            skipped_duplicate_count=1,
+        )
+        self.assertTrue(journal.read().complete)
+
+    def test_recovery_cycle_requires_exact_counts(self) -> None:
+        journal = self.create_journal()
+        operation_id = str(uuid.uuid4())
+        journal.append(
+            "operation_intent",
+            operation_id=operation_id,
+            object_type="resource",
+            action="create_resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+        )
+        recovery_id = str(uuid.uuid4())
+        resource_id = str(uuid.uuid4())
+        journal.append(
+            "operation_verified",
+            recovery_id=recovery_id,
+            operation_id=operation_id,
+            object_type="resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+            resource_id=resource_id,
+            resolution="remote_success",
+        )
+        with self.assertRaises(ReconciliationJournalError):
+            journal.append(
+                "batch_completed",
+                created_folder_count=0,
+                reconciled_folder_count=0,
+                created_resource_count=1,
+                shared_resource_count=0,
+                skipped_duplicate_count=1,
+            )
+        with self.assertRaises(ReconciliationJournalError):
+            journal.append(
+                "recovery_verified",
+                recovery_id=recovery_id,
+                verification_digest="4" * 64,
+                verified_operation_count=1,
+                remote_success_count=1,
+                retry_count=1,
+            )
+
+    def test_recovery_state_and_listing_are_secret_free_and_bounded(self) -> None:
+        journal = self.create_journal()
+        operation_id = str(uuid.uuid4())
+        journal.append(
+            "operation_intent",
+            operation_id=operation_id,
+            object_type="folder",
+            action="create_folder",
+            destination_key_hash="4" * 64,
+            permission_mask_hash="5" * 64,
+        )
+        state = build_recovery_state(journal.read())
+        self.assertEqual(state["batch_id"], journal.batch_id)
+        self.assertEqual(state["operations"][0]["operation_id"], operation_id)
+        serialized = json.dumps(state)
+        self.assertNotIn("password", serialized.casefold())
+        summaries = list_reconciliation_batches(self.root)
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0].batch_id, journal.batch_id)
+        self.assertEqual(summaries[0].status, "recovery_required")
+
+    def test_truncated_journal_is_listed_but_never_built_for_recovery(self) -> None:
+        journal = self.create_journal()
+        with journal.path.open("ab") as stream:
+            stream.write(b'{"schema_version":1')
+            stream.flush()
+            os.fsync(stream.fileno())
+        snapshot = journal.read()
+        self.assertTrue(snapshot.truncated_tail)
+        with self.assertRaises(ReconciliationJournalCorrupt):
+            build_recovery_state(snapshot)
+        summaries = list_reconciliation_batches(self.root)
+        self.assertEqual(summaries[0].status, "truncated")
+
+    def test_client_mapping_hash_is_order_independent_but_destination_bound(self) -> None:
+        first = [
+            {"client": "Cliente Alfa", "folder_id": None},
+            {
+                "client": "Cliente Beta",
+                "folder_id": "6ba7b810-9dad-41d1-80b4-00c04fd430c8",
+            },
+        ]
+        self.assertEqual(
+            hash_client_destination_mapping(first),
+            hash_client_destination_mapping(list(reversed(first))),
+        )
+        changed = [dict(item) for item in first]
+        changed[0]["folder_id"] = "a8098c1a-f86e-11da-bd1a-00112444be1e"
+        self.assertNotEqual(
+            hash_client_destination_mapping(first),
+            hash_client_destination_mapping(changed),
+        )
+
+    def test_batch_lease_blocks_a_concurrent_recovery_until_released(self) -> None:
+        journal = self.create_journal()
+        first = acquire_journal_lease(journal)
+        try:
+            with self.assertRaises(ReconciliationJournalBusy):
+                acquire_journal_lease(journal)
+        finally:
+            first.close()
+        second = acquire_journal_lease(journal)
+        second.close()
 
 
 if __name__ == "__main__":

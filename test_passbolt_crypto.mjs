@@ -10,8 +10,10 @@ import {
   authenticate,
   buildFolderPayload,
   buildResourcePayload,
+  classifyRecovery,
   createPlannedContent,
   encryptSecret,
+  permissionMaskDigest,
   readCapabilities,
 } from './passbolt_crypto.mjs';
 
@@ -57,6 +59,135 @@ function encodeGpgAuthHeader(value) {
 }
 
 async function main() {
+  const recoveryCandidate = {
+    candidate_id: '0123456789abcdef',
+    source_sha256: '1'.repeat(64),
+    client: '(radice)',
+    source_at_root: true,
+    title: 'Portale recupero',
+    username: 'recovery-user',
+    uri: 'https://recovery.example.test',
+  };
+  const recoveryState = {
+    schema_version: 1,
+    batch_id: '1b697c90-2870-4d88-8740-54055a09946c',
+    resource_format: 'v4',
+    folder_format: 'none',
+    destination_mode: 'root',
+    destination_folder_id: null,
+    candidates: [{ candidate_id: recoveryCandidate.candidate_id, source_sha256: recoveryCandidate.source_sha256 }],
+    operations: [{
+      operation_id: '8122c7fa-178c-486a-a428-cd74c959699b',
+      object_type: 'resource',
+      action: 'create_resource',
+      candidate_id: recoveryCandidate.candidate_id,
+      destination_key_hash: '2'.repeat(64),
+      recorded_outcome: null,
+    }],
+    duplicate_candidates: [],
+  };
+  const recoveryCapabilities = {
+    resource_format_selected: 'v4',
+    folder_format_selected: null,
+    destination_mode: 'root',
+    destination_folder_id: null,
+    can_import: true,
+    plan_digest: '3'.repeat(64),
+    candidates: [{
+      ...recoveryCandidate,
+      action: 'create',
+      destination_key: 'root',
+      folder_action: 'root',
+      shared: false,
+      duplicate_kind: null,
+      duplicate_resource_id: null,
+    }],
+  };
+  const recoveryRuntime = { destinationFolders: [], existingFolders: [], existingResources: [] };
+  const retryRecovery = classifyRecovery(recoveryState, [recoveryCandidate], recoveryCapabilities, recoveryRuntime, 'current-user-id');
+  assert.equal(retryRecovery.conflicts.length, 0);
+  assert.equal(retryRecovery.classifications[0].resolution, 'not_applied');
+  assert.deepEqual(retryRecovery.resourceCandidateIds, [recoveryCandidate.candidate_id]);
+
+  const remoteResourceId = 'remote-recovery-resource';
+  const remoteCapabilities = {
+    ...recoveryCapabilities,
+    candidates: [{
+      ...recoveryCapabilities.candidates[0],
+      action: 'duplicate',
+      duplicate_kind: 'server_destination',
+      duplicate_resource_id: remoteResourceId,
+    }],
+  };
+  const remoteRuntime = {
+    ...recoveryRuntime,
+    existingResources: [{ id: remoteResourceId, permissions: [] }],
+  };
+  const successfulRecovery = classifyRecovery(recoveryState, [recoveryCandidate], remoteCapabilities, remoteRuntime, 'current-user-id');
+  assert.equal(successfulRecovery.conflicts.length, 0);
+  assert.equal(successfulRecovery.classifications[0].resolution, 'remote_success');
+  assert.equal(successfulRecovery.classifications[0].resource_id, remoteResourceId);
+  assert.deepEqual(successfulRecovery.resourceCandidateIds, []);
+
+  const recordedSuccessState = structuredClone(recoveryState);
+  recordedSuccessState.operations[0].recorded_outcome = {
+    event_type: 'resource_created',
+    operation_id: recordedSuccessState.operations[0].operation_id,
+    resource_id: remoteResourceId,
+    candidate_id: recoveryCandidate.candidate_id,
+    status: 'created',
+  };
+  const missingRecordedResource = classifyRecovery(recordedSuccessState, [recoveryCandidate], recoveryCapabilities, recoveryRuntime, 'current-user-id');
+  assert.equal(missingRecordedResource.conflicts.some((item) => item.code === 'RECOVERY_RECORDED_RESOURCE_CHANGED'), true);
+
+  const intendedPermissions = [
+    { aro: 'User', aro_foreign_key: 'current-user-id', type: 15 },
+    { aro: 'User', aro_foreign_key: 'recipient-id', type: 1 },
+  ];
+  const shareRecoveryState = structuredClone(recoveryState);
+  shareRecoveryState.operations = [{
+    operation_id: '32016a35-0be3-45cd-8e1b-6af14925216c',
+    object_type: 'resource',
+    action: 'share_resource',
+    candidate_id: recoveryCandidate.candidate_id,
+    destination_key_hash: '2'.repeat(64),
+    permission_mask_hash: permissionMaskDigest(intendedPermissions),
+    recorded_outcome: {
+      event_type: 'operation_failed',
+      operation_id: '32016a35-0be3-45cd-8e1b-6af14925216c',
+      object_type: 'resource',
+      candidate_id: recoveryCandidate.candidate_id,
+      resource_id: remoteResourceId,
+      error_code: 'SHARE_FAILED',
+      outcome: 'partial',
+    },
+  }];
+  const shareCapabilities = {
+    ...remoteCapabilities,
+    candidates: [{
+      ...remoteCapabilities.candidates[0],
+      shared: true,
+      share_permissions: intendedPermissions,
+    }],
+  };
+  const ownerOnlyRuntime = {
+    ...remoteRuntime,
+    existingResources: [{
+      id: remoteResourceId,
+      permission: { id: 'owner-permission-id', aro: 'User', aro_foreign_key: 'current-user-id', type: 15 },
+      permissions: [{ aro: 'User', aro_foreign_key: 'current-user-id', type: 15 }],
+      raw_permission_count: 1,
+    }],
+  };
+  const shareRetry = classifyRecovery(shareRecoveryState, [recoveryCandidate], shareCapabilities, ownerOnlyRuntime, 'current-user-id');
+  assert.equal(shareRetry.conflicts.length, 0);
+  assert.equal(shareRetry.classifications[0].resolution, 'not_applied');
+  assert.deepEqual(shareRetry.repairResourceCandidateIds, [recoveryCandidate.candidate_id]);
+  const changedShareCapabilities = structuredClone(shareCapabilities);
+  changedShareCapabilities.candidates[0].share_permissions[1].aro_foreign_key = 'different-recipient-id';
+  const changedPermissionPlan = classifyRecovery(shareRecoveryState, [recoveryCandidate], changedShareCapabilities, ownerOnlyRuntime, 'current-user-id');
+  assert.equal(changedPermissionPlan.conflicts.some((item) => item.code === 'RECOVERY_INTENDED_PERMISSION_CHANGED'), true);
+
   const serverGenerated = await openpgp.generateKey({
     type: 'ecc',
     curve: 'curve25519',
@@ -1586,6 +1717,7 @@ async function main() {
     const loginCountBeforePersistentRequests = completedLoginCount;
     const persistentCandidates = [{
       candidate_id: 'persistent-session-candidate',
+      source_sha256: '7'.repeat(64),
       client: '(radice)',
       source_at_root: true,
       title: 'Risorsa sessione persistente',
@@ -1636,6 +1768,68 @@ async function main() {
     assert.equal(persistentProgress.every((envelope) => envelope.type === 'progress'), true);
     assert.equal(persistentProgress.every((envelope) => envelope.batch_id === persistentBatchId), true);
     assert.equal(JSON.stringify(persistentProgress).includes('mock-resource-password'), false);
+    const verifiedRecoveryBatchId = 'e7553061-fc00-4a2e-a84f-fabef14ac16e';
+    const verifiedRecoveryState = {
+      schema_version: 1,
+      batch_id: verifiedRecoveryBatchId,
+      resource_format: 'v4',
+      folder_format: 'none',
+      destination_mode: 'root',
+      destination_folder_id: null,
+      candidates: [{
+        candidate_id: persistentCandidates[0].candidate_id,
+        source_sha256: persistentCandidates[0].source_sha256,
+      }],
+      operations: [{
+        operation_id: 'e4a3c866-cc9b-46ea-a1a8-a9c48d6b9acd',
+        object_type: 'resource',
+        action: 'create_resource',
+        candidate_id: persistentCandidates[0].candidate_id,
+        destination_key_hash: '8'.repeat(64),
+        recorded_outcome: null,
+      }],
+      duplicate_candidates: [],
+    };
+    const recoveryProgressStart = persistentProgress.length;
+    const recoveryReadiness = await persistentWorker.recoveryReadiness({
+      command: 'session-recovery-readiness',
+      session_id: 'persistent-test-session',
+      reconciliation_batch_id: verifiedRecoveryBatchId,
+      candidates: persistentCandidates,
+      recovery_state: verifiedRecoveryState,
+      resource_format: 'v4',
+      destination_mode: 'root',
+      folder_format: 'none',
+    });
+    assert.equal(recoveryReadiness.remote_success_count, 0);
+    assert.equal(recoveryReadiness.not_applied_count, 1);
+    assert.equal(recoveryReadiness.retry_action_count, 1);
+    assert.deepEqual(recoveryReadiness.resource_candidate_ids, [persistentCandidates[0].candidate_id]);
+    const recovered = await persistentWorker.recoveryImport({
+      command: 'session-recovery-import',
+      session_id: 'persistent-test-session',
+      reconciliation_batch_id: verifiedRecoveryBatchId,
+      recovery_id: recoveryReadiness.recovery_id,
+      recovery_plan_digest: recoveryReadiness.recovery_plan_digest,
+      candidates: persistentCandidates,
+      recovery_state: verifiedRecoveryState,
+      resources: [{
+        ...persistentCandidates[0],
+        password: 'mock-resource-password',
+        description: 'mock description',
+      }],
+      resource_format: 'v4',
+      destination_mode: 'root',
+      folder_format: 'none',
+      confirmation: 'RECUPERA 1',
+    });
+    assert.equal(recovered.complete, true);
+    assert.equal(recovered.destructive_actions_performed, false);
+    assert.deepEqual(
+      persistentProgress.slice(recoveryProgressStart).map((envelope) => envelope.event_type),
+      ['operation_verified', 'recovery_verified', 'operation_intent', 'resource_created', 'batch_completed'],
+    );
+    assert.equal(JSON.stringify(persistentProgress).includes('mock-resource-password'), false);
     await assert.rejects(
       persistentWorker.readiness({
         session_id: 'wrong-session-id',
@@ -1659,6 +1853,8 @@ async function main() {
         mfa_totp_authenticated: true,
         persistent_authenticated_session: true,
         reconciliation_progress_envelopes: true,
+        authenticated_recovery_classification: true,
+        recovery_conflicts_blocked: true,
         mfa_reused_without_reprompt: true,
         csrf: true,
         duplicate_detection: true,

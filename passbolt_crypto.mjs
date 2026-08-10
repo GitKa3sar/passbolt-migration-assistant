@@ -712,6 +712,7 @@ function safeCandidates(value) {
     const username = String(item.username ?? '').trim();
     const uri = String(item.uri ?? '').trim();
     const client = String(item.client ?? '').trim();
+    const sourceSha256 = String(item.source_sha256 ?? '').trim().toLowerCase();
     const sourceAtRoot = item.source_at_root;
     assert(candidateId && candidateId.length <= 200, 'INVALID_CANDIDATE', 'Un candidato non contiene un identificatore valido.');
     assert(!seen.has(candidateId), 'DUPLICATE_CANDIDATE_ID', 'Il piano contiene due volte lo stesso candidato.');
@@ -719,9 +720,18 @@ function safeCandidates(value) {
     assert(username.length <= 255 && uri.length <= 2048, 'INVALID_CANDIDATE', 'Username o URL superano i limiti consentiti.');
     assert(client && client.length <= 256, 'INVALID_CLIENT', 'Ogni candidato deve indicare un cliente valido.');
     assert(typeof sourceAtRoot === 'boolean', 'INVALID_CLIENT', 'Ogni candidato deve indicare se il documento si trova nella radice sorgente.');
+    assert(!sourceSha256 || /^[0-9a-f]{64}$/.test(sourceSha256), 'INVALID_CANDIDATE', 'L’hash sorgente di un candidato non e valido.');
     assert(!/[\u0000-\u001f\u007f]/.test(title + username + uri + client), 'INVALID_CANDIDATE', 'Titolo, username, URL o cliente contengono caratteri di controllo non consentiti.');
     seen.add(candidateId);
-    return { candidate_id: candidateId, client, source_at_root: sourceAtRoot, title, username, uri };
+    return {
+      candidate_id: candidateId,
+      client,
+      source_at_root: sourceAtRoot,
+      title,
+      username,
+      uri,
+      ...(sourceSha256 ? { source_sha256: sourceSha256 } : {}),
+    };
   });
 }
 
@@ -866,6 +876,9 @@ async function decryptExistingResources(entries, user, keyMaterial, baseUrl, sha
         username: typeof entry.username === 'string' ? entry.username : '',
         uri: typeof entry.uri === 'string' ? entry.uri : '',
         folder_parent_id: typeof entry.folder_parent_id === 'string' ? entry.folder_parent_id : null,
+        permission: entry.permission && typeof entry.permission === 'object' ? entry.permission : null,
+        permissions: normalizeFolderPermissions(entry.permissions),
+        raw_permission_count: Array.isArray(entry.permissions) ? entry.permissions.filter((permission) => permission && typeof permission === 'object').length : 0,
       });
       continue;
     }
@@ -906,6 +919,9 @@ async function decryptExistingResources(entries, user, keyMaterial, baseUrl, sha
       username: typeof metadata.username === 'string' ? metadata.username : '',
       uri: typeof uris[0] === 'string' ? uris[0] : '',
       folder_parent_id: typeof entry.folder_parent_id === 'string' ? entry.folder_parent_id : null,
+      permission: entry.permission && typeof entry.permission === 'object' ? entry.permission : null,
+      permissions: normalizeFolderPermissions(entry.permissions),
+      raw_permission_count: Array.isArray(entry.permissions) ? entry.permissions.filter((permission) => permission && typeof permission === 'object').length : 0,
     });
   }
   return resources;
@@ -1509,6 +1525,280 @@ function digestPlan(plan) {
   return createHash('sha256').update(canonicalJson(plan), 'utf8').digest('hex');
 }
 
+function normalizeRecoveryState(value, candidates) {
+  assert(value && typeof value === 'object' && !Array.isArray(value), 'RECOVERY_STATE_INVALID', 'Il registro locale di recupero non e valido.');
+  const batchId = normalizeReconciliationBatchId(value.batch_id);
+  assert(batchId, 'RECOVERY_STATE_INVALID', 'L’identificativo del lotto di recupero non e valido.');
+  assert(Number(value.schema_version) === 1, 'RECOVERY_SCHEMA_UNSUPPORTED', 'La versione del registro di recupero non e supportata.');
+  assert(Array.isArray(value.candidates) && value.candidates.length === candidates.length, 'RECOVERY_CANDIDATES_MISMATCH', 'I candidati non corrispondono al lotto da recuperare.');
+  const suppliedProofs = new Map(candidates.map((candidate) => [candidate.candidate_id, candidate.source_sha256]));
+  for (const proof of value.candidates) {
+    assert(proof && typeof proof === 'object', 'RECOVERY_CANDIDATES_MISMATCH', 'Le prove dei candidati non sono valide.');
+    const candidateId = String(proof.candidate_id ?? '');
+    assert(suppliedProofs.get(candidateId) === String(proof.source_sha256 ?? ''), 'RECOVERY_CANDIDATES_MISMATCH', 'Le prove dei candidati non corrispondono al lotto.');
+  }
+  assert(Array.isArray(value.operations) && value.operations.length <= 10_000, 'RECOVERY_STATE_INVALID', 'Le operazioni del registro non sono valide.');
+  const operationIds = new Set();
+  for (const operation of value.operations) {
+    assert(operation && typeof operation === 'object', 'RECOVERY_STATE_INVALID', 'Un’operazione del registro non e valida.');
+    const operationId = String(operation.operation_id ?? '');
+    assert(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId) && !operationIds.has(operationId), 'RECOVERY_STATE_INVALID', 'Un identificativo operazione del registro non e valido.');
+    operationIds.add(operationId);
+    assert(['folder', 'resource'].includes(String(operation.object_type ?? '')), 'RECOVERY_STATE_INVALID', 'Il tipo di un’operazione del registro non e valido.');
+    assert(['create_folder', 'share_folder', 'reconcile_folder', 'create_resource', 'share_resource'].includes(String(operation.action ?? '')), 'RECOVERY_STATE_INVALID', 'L’azione di un’operazione del registro non e valida.');
+  }
+  return { ...value, batch_id: batchId };
+}
+
+function recordedRemoteId(operation) {
+  const outcome = operation.recorded_outcome;
+  if (!outcome || typeof outcome !== 'object') return null;
+  const field = operation.object_type === 'folder' ? 'folder_id' : 'resource_id';
+  return typeof outcome[field] === 'string' && outcome[field] ? outcome[field] : null;
+}
+
+function recordedSuccess(operation) {
+  const eventType = String(operation.recorded_outcome?.event_type ?? '');
+  return ['folder_created', 'folder_shared', 'resource_created', 'resource_shared'].includes(eventType);
+}
+
+function confirmedFailure(operation) {
+  return operation.recorded_outcome?.event_type === 'operation_failed'
+    && operation.recorded_outcome?.outcome === 'confirmed';
+}
+
+function recoveryValueAction(recovery, operationId) {
+  return recovery.operations.find((operation) => operation.operation_id === operationId)?.action ?? null;
+}
+
+function recoveryConflict(operation, code) {
+  return {
+    operation_id: operation.operation_id,
+    object_type: operation.object_type,
+    action: operation.action,
+    code,
+  };
+}
+
+function operationVerification(operation, resolution, remoteId = null) {
+  return {
+    recovery_id: null,
+    operation_id: operation.operation_id,
+    object_type: operation.object_type,
+    resolution,
+    ...(operation.candidate_id ? { candidate_id: operation.candidate_id } : {}),
+    ...(operation.destination_key_hash ? { destination_key_hash: operation.destination_key_hash } : {}),
+    ...(remoteId && operation.object_type === 'folder' ? { folder_id: remoteId } : {}),
+    ...(remoteId && operation.object_type === 'resource' ? { resource_id: remoteId } : {}),
+  };
+}
+
+function classifyRecovery(recoveryValue, candidates, capabilities, runtime, currentUserId) {
+  const recovery = normalizeRecoveryState(recoveryValue, candidates);
+  const conflicts = [];
+  if (String(recovery.resource_format) !== String(capabilities.resource_format_selected)
+      || String(recovery.folder_format) !== String(capabilities.folder_format_selected ?? 'none')
+      || String(recovery.destination_mode) !== String(capabilities.destination_mode)
+      || String(recovery.destination_folder_id ?? '') !== String(capabilities.destination_folder_id ?? '')) {
+    conflicts.push({ operation_id: null, object_type: null, action: null, code: 'RECOVERY_PLAN_CONTEXT_CHANGED' });
+  }
+  if (!capabilities.can_import) {
+    conflicts.push({ operation_id: null, object_type: null, action: null, code: 'RECOVERY_REMOTE_STATE_UNAVAILABLE' });
+  }
+  for (const candidate of capabilities.candidates.filter((item) => item.action === 'blocked')) {
+    conflicts.push({ operation_id: null, object_type: 'resource', action: null, candidate_id: candidate.candidate_id, code: 'RECOVERY_RESOURCE_ELSEWHERE' });
+  }
+
+  const candidatesById = new Map(capabilities.candidates.map((candidate) => [candidate.candidate_id, candidate]));
+  const resourcesById = new Map(runtime.existingResources.map((resource) => [resource.id, resource]));
+  const foldersById = new Map(runtime.existingFolders.map((folder) => [folder.id, folder]));
+  const foldersByDestinationHash = new Map();
+  for (const folder of runtime.destinationFolders) {
+    const key = technicalDigest(folder.destination_key);
+    if (foldersByDestinationHash.has(key)) {
+      conflicts.push({ operation_id: null, object_type: 'folder', action: null, code: 'RECOVERY_FOLDER_DESTINATION_AMBIGUOUS' });
+    } else {
+      foldersByDestinationHash.set(key, folder);
+    }
+  }
+
+  const classifications = [];
+  for (const operation of recovery.operations) {
+    const action = String(operation.action);
+    const recordedId = recordedRemoteId(operation);
+    const wasSuccessful = recordedSuccess(operation);
+    const wasConfirmedFailure = confirmedFailure(operation);
+    if (action === 'create_resource') {
+      const planned = candidatesById.get(String(operation.candidate_id ?? ''));
+      if (!planned) {
+        conflicts.push(recoveryConflict(operation, 'RECOVERY_CANDIDATE_MISSING'));
+        continue;
+      }
+      if (operation.permission_mask_hash && permissionMaskDigest(planned.share_permissions) !== operation.permission_mask_hash) {
+        conflicts.push(recoveryConflict(operation, 'RECOVERY_INTENDED_PERMISSION_CHANGED'));
+        continue;
+      }
+      const exactDestinationResources = runtime.existingResources.filter((resource) => (
+        normalizeComparable(resource.name) === normalizeComparable(planned.title)
+        && normalizeComparable(resource.username) === normalizeComparable(planned.username)
+        && normalizeComparable(resource.uri) === normalizeComparable(planned.uri)
+        && (planned.folder_action === 'root'
+          ? resource.folder_parent_id === null || resource.folder_parent_id === undefined
+          : resource.folder_parent_id === planned.folder_id)
+      ));
+      if (exactDestinationResources.length > 1) {
+        conflicts.push(recoveryConflict(operation, 'RECOVERY_RESOURCE_DESTINATION_AMBIGUOUS'));
+        continue;
+      }
+      const remoteId = planned.action === 'duplicate' && planned.duplicate_kind === 'server_destination'
+        ? planned.duplicate_resource_id
+        : null;
+      if (wasSuccessful) {
+        if (!recordedId || remoteId !== recordedId) conflicts.push(recoveryConflict(operation, 'RECOVERY_RECORDED_RESOURCE_CHANGED'));
+        else classifications.push(operationVerification(operation, 'remote_success', remoteId));
+      } else if (wasConfirmedFailure) {
+        if (planned.action === 'create') classifications.push(operationVerification(operation, 'not_applied'));
+        else conflicts.push(recoveryConflict(operation, 'RECOVERY_CONFIRMED_FAILURE_CONFLICT'));
+      } else if (remoteId) {
+        classifications.push(operationVerification(operation, 'remote_success', remoteId));
+      } else if (planned.action === 'create') {
+        classifications.push(operationVerification(operation, 'not_applied'));
+      } else {
+        conflicts.push(recoveryConflict(operation, 'RECOVERY_RESOURCE_STATE_AMBIGUOUS'));
+      }
+      continue;
+    }
+
+    if (action === 'create_folder') {
+      const planned = foldersByDestinationHash.get(String(operation.destination_key_hash ?? ''));
+      if (operation.permission_mask_hash && permissionMaskDigest(planned?.share_permissions) !== operation.permission_mask_hash) {
+        conflicts.push(recoveryConflict(operation, 'RECOVERY_INTENDED_PERMISSION_CHANGED'));
+        continue;
+      }
+      const remoteId = ['reuse', 'repair_share'].includes(planned?.action) ? planned.folder_id : null;
+      if (wasSuccessful) {
+        if (!recordedId || remoteId !== recordedId) conflicts.push(recoveryConflict(operation, 'RECOVERY_RECORDED_FOLDER_CHANGED'));
+        else classifications.push(operationVerification(operation, 'remote_success', remoteId));
+      } else if (wasConfirmedFailure) {
+        if (planned?.action === 'create') classifications.push(operationVerification(operation, 'not_applied'));
+        else conflicts.push(recoveryConflict(operation, 'RECOVERY_CONFIRMED_FAILURE_CONFLICT'));
+      } else if (remoteId) {
+        classifications.push(operationVerification(operation, 'remote_success', remoteId));
+      } else if (planned?.action === 'create') {
+        classifications.push(operationVerification(operation, 'not_applied'));
+      } else {
+        conflicts.push(recoveryConflict(operation, 'RECOVERY_FOLDER_STATE_AMBIGUOUS'));
+      }
+      continue;
+    }
+
+    const isFolder = operation.object_type === 'folder';
+    const planned = isFolder
+      ? foldersByDestinationHash.get(String(operation.destination_key_hash ?? ''))
+      : candidatesById.get(String(operation.candidate_id ?? ''));
+    const remoteId = recordedId
+      || (isFolder ? planned?.folder_id : planned?.duplicate_resource_id)
+      || null;
+    const remote = isFolder ? foldersById.get(remoteId) : resourcesById.get(remoteId);
+    if (!operation.permission_mask_hash) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_PERMISSION_PROOF_MISSING'));
+    } else if (permissionMaskDigest(planned?.share_permissions) !== operation.permission_mask_hash) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_INTENDED_PERMISSION_CHANGED'));
+    } else if (!remote) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_SHARE_OBJECT_MISSING'));
+    } else if (remote.raw_permission_count !== remote.permissions.length || remote.permissions.length === 0) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_REMOTE_PERMISSION_MASK_INCOMPLETE'));
+    } else if (permissionMaskDigest(remote.permissions) === operation.permission_mask_hash) {
+      classifications.push(operationVerification(operation, 'remote_success', remoteId));
+    } else if (!wasSuccessful && isSoleOwnerMask(remote.permissions, currentUserId)) {
+      classifications.push(operationVerification(operation, 'not_applied', remoteId));
+    } else {
+      conflicts.push(recoveryConflict(operation, wasSuccessful ? 'RECOVERY_RECORDED_PERMISSIONS_CHANGED' : 'RECOVERY_PERMISSION_STATE_AMBIGUOUS'));
+    }
+  }
+
+  const createOperations = recovery.operations.filter((operation) => operation.action === 'create_resource');
+  const shareCandidateIds = new Set(recovery.operations.filter((operation) => operation.action === 'share_resource').map((operation) => operation.candidate_id));
+  const repairResourceCandidateIds = classifications
+    .filter((item) => item.resolution === 'not_applied' && recoveryValueAction(recovery, item.operation_id) === 'share_resource')
+    .map((item) => item.candidate_id);
+  for (const operation of createOperations) {
+    const candidate = candidatesById.get(operation.candidate_id);
+    if (!candidate?.shared || candidate.action !== 'duplicate' || candidate.duplicate_kind !== 'server_destination' || shareCandidateIds.has(operation.candidate_id)) continue;
+    const remote = resourcesById.get(candidate.duplicate_resource_id);
+    if (!operation.permission_mask_hash) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_PERMISSION_PROOF_MISSING'));
+    } else if (permissionMaskDigest(candidate.share_permissions) !== operation.permission_mask_hash) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_INTENDED_PERMISSION_CHANGED'));
+    } else if (!remote) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_SHARE_OBJECT_MISSING'));
+    } else if (remote.raw_permission_count !== remote.permissions.length || remote.permissions.length === 0) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_REMOTE_PERMISSION_MASK_INCOMPLETE'));
+    } else if (permissionMaskDigest(remote.permissions) === operation.permission_mask_hash) {
+      continue;
+    } else if (isSoleOwnerMask(remote.permissions, currentUserId)) {
+      if (!repairResourceCandidateIds.includes(operation.candidate_id)) repairResourceCandidateIds.push(operation.candidate_id);
+    } else {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_PERMISSION_STATE_AMBIGUOUS'));
+    }
+  }
+
+  const createFolderOperations = recovery.operations.filter((operation) => operation.action === 'create_folder' && operation.permission_mask_hash);
+  const explicitFolderShares = new Set(recovery.operations.filter((operation) => ['share_folder', 'reconcile_folder'].includes(operation.action)).map((operation) => operation.destination_key_hash));
+  const repairFolderDestinationHashes = classifications
+    .filter((item) => item.resolution === 'not_applied' && ['share_folder', 'reconcile_folder'].includes(recoveryValueAction(recovery, item.operation_id)))
+    .map((item) => item.destination_key_hash);
+  for (const operation of createFolderOperations) {
+    if (explicitFolderShares.has(operation.destination_key_hash)) continue;
+    const planned = foldersByDestinationHash.get(operation.destination_key_hash);
+    const remote = planned?.folder_id ? foldersById.get(planned.folder_id) : null;
+    if (!remote || planned?.action === 'create') continue;
+    if (permissionMaskDigest(planned.share_permissions) !== operation.permission_mask_hash) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_INTENDED_PERMISSION_CHANGED'));
+      continue;
+    }
+    if (remote.raw_permission_count !== remote.permissions.length || remote.permissions.length === 0) {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_REMOTE_PERMISSION_MASK_INCOMPLETE'));
+      continue;
+    }
+    if (permissionMaskDigest(remote.permissions) === operation.permission_mask_hash) continue;
+    if (isSoleOwnerMask(remote.permissions, currentUserId) && planned.action === 'repair_share') {
+      repairFolderDestinationHashes.push(operation.destination_key_hash);
+    } else {
+      conflicts.push(recoveryConflict(operation, 'RECOVERY_PERMISSION_STATE_AMBIGUOUS'));
+    }
+  }
+
+  const createCandidateIds = capabilities.candidates.filter((candidate) => candidate.action === 'create').map((candidate) => candidate.candidate_id);
+  const resourceCandidateIds = [...new Set([...createCandidateIds, ...repairResourceCandidateIds])].sort();
+  const folderRetryKeys = new Set(capabilities.candidates.filter((candidate) => candidate.action === 'create').map((candidate) => candidate.destination_key));
+  const retryFolders = runtime.destinationFolders.filter((folder) => (
+    (folder.action === 'create' && folderRetryKeys.has(folder.destination_key))
+    || (folder.action === 'repair_share' && (folderRetryKeys.has(folder.destination_key) || repairFolderDestinationHashes.includes(technicalDigest(folder.destination_key))))
+  ));
+  const verificationDigest = digestPlan(classifications.map(({ recovery_id: ignored, ...item }) => item));
+  const recoveryPlanDigest = digestPlan({
+    batch_id: recovery.batch_id,
+    current_plan_digest: capabilities.plan_digest,
+    verification_digest: verificationDigest,
+    create_candidate_ids: createCandidateIds,
+    repair_resource_candidate_ids: repairResourceCandidateIds,
+    retry_folder_hashes: retryFolders.map((folder) => technicalDigest(folder.destination_key)).sort(),
+  });
+  return {
+    recovery,
+    classifications,
+    conflicts,
+    verificationDigest,
+    recoveryPlanDigest,
+    createCandidateIds,
+    repairResourceCandidateIds,
+    resourceCandidateIds,
+    retryFolders,
+    retryActionCount: createCandidateIds.length + repairResourceCandidateIds.length + retryFolders.length,
+  };
+}
+
 async function analyzeCapabilities(
   session,
   user,
@@ -1535,7 +1825,7 @@ async function analyzeCapabilities(
     session.request('/settings.json?api-version=v2', { allowError: true }),
     session.request('/metadata/types/settings.json?api-version=v2', { allowError: true }),
     session.request('/resource-types.json?api-version=v2', { allowError: true }),
-    session.request('/resources.json?api-version=v2', { allowError: true }),
+    session.request('/resources.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
     session.request('/folders.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
     session.request('/share/search-aros.json?api-version=v2&contain[gpgkey]=1&contain[groups_users]=1', { allowError: true }),
   ]);
@@ -1888,6 +2178,9 @@ async function analyzeCapabilities(
       sharedMetadataEncryptionKey,
       shareDirectory,
       folders: folderPlan,
+      destinationFolders: destinationPlan.folders,
+      existingFolders: folderCatalog,
+      existingResources,
     },
   };
 }
@@ -2185,6 +2478,18 @@ function importResources(value, candidates) {
   });
 }
 
+function permissionMaskDigest(value) {
+  return digestPlan(normalizeFolderPermissions(value));
+}
+
+function isSoleOwnerMask(value, currentUserId) {
+  const permissions = normalizeFolderPermissions(value);
+  return permissions.length === 1
+    && permissions[0].aro === 'User'
+    && permissions[0].aro_foreign_key === String(currentUserId ?? '')
+    && permissions[0].type === 15;
+}
+
 function technicalDigest(value) {
   return createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex');
 }
@@ -2209,6 +2514,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
         object_type: 'folder',
         action: 'reconcile_folder',
         destination_key_hash: technicalDigest(folder.destination_key),
+        permission_mask_hash: permissionMaskDigest(folder.share_permissions),
       });
       try {
         const shareResult = await shareCreatedFolder(session, folder.folder_id, folder.existing_permission, folder);
@@ -2268,6 +2574,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       object_type: 'folder',
       action: 'create_folder',
       destination_key_hash: technicalDigest(folder.destination_key),
+      ...(folder.shared ? { permission_mask_hash: permissionMaskDigest(folder.share_permissions) } : {}),
     });
     const response = await session.request('/folders.json?api-version=v2&contain[permission]=1', {
       method: 'POST',
@@ -2329,6 +2636,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
         object_type: 'folder',
         action: 'share_folder',
         destination_key_hash: technicalDigest(folder.destination_key),
+        permission_mask_hash: permissionMaskDigest(folder.share_permissions),
       });
       try {
         const shareResult = await shareCreatedFolder(session, folderId, body.permission, folder);
@@ -2388,6 +2696,8 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       object_type: 'resource',
       action: 'create_resource',
       candidate_id: resource.candidate_id,
+      destination_key_hash: technicalDigest(planned.destination_key),
+      ...(planned.shared ? { permission_mask_hash: permissionMaskDigest(planned.share_permissions) } : {}),
     });
     const response = await session.request('/resources.json?api-version=v2&contain[permission]=1', {
       method: 'POST',
@@ -2447,6 +2757,8 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
         object_type: 'resource',
         action: 'share_resource',
         candidate_id: resource.candidate_id,
+        destination_key_hash: technicalDigest(planned.destination_key),
+        permission_mask_hash: permissionMaskDigest(planned.share_permissions),
       });
       try {
         const shareResult = await shareCreatedResource(session, resourceId, body.permission, planned, resource, runtime, keyMaterial);
@@ -2655,6 +2967,188 @@ class PersistentImportSession {
     };
   }
 
+  async recoveryReadiness(input) {
+    const state = this.requireState(input);
+    const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
+    assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il lotto locale da recuperare non e valido.');
+    assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole di recupero non e disponibile.');
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const candidates = safeCandidates(input.candidates);
+    const { capabilities, runtime } = await analyzeCapabilities(
+      state.session,
+      state.user,
+      candidates,
+      state.key,
+      input.resource_format,
+      input.destination_mode,
+      input.folder_format === 'none' ? 'auto' : input.folder_format,
+      input.destination_folder_id,
+      input.client_destination_mapping,
+    );
+    const plan = classifyRecovery(input.recovery_state, candidates, capabilities, runtime, String(state.user.id));
+    assert(plan.recovery.batch_id === reconciliationBatchId, 'RECOVERY_BATCH_MISMATCH', 'Il registro locale non appartiene al lotto richiesto.');
+    if (plan.conflicts.length) {
+      throw new SafeError(
+        'RECOVERY_CONFLICT',
+        'Lo stato remoto non consente una ripresa automatica sicura. Il lotto richiede una verifica manuale.',
+        {
+          conflict_count: plan.conflicts.length,
+          conflict_codes: [...new Set(plan.conflicts.map((item) => item.code))].sort(),
+          destructive_actions_planned: false,
+        },
+      );
+    }
+    const recoveryId = randomUUID();
+    for (const classification of plan.classifications) {
+      await this.emitProgress(reconciliationBatchId, 'operation_verified', {
+        ...classification,
+        recovery_id: recoveryId,
+      });
+    }
+    const remoteSuccessCount = plan.classifications.filter((item) => item.resolution === 'remote_success').length;
+    const notAppliedCount = plan.classifications.length - remoteSuccessCount;
+    await this.emitProgress(reconciliationBatchId, 'recovery_verified', {
+      recovery_id: recoveryId,
+      verification_digest: plan.verificationDigest,
+      verified_operation_count: plan.classifications.length,
+      remote_success_count: remoteSuccessCount,
+      retry_count: notAppliedCount,
+    });
+    state.recoveryReadiness = {
+      batchId: reconciliationBatchId,
+      recoveryId,
+      recoveryPlanDigest: plan.recoveryPlanDigest,
+      resourceCandidateIds: plan.resourceCandidateIds,
+    };
+    return {
+      command: 'recovery-readiness',
+      session_id: state.sessionId,
+      reconciliation_batch_id: reconciliationBatchId,
+      recovery_id: recoveryId,
+      recovery_plan_digest: plan.recoveryPlanDigest,
+      verified_operation_count: plan.classifications.length,
+      remote_success_count: remoteSuccessCount,
+      not_applied_count: notAppliedCount,
+      retry_action_count: plan.retryActionCount,
+      resource_candidate_ids: plan.resourceCandidateIds,
+      conflict_count: 0,
+      can_recover: true,
+      destructive_actions_planned: false,
+      confirmation_required: `RECUPERA ${plan.retryActionCount}`,
+    };
+  }
+
+  async recoveryImport(input) {
+    const state = this.requireState(input);
+    const saved = state.recoveryReadiness;
+    assert(saved, 'RECOVERY_READINESS_REQUIRED', 'Eseguire prima la verifica autenticata del lotto.');
+    const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
+    assert(reconciliationBatchId === saved.batchId, 'RECOVERY_BATCH_MISMATCH', 'Il lotto non corrisponde all’ultima verifica di recupero.');
+    assert(String(input.recovery_id ?? '') === saved.recoveryId, 'RECOVERY_ID_MISMATCH', 'La verifica di recupero non corrisponde.');
+    assert(String(input.recovery_plan_digest ?? '') === saved.recoveryPlanDigest, 'RECOVERY_PLAN_CHANGED', 'Il piano di recupero non corrisponde all’ultima verifica.');
+    assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole di recupero non e disponibile.');
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const candidates = safeCandidates(input.candidates);
+    const { capabilities, runtime } = await analyzeCapabilities(
+      state.session,
+      state.user,
+      candidates,
+      state.key,
+      input.resource_format,
+      input.destination_mode,
+      input.folder_format === 'none' ? 'auto' : input.folder_format,
+      input.destination_folder_id,
+      input.client_destination_mapping,
+    );
+    const plan = classifyRecovery(input.recovery_state, candidates, capabilities, runtime, String(state.user.id));
+    assert(plan.conflicts.length === 0, 'RECOVERY_PLAN_CHANGED', 'Lo stato remoto e cambiato dopo la verifica; ripetere il controllo del lotto.');
+    assert(plan.recoveryPlanDigest === saved.recoveryPlanDigest, 'RECOVERY_PLAN_CHANGED', 'Lo stato remoto e cambiato dopo la verifica; ripetere il controllo del lotto.');
+    assert(canonicalJson(plan.resourceCandidateIds) === canonicalJson(saved.resourceCandidateIds), 'RECOVERY_PLAN_CHANGED', 'Le risorse richieste dal recupero sono cambiate.');
+    assert(String(input.confirmation ?? '') === `RECUPERA ${plan.retryActionCount}`, 'CONFIRMATION_MISMATCH', `Conferma richiesta: RECUPERA ${plan.retryActionCount}`);
+    const recoveryCandidates = capabilities.candidates.filter((candidate) => plan.resourceCandidateIds.includes(candidate.candidate_id));
+    const resources = importResources(input.resources, recoveryCandidates);
+    const resourceMap = new Map(resources.map((resource) => [resource.candidate_id, resource]));
+    const progress = async (eventType, payload) => this.emitProgress(reconciliationBatchId, eventType, payload);
+    try {
+      const createPlan = capabilities.candidates.filter((candidate) => plan.createCandidateIds.includes(candidate.candidate_id));
+      const recoveryRuntime = { ...runtime, folders: plan.retryFolders };
+      const { created, createdFolders, reconciledFolders } = await createPlannedContent(
+        state.session,
+        createPlan,
+        resources,
+        recoveryRuntime,
+        state.key,
+        progress,
+      );
+      const repairedResources = [];
+      for (const candidateId of plan.repairResourceCandidateIds) {
+        const planned = capabilities.candidates.find((candidate) => candidate.candidate_id === candidateId);
+        const resource = resourceMap.get(candidateId);
+        const existing = runtime.existingResources.find((entry) => entry.id === planned?.duplicate_resource_id);
+        assert(planned && resource && existing?.permission, 'RECOVERY_RESOURCE_SHARE_UNAVAILABLE', 'La risorsa da riconciliare non espone un permesso proprietario valido.');
+        const operationId = randomUUID();
+        await progress('operation_intent', {
+          operation_id: operationId,
+          object_type: 'resource',
+          action: 'share_resource',
+          candidate_id: candidateId,
+          destination_key_hash: technicalDigest(planned.destination_key),
+          permission_mask_hash: permissionMaskDigest(planned.share_permissions),
+        });
+        try {
+          const shareResult = await shareCreatedResource(state.session, existing.id, existing.permission, planned, resource, runtime, state.key);
+          repairedResources.push({ candidate_id: candidateId, resource_id: existing.id, status: 'created_shared' });
+          await progress('resource_shared', {
+            operation_id: operationId,
+            resource_id: existing.id,
+            candidate_id: candidateId,
+            status: 'created_shared',
+            recipient_count: Number(planned.share_recipient_count ?? 0),
+            permission_change_count: Number(shareResult.permission_changes ?? 0),
+          });
+        } catch (error) {
+          await progress('operation_failed', {
+            operation_id: operationId,
+            object_type: 'resource',
+            candidate_id: candidateId,
+            resource_id: existing.id,
+            error_code: error instanceof SafeError ? error.code : 'INTERNAL_ERROR',
+            outcome: 'unknown',
+            ...(error instanceof SafeError && Number.isInteger(error.details?.http_status) ? { http_status: error.details.http_status } : {}),
+          });
+          throw error;
+        }
+      }
+      const verifiedFolderCreates = plan.classifications.filter((item) => item.resolution === 'remote_success' && recoveryValueAction(plan.recovery, item.operation_id) === 'create_folder').length;
+      const verifiedResourceCreates = plan.classifications.filter((item) => item.resolution === 'remote_success' && recoveryValueAction(plan.recovery, item.operation_id) === 'create_resource').length;
+      const verifiedResourceShares = plan.classifications.filter((item) => item.resolution === 'remote_success' && recoveryValueAction(plan.recovery, item.operation_id) === 'share_resource').length;
+      await progress('batch_completed', {
+        created_folder_count: verifiedFolderCreates + createdFolders.length,
+        reconciled_folder_count: reconciledFolders.length,
+        created_resource_count: verifiedResourceCreates + created.length,
+        shared_resource_count: verifiedResourceShares + repairedResources.length + created.filter((item) => item.status === 'created_shared').length,
+        skipped_duplicate_count: plan.recovery.duplicate_candidates.length,
+      });
+      state.recoveryReadiness = null;
+      return {
+        command: 'recovery-import',
+        session_id: state.sessionId,
+        reconciliation_batch_id: reconciliationBatchId,
+        recovery_id: saved.recoveryId,
+        created_count: created.length,
+        repaired_resource_count: repairedResources.length,
+        created_folder_count: createdFolders.length,
+        reconciled_folder_count: reconciledFolders.length,
+        remote_success_count: plan.classifications.filter((item) => item.resolution === 'remote_success').length,
+        destructive_actions_performed: false,
+        complete: true,
+      };
+    } finally {
+      resources.length = 0;
+      if (Array.isArray(input.resources)) input.resources.length = 0;
+    }
+  }
+
   async import(input) {
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
@@ -2753,6 +3247,10 @@ class PersistentImportSession {
         return this.readiness(input);
       case 'session-import':
         return this.import(input);
+      case 'session-recovery-readiness':
+        return this.recoveryReadiness(input);
+      case 'session-recovery-import':
+        return this.recoveryImport(input);
       case 'session-close':
         return this.close(input);
       default:
@@ -2850,6 +3348,7 @@ async function selfTest() {
     duplicate_detection: true,
     persistent_session_protocol: true,
     reconciliation_progress_protocol: true,
+    authenticated_recovery_protocol: true,
     secrets_serialized: false,
   };
 }
@@ -2963,7 +3462,9 @@ export {
   buildCandidatePlan,
   buildFolderPayload,
   buildResourcePayload,
+  classifyRecovery,
   createPlannedContent,
   encryptSecret,
+  permissionMaskDigest,
   readCapabilities,
 };

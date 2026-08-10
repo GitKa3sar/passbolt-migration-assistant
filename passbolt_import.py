@@ -23,10 +23,16 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from passbolt_reconciliation import (
+    acquire_journal_lease,
+    build_recovery_state,
     CandidateProof,
     ReconciliationJournal,
+    ReconciliationJournalCorrupt,
     ReconciliationJournalError,
+    ReconciliationJournalLease,
+    hash_client_destination_mapping,
     hash_user_identifier,
+    read_batch,
 )
 
 from passbolt_review import (
@@ -464,6 +470,111 @@ def _source_file_passwords(value: object) -> dict[str, str]:
     return passwords
 
 
+def _prepare_recovery_context(
+    root: str | Path,
+    request: Mapping[str, Any],
+    journal_root: str | Path | None,
+) -> tuple[dict[str, Any], list[object]]:
+    candidates = request.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise ImportPreparationError(
+            "Il recupero non contiene i candidati originali."
+        )
+    file_passwords = _source_file_passwords(request.get("source_file_passwords"))
+    try:
+        verify_integrity(
+            root,
+            candidates,
+            source_file_passwords=file_passwords,
+        )
+    finally:
+        file_passwords.clear()
+    try:
+        snapshot = read_batch(request.get("reconciliation_batch_id"), journal_root)
+        recovery_state = build_recovery_state(snapshot)
+    except ReconciliationJournalCorrupt as exc:
+        raise ImportPreparationError(
+            "Il registro locale è incompleto o danneggiato; la ripresa automatica è bloccata."
+        ) from exc
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "Il lotto locale richiesto non è disponibile per il recupero."
+        ) from exc
+
+    supplied_proofs: list[dict[str, str]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            raise ImportPreparationError(
+                "Un candidato del recupero non è valido."
+            )
+        supplied_proofs.append(
+            {
+                "candidate_id": str(candidate.get("candidate_id", "")).strip(),
+                "source_sha256": str(candidate.get("source_sha256", ""))
+                .strip()
+                .lower(),
+            }
+        )
+    supplied_proofs.sort(key=lambda item: item["candidate_id"])
+    if supplied_proofs != recovery_state["candidates"]:
+        raise ImportPreparationError(
+            "I documenti e i candidati non corrispondono al lotto originale."
+        )
+
+    mapping = request.get("client_destination_mapping")
+    if recovery_state["destination_mode"] == "client_mapping":
+        expected_mapping_hash = recovery_state.get("destination_mapping_hash")
+        if not expected_mapping_hash:
+            raise ImportPreparationError(
+                "Il lotto non contiene una prova sufficiente della mappatura; è richiesta una verifica manuale."
+            )
+        try:
+            supplied_mapping_hash = hash_client_destination_mapping(mapping)
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "La mappatura delle destinazioni del recupero non è valida."
+            ) from exc
+        if supplied_mapping_hash != expected_mapping_hash:
+            raise ImportPreparationError(
+                "La mappatura delle destinazioni non corrisponde al lotto originale."
+            )
+    elif mapping not in (None, []):
+        raise ImportPreparationError(
+            "Il lotto originale non utilizza una mappatura per cliente."
+        )
+    return recovery_state, candidates
+
+
+def _prepare_recovery_resources(
+    root: str | Path,
+    request: dict[str, Any],
+) -> tuple[list[object], list[dict[str, Any]]]:
+    candidate_ids = request.get("resource_candidate_ids")
+    if not isinstance(candidate_ids, list):
+        raise ImportPreparationError(
+            "L’elenco delle risorse richieste dal recupero non è valido."
+        )
+    normalized_ids = [str(value).strip() for value in candidate_ids]
+    if any(not value for value in normalized_ids) or len(set(normalized_ids)) != len(
+        normalized_ids
+    ):
+        raise ImportPreparationError(
+            "L’elenco delle risorse richieste dal recupero non è valido."
+        )
+    candidates = request.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise ImportPreparationError("Il recupero non contiene candidati validi.")
+    if not normalized_ids:
+        if request.get("secret_overrides") not in (None, []):
+            raise ImportPreparationError(
+                "Il recupero non richiede password di risorse."
+            )
+        return candidates, []
+    extraction_request = dict(request)
+    extraction_request["create_candidate_ids"] = normalized_ids
+    return _prepare_import_resources(root, extraction_request)
+
+
 def _prepare_import_resources(
     root: str | Path, request: dict[str, Any]
 ) -> tuple[list[object], list[dict[str, Any]]]:
@@ -616,7 +727,9 @@ def execute_import(
 
 
 def _session_bridge_request(
-    root: str | Path, request: dict[str, Any]
+    root: str | Path,
+    request: dict[str, Any],
+    journal_root: str | Path | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     command = str(request.get("command", ""))
     if command == "session-open":
@@ -683,6 +796,45 @@ def _session_bridge_request(
             },
             resources,
         )
+    if command in {"session-recovery-readiness", "session-recovery-import"}:
+        recovery_state, candidates = _prepare_recovery_context(
+            root, request, journal_root
+        )
+        resources: list[dict[str, Any]] = []
+        if command == "session-recovery-import":
+            candidates, resources = _prepare_recovery_resources(root, request)
+        return (
+            {
+                "command": command,
+                "session_id": request.get("session_id"),
+                "reconciliation_batch_id": recovery_state["batch_id"],
+                "resource_format": recovery_state["resource_format"],
+                "destination_mode": recovery_state["destination_mode"],
+                "folder_format": recovery_state["folder_format"],
+                "destination_folder_id": recovery_state["destination_folder_id"],
+                "client_destination_mapping": request.get(
+                    "client_destination_mapping"
+                ),
+                "candidates": candidates,
+                "recovery_state": recovery_state,
+                **(
+                    {
+                        "resources": resources,
+                        "resource_candidate_ids": request.get(
+                            "resource_candidate_ids"
+                        ),
+                        "recovery_id": request.get("recovery_id"),
+                        "recovery_plan_digest": request.get(
+                            "recovery_plan_digest"
+                        ),
+                        "confirmation": request.get("confirmation"),
+                    }
+                    if command == "session-recovery-import"
+                    else {}
+                ),
+            },
+            resources,
+        )
     if command == "session-close":
         return (
             {
@@ -703,11 +855,18 @@ class _SessionReconciliationCoordinator:
         self._journal_root = journal_root
         self._session: dict[str, Any] | None = None
         self._readiness: dict[str, Any] | None = None
+        self._recovery_readiness: dict[str, Any] | None = None
         self._journal: ReconciliationJournal | None = None
+        self._lease: ReconciliationJournalLease | None = None
 
     @property
     def active_batch_id(self) -> str | None:
         return self._journal.batch_id if self._journal is not None else None
+
+    def _release_lease(self) -> None:
+        if self._lease is not None:
+            self._lease.close()
+            self._lease = None
 
     @staticmethod
     def _successful_payload(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -721,11 +880,153 @@ class _SessionReconciliationCoordinator:
         if command == "session-open":
             self._session = dict(payload) if payload is not None else None
             self._readiness = None
+            self._recovery_readiness = None
         elif command == "session-readiness":
             self._readiness = dict(payload) if payload is not None else None
         elif command == "session-close":
             self._session = None
             self._readiness = None
+            self._recovery_readiness = None
+            self._journal = None
+            self._release_lease()
+
+    def _validate_recovery_identity(
+        self, request: Mapping[str, Any], bridge_request: Mapping[str, Any]
+    ) -> None:
+        if self._session is None:
+            raise ImportPreparationError(
+                "Avviare prima una sessione Passbolt autenticata."
+            )
+        session_id = str(request.get("session_id", "")).strip()
+        if not session_id or session_id != str(
+            self._session.get("session_id", "")
+        ).strip():
+            raise ImportPreparationError(
+                "La sessione Passbolt non corrisponde al recupero."
+            )
+        state = bridge_request.get("recovery_state")
+        user = self._session.get("user")
+        if not isinstance(state, Mapping) or not isinstance(user, Mapping):
+            raise ImportPreparationError(
+                "Il contesto autenticato del recupero non è disponibile."
+            )
+        try:
+            user_hash = hash_user_identifier(str(user.get("id", "")))
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "L’identità Passbolt autenticata non è valida."
+            ) from exc
+        if (
+            str(state.get("server_origin", "")).rstrip("/").casefold()
+            != str(self._session.get("base_url", "")).rstrip("/").casefold()
+            or str(state.get("server_fingerprint", "")).upper()
+            != str(self._session.get("server_fingerprint", "")).upper()
+            or str(state.get("user_id_hash", "")) != user_hash
+        ):
+            raise ImportPreparationError(
+                "Server, fingerprint o utente non corrispondono al lotto originale."
+            )
+
+    def start_recovery_readiness(
+        self,
+        request: Mapping[str, Any],
+        bridge_request: dict[str, Any],
+    ) -> str:
+        self._validate_recovery_identity(request, bridge_request)
+        state = bridge_request.get("recovery_state")
+        assert isinstance(state, Mapping)
+        batch_id = str(state.get("batch_id", ""))
+        try:
+            snapshot = read_batch(batch_id, self._journal_root)
+            if snapshot.complete or snapshot.truncated_tail:
+                raise ReconciliationJournalError(
+                    "Il lotto non è riprendibile automaticamente."
+                )
+            journal = ReconciliationJournal.open(snapshot.path)
+            lease = acquire_journal_lease(journal)
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "Il registro locale non può essere aperto per la verifica."
+            ) from exc
+        self._journal = journal
+        self._lease = lease
+        self._recovery_readiness = None
+        bridge_request["reconciliation_batch_id"] = journal.batch_id
+        return journal.batch_id
+
+    def finish_recovery_readiness(
+        self, envelope: dict[str, Any]
+    ) -> dict[str, Any]:
+        journal = self._journal
+        if journal is None:
+            raise ImportPreparationError(
+                "Il registro locale del recupero non è disponibile."
+            )
+        if envelope.get("ok") is not True:
+            self._journal = None
+            self._recovery_readiness = None
+            self._release_lease()
+            return envelope
+        payload = self._successful_payload(envelope)
+        try:
+            snapshot = journal.read()
+        except ReconciliationJournalError as exc:
+            self._journal = None
+            raise ImportPreparationError(
+                "La verifica autenticata non è stata salvata integralmente."
+            ) from exc
+        last_event = snapshot.events[-1] if snapshot.events else None
+        if (
+            payload is None
+            or snapshot.complete
+            or not isinstance(last_event, Mapping)
+            or last_event.get("event_type") != "recovery_verified"
+            or str(last_event["payload"].get("recovery_id", ""))
+            != str(payload.get("recovery_id", ""))
+            or str(payload.get("reconciliation_batch_id", ""))
+            != journal.batch_id
+            or type(payload.get("verified_operation_count")) is not int
+            or last_event["payload"].get("verified_operation_count")
+            != payload.get("verified_operation_count")
+            or type(payload.get("remote_success_count")) is not int
+            or last_event["payload"].get("remote_success_count")
+            != payload.get("remote_success_count")
+            or not SHA256_PATTERN.fullmatch(
+                str(payload.get("recovery_plan_digest", "")).strip().lower()
+            )
+            or not isinstance(payload.get("resource_candidate_ids"), list)
+        ):
+            self._journal = None
+            raise ImportPreparationError(
+                "La verifica autenticata del lotto non è coerente con il registro."
+            )
+        self._recovery_readiness = dict(payload)
+        return envelope
+
+    def start_recovery_import(
+        self,
+        request: Mapping[str, Any],
+        bridge_request: Mapping[str, Any],
+    ) -> None:
+        self._validate_recovery_identity(request, bridge_request)
+        if self._journal is None or self._recovery_readiness is None:
+            raise ImportPreparationError(
+                "Eseguire prima la verifica autenticata del lotto."
+            )
+        expected = self._recovery_readiness
+        if (
+            str(request.get("reconciliation_batch_id", ""))
+            != self._journal.batch_id
+            or str(request.get("recovery_id", ""))
+            != str(expected.get("recovery_id", ""))
+            or str(request.get("recovery_plan_digest", ""))
+            != str(expected.get("recovery_plan_digest", ""))
+            or request.get("resource_candidate_ids")
+            != expected.get("resource_candidate_ids")
+        ):
+            raise ImportPreparationError(
+                "La richiesta non corrisponde all’ultima verifica del recupero."
+            )
 
     def start_import(
         self,
@@ -797,14 +1098,24 @@ class _SessionReconciliationCoordinator:
                 ),
                 destination_folder_id=self._readiness.get("destination_folder_id"),
                 candidates=proofs,
+                destination_mapping_hash=(
+                    hash_client_destination_mapping(
+                        bridge_request.get("client_destination_mapping")
+                    )
+                    if str(self._readiness.get("destination_mode", ""))
+                    == "client_mapping"
+                    else None
+                ),
                 root=self._journal_root,
             )
+            lease = acquire_journal_lease(journal)
         except ReconciliationJournalError as exc:
             raise ImportPreparationError(
                 "Impossibile inizializzare il registro locale di riconciliazione."
             ) from exc
 
         self._journal = journal
+        self._lease = lease
         bridge_request["reconciliation_batch_id"] = journal.batch_id
         return journal.batch_id
 
@@ -868,11 +1179,14 @@ class _SessionReconciliationCoordinator:
             safe_details["reconciliation_status"] = "verification_required"
             error["details"] = safe_details
         self._journal = None
+        self._release_lease()
         return envelope
 
     def abandon_import(self) -> str | None:
         batch_id = self.active_batch_id
         self._journal = None
+        self._recovery_readiness = None
+        self._release_lease()
         return batch_id
 
 
@@ -997,19 +1311,32 @@ def run_import_session(
                     )
                 request = document
                 command = str(request.get("command", ""))
-                bridge_request, resources = _session_bridge_request(root_path, request)
+                bridge_request, resources = _session_bridge_request(
+                    root_path, request, journal_root
+                )
                 if command == "session-import":
                     reconciliation.start_import(request, bridge_request)
+                elif command == "session-recovery-readiness":
+                    reconciliation.start_recovery_readiness(request, bridge_request)
+                elif command == "session-recovery-import":
+                    reconciliation.start_recovery_import(request, bridge_request)
                 result = _bridge_line_exchange(
                     process,
                     bridge_request,
                     progress_handler=(
                         reconciliation.persist_progress
-                        if command == "session-import"
+                        if command
+                        in {
+                            "session-import",
+                            "session-recovery-readiness",
+                            "session-recovery-import",
+                        }
                         else None
                     ),
                 )
-                if command == "session-import":
+                if command == "session-recovery-readiness":
+                    result = reconciliation.finish_recovery_readiness(result)
+                elif command in {"session-import", "session-recovery-import"}:
                     result = reconciliation.finish_import(result)
                 reconciliation.observe(command, result)
                 if command == "session-open" and result.get("ok") is True:
@@ -1067,6 +1394,7 @@ def run_import_session(
             if command == "session-close":
                 break
     finally:
+        reconciliation.abandon_import()
         if opened and process.poll() is None:
             try:
                 _bridge_line_exchange(process, {"command": "session-close"})
@@ -1122,6 +1450,7 @@ def main() -> int:
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
                     "reconciliation_progress_protocol": True,
+                    "authenticated_recovery_protocol": True,
                     "explicit_reveal_supported": True,
                     "protected_excel_integrity_supported": True,
                     "secrets_serialized": False,

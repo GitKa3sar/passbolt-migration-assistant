@@ -2015,7 +2015,7 @@ function Invoke-ConfirmedImport {
             }
             $Message = Get-SecureErrorMessage $Envelope
             if ($null -ne $Envelope.error.details -and -not [string]::IsNullOrWhiteSpace([string]$Envelope.error.details.reconciliation_batch_id)) {
-                $Message += "`n`nRegistro locale del lotto: $([string]$Envelope.error.details.reconciliation_batch_id). Lo stato richiede verifica; la ripresa guidata sara' aggiunta nel prossimo blocco della roadmap. Prima di riprovare, eseguire un nuovo dry-run."
+                $Message += "`n`nRegistro locale del lotto: $([string]$Envelope.error.details.reconciliation_batch_id). Lo stato richiede una verifica autenticata prima di qualunque nuovo tentativo. Il motore di recupero sicuro e' disponibile; la selezione guidata dei lotti verra' esposta nella prossima fase dell'interfaccia."
             }
             if ($CreatedBeforeFailure -gt 0 -or $CreatedFoldersBeforeFailure -gt 0) {
                 $Message += "`n`nAttenzione: $CreatedFoldersBeforeFailure cartelle e $CreatedBeforeFailure risorse risultano create prima dell'errore. Ripetere il dry-run per riconciliare lo stato; non verranno eliminate automaticamente."
@@ -2956,11 +2956,11 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
@@ -3050,6 +3050,7 @@ for line in sys.stdin:
         protected_excel_password_prompt = "OK"
         persistent_import_session = "OK"
         reconciliation_progress_protocol = "OK"
+        authenticated_recovery_protocol = "OK"
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"
         secrets_serialized = $false

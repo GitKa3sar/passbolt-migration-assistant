@@ -14,6 +14,13 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 - aggiunti envelope interni Node-Python per intenzione ed esito di creazione, condivisione, riconciliazione, duplicati saltati e completamento del lotto;
 - aggiunti all'esito finale l'UUID e lo stato del registro; la GUI annota il completamento oppure mostra l'UUID del lotto da verificare senza esporre il percorso locale;
 - aggiunti test end-to-end per assorbimento degli eventi intermedi, chiusura del registro e interruzione del bridge dopo un'intenzione operativa.
+- aggiunta la scansione limitata dei registri locali e la risoluzione di un lotto esclusivamente tramite UUID canonico, senza accettare percorsi forniti dal chiamante;
+- aggiunti gli eventi `operation_verified` e `recovery_verified`, associati a un UUID di recupero e a un digest tecnico della verifica autenticata;
+- aggiunti i comandi persistenti `session-recovery-readiness` e `session-recovery-import` per ricontrollare l'identita, i sorgenti e lo stato remoto e riprendere lo stesso journal;
+- aggiunta la classificazione idempotente di cartelle, risorse e permessi in `remote_success`, `not_applied` o conflitto bloccante;
+- aggiunta la riparazione controllata delle condivisioni rimaste personali, inclusa la riestrazione in memoria del segreto soltanto quando serve ricifrarlo per i destinatari;
+- aggiunti test per ripresa completa dopo interruzione, oggetti remoti gia riusciti, richieste non applicate, variazione delle ACL, prove sorgente non corrispondenti, conteggi di recupero e journal troncati.
+- aggiunto un lease esclusivo per lotto, mantenuto dalla verifica all'applicazione e rilasciato alla chiusura o dal sistema in caso di arresto, per impedire recuperi concorrenti da due istanze dell'app.
 
 ### Security
 
@@ -23,7 +30,11 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 - i registri sono destinati a `%LOCALAPPDATA%` e sono esclusi dal controllo versione come difesa aggiuntiva;
 - ogni intenzione viene sincronizzata prima della richiesta irreversibile a Passbolt e ogni esito viene sincronizzato prima della risposta finale alla GUI;
 - gli envelope di avanzamento sono consumati esclusivamente dal backend Python e non modificano il protocollo a risposta singola usato dalla GUI;
-- se un evento non e valido o non puo essere scritto, Python termina il bridge e marca il lotto come da verificare; la ripresa automatica resta disabilitata fino ai successivi blocchi della 0.13.
+- se un evento non e valido o non puo essere scritto, Python termina il bridge e marca il lotto come da verificare;
+- prima del recupero vengono confrontati origine e fingerprint del server, hash dell'utente, coppie candidato/sorgente, formati, destinazione e hash della mappatura per cliente;
+- le intenzioni di condivisione registrano l'hash della maschera prevista; se la ACL del contenitore o quella dell'oggetto cambia, la ripresa automatica viene bloccata;
+- il recupero non cancella, non sposta e non sovrascrive oggetti esistenti; registri corrotti o troncati e stati remoti ambigui richiedono verifica manuale;
+- verifica e applicazione sono legate nella stessa sessione tramite UUID e digest del piano di recupero, e i segreti vengono riestratti soltanto per le risorse che devono essere create o ricondivise.
 
 ## 0.12.5 - 2026-08-08
 

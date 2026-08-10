@@ -14,13 +14,20 @@ from unittest import mock
 from passbolt_import import (
     ImportPreparationError,
     _bridge_line_exchange,
+    _prepare_recovery_context,
     _session_bridge_request,
     execute_import,
     extract_resources,
     verify_integrity,
 )
 from passbolt_review import analyze_files
-from passbolt_reconciliation import ReconciliationJournalError, read_journal
+from passbolt_reconciliation import (
+    CandidateProof,
+    ReconciliationJournal,
+    ReconciliationJournalError,
+    hash_user_identifier,
+    read_journal,
+)
 
 
 def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
@@ -643,6 +650,276 @@ for raw in sys.stdin:
         self.assertTrue(snapshot.requires_verification)
         self.assertEqual(snapshot.events[-1]["event_type"], "operation_intent")
         self.assertNotIn(self.secret, journal_files[0].read_text(encoding="utf-8"))
+
+    def test_authenticated_recovery_reuses_same_journal_and_reextracts_secret(self) -> None:
+        local_app_data = self.root / "recovery-localappdata"
+        journal_root = (
+            local_app_data
+            / "Passbolt Migration Assistant"
+            / "Reconciliation"
+        )
+        user_id = "59a882e6-4909-4db0-ab84-91093461c777"
+        first_operation_id = "2f42a04b-bf31-4095-a492-573fb3e091ba"
+        journal = ReconciliationJournal.create(
+            app_version="0.12.5",
+            server_origin="https://pass.example.test",
+            server_fingerprint="C" * 40,
+            user_id_hash=hash_user_identifier(user_id),
+            plan_digest="d" * 64,
+            resource_format="v4",
+            folder_format="none",
+            destination_mode="root",
+            destination_folder_id=None,
+            candidates=(
+                CandidateProof(
+                    self.request["candidate_id"],
+                    self.request["source_sha256"],
+                ),
+            ),
+            root=journal_root,
+        )
+        journal.append(
+            "operation_intent",
+            operation_id=first_operation_id,
+            object_type="resource",
+            action="create_resource",
+            candidate_id=self.request["candidate_id"],
+            destination_key_hash="1" * 64,
+        )
+
+        recovery_id = "6ed40c1f-361c-4d09-8064-eb3938e7262c"
+        recovery_digest = "e" * 64
+        fake_bridge = self.root / "recovery_session_bridge.py"
+        fake_bridge.write_text(
+            """import json
+import sys
+
+session_id = "recovery-session-id"
+for raw in sys.stdin:
+    request = json.loads(raw)
+    command = request.get("command")
+    if command == "session-open":
+        result = {
+            "session_id": session_id,
+            "base_url": "https://pass.example.test",
+            "server_fingerprint": "C" * 40,
+            "user": {"id": "59a882e6-4909-4db0-ab84-91093461c777"},
+        }
+    elif command == "session-recovery-readiness":
+        batch_id = request["reconciliation_batch_id"]
+        candidate_id = request["candidates"][0]["candidate_id"]
+        recovery_id = "6ed40c1f-361c-4d09-8064-eb3938e7262c"
+        progress = [
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "operation_verified",
+                "payload": {
+                    "recovery_id": recovery_id,
+                    "operation_id": "2f42a04b-bf31-4095-a492-573fb3e091ba",
+                    "object_type": "resource",
+                    "candidate_id": candidate_id,
+                    "destination_key_hash": "1" * 64,
+                    "resolution": "not_applied",
+                },
+            },
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "recovery_verified",
+                "payload": {
+                    "recovery_id": recovery_id,
+                    "verification_digest": "f" * 64,
+                    "verified_operation_count": 1,
+                    "remote_success_count": 0,
+                    "retry_count": 1,
+                },
+            },
+        ]
+        for envelope in progress:
+            print(json.dumps(envelope), flush=True)
+        result = {
+            "command": "recovery-readiness",
+            "session_id": session_id,
+            "reconciliation_batch_id": batch_id,
+            "recovery_id": recovery_id,
+            "recovery_plan_digest": "e" * 64,
+            "resource_candidate_ids": [candidate_id],
+            "verified_operation_count": 1,
+            "remote_success_count": 0,
+            "retry_action_count": 1,
+            "can_recover": True,
+        }
+    elif command == "session-recovery-import":
+        assert request["resources"][0]["password"] == "Segreto-importazione-123"
+        batch_id = request["reconciliation_batch_id"]
+        candidate_id = request["candidates"][0]["candidate_id"]
+        operation_id = "8affecb7-00cc-47d4-9487-2e9a6f66ff53"
+        resource_id = "031fad27-c6c4-46e7-bc9a-9237f5c1cb46"
+        progress = [
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "operation_intent",
+                "payload": {
+                    "operation_id": operation_id,
+                    "object_type": "resource",
+                    "action": "create_resource",
+                    "candidate_id": candidate_id,
+                    "destination_key_hash": "1" * 64,
+                },
+            },
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "resource_created",
+                "payload": {
+                    "operation_id": operation_id,
+                    "resource_id": resource_id,
+                    "candidate_id": candidate_id,
+                    "status": "created",
+                },
+            },
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "batch_completed",
+                "payload": {
+                    "created_folder_count": 0,
+                    "reconciled_folder_count": 0,
+                    "created_resource_count": 1,
+                    "shared_resource_count": 0,
+                    "skipped_duplicate_count": 0,
+                },
+            },
+        ]
+        for envelope in progress:
+            print(json.dumps(envelope), flush=True)
+        result = {
+            "command": "recovery-import",
+            "session_id": session_id,
+            "reconciliation_batch_id": batch_id,
+            "created_count": 1,
+            "complete": True,
+        }
+    elif command == "session-close":
+        result = {"session_id": session_id, "command": command, "closed": True}
+    else:
+        raise AssertionError(command)
+    print(json.dumps({"ok": True, "result": result}), flush=True)
+    if command == "session-close":
+        break
+""",
+            encoding="utf-8",
+        )
+        requests = [
+            {
+                "command": "session-open",
+                "base_url": "https://pass.example.test",
+                "expected_server_fingerprint": "C" * 40,
+                "private_key_path": "C:/private.asc",
+                "passphrase": "key-passphrase",
+                "mfa_totp": "654321",
+            },
+            {
+                "command": "session-recovery-readiness",
+                "session_id": "recovery-session-id",
+                "reconciliation_batch_id": journal.batch_id,
+                "candidates": [self.request],
+            },
+            {
+                "command": "session-recovery-import",
+                "session_id": "recovery-session-id",
+                "reconciliation_batch_id": journal.batch_id,
+                "recovery_id": recovery_id,
+                "recovery_plan_digest": recovery_digest,
+                "resource_candidate_ids": [self.request["candidate_id"]],
+                "candidates": [self.request],
+                "confirmation": "RECUPERA 1",
+            },
+            {"command": "session-close", "session_id": "recovery-session-id"},
+        ]
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("passbolt_import.py")),
+                "--session",
+                "--root",
+                str(self.root),
+                "--node",
+                sys.executable,
+                "--crypto-script",
+                str(fake_bridge),
+            ],
+            input="".join(
+                json.dumps(request, separators=(",", ":")) + "\n"
+                for request in requests
+            ).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+            env={**os.environ, "LOCALAPPDATA": str(local_app_data)},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+        responses = [json.loads(line) for line in completed.stdout.splitlines()]
+        self.assertEqual(len(responses), 4)
+        self.assertTrue(all(response["ok"] for response in responses))
+        self.assertEqual(
+            responses[2]["result"]["reconciliation_status"], "complete"
+        )
+        snapshot = read_journal(journal.path)
+        self.assertTrue(snapshot.complete)
+        self.assertEqual(
+            [event["event_type"] for event in snapshot.events],
+            [
+                "batch_started",
+                "operation_intent",
+                "operation_verified",
+                "recovery_verified",
+                "operation_intent",
+                "resource_created",
+                "batch_completed",
+            ],
+        )
+        serialized = journal.path.read_text(encoding="utf-8") + completed.stdout.decode(
+            "utf-8"
+        )
+        self.assertNotIn(self.secret, serialized)
+        self.assertNotIn("key-passphrase", serialized)
+        self.assertNotIn("654321", serialized)
+
+    def test_recovery_rejects_changed_candidate_proofs_before_bridge(self) -> None:
+        journal = ReconciliationJournal.create(
+            app_version="0.12.5",
+            server_origin="https://pass.example.test",
+            server_fingerprint="D" * 40,
+            user_id_hash=hash_user_identifier(
+                "59a882e6-4909-4db0-ab84-91093461c777"
+            ),
+            plan_digest="d" * 64,
+            resource_format="v4",
+            folder_format="none",
+            destination_mode="root",
+            destination_folder_id=None,
+            candidates=(
+                CandidateProof(
+                    self.request["candidate_id"], self.request["source_sha256"]
+                ),
+            ),
+            root=self.root / "proof-journals",
+        )
+        changed = dict(self.request)
+        changed["source_sha256"] = "0" * 64
+        with self.assertRaises(ImportPreparationError):
+            _prepare_recovery_context(
+                self.root,
+                {
+                    "reconciliation_batch_id": journal.batch_id,
+                    "candidates": [changed],
+                },
+                self.root / "proof-journals",
+            )
 
     def test_changed_source_is_rejected(self) -> None:
         self.source.write_text(
