@@ -49,6 +49,10 @@ inventory*.json
 inventory*.csv
 report*.json
 report*.csv
+batch-*.jsonl
+*.journal.jsonl
+Reconciliation/
+reconciliation/
 *.doc
 *.docx
 *.xls

@@ -314,7 +314,7 @@ python .\passbolt_import.py --self-test
 '{"command":"self-test"}' | node .\passbolt_crypto.mjs
 node .\test_passbolt_crypto.mjs
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py
+python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py
 ```
 
 `test_passbolt_crypto.mjs` avvia un server simulato soltanto su `127.0.0.1` e verifica end-to-end GPGAuth stage 0/1/2, redirect interni, blocco dei redirect esterni, TOTP mancante, TOTP rifiutato, TOTP valido, cookie di sessione e MFA, riuso della sessione per due dry-run senza un secondo login o un secondo TOTP, CSRF, piano duplicati v4/v5, chiave metadati personale, chiave metadati condivisa verificata, catalogo gerarchico delle cartelle, contenitore padre selezionato, destinazione diretta, mappature distinte v4/v5, destinazione radice per singolo cliente, rifiuto delle destinazioni incomplete o in sola lettura, lettura e creazione cartelle v4/v5, ereditarieta User/Group per nuove sottocartelle condivise, digest della maschera, applicazione diretta dei permessi cartella, simulazione prima della condivisione delle risorse, chiave condivisa per i metadati v5, assegnazione di `folder_parent_id`, blocco dei duplicati presenti altrove, riconciliazione dei fallimenti parziali e creazione risorse v4/v5 con segreti e metadati OpenPGP cifrati. Non contatta l'istanza Passbolt reale.
@@ -336,6 +336,12 @@ python .\passbolt_review.py `
   --json
 ```
 
-## Passaggio successivo
+## Sviluppo della versione 0.13
 
-La fase successiva prevista e la versione 0.13: un registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione, per verificare o riprendere in sicurezza importazioni piu ampie. Le fasi successive potranno aggiungere un editor esplicito dei permessi e dei gruppi, altri provider MFA e le operazioni controllate sulle risorse esistenti. L'app continua a interrompersi in modo sicuro quando non può dimostrare l'identità, verificare l'integrità del sorgente, validare le chiavi metadati o confrontare completamente cartelle e duplicati.
+Il primo blocco della versione 0.13 introduce `passbolt_reconciliation.py`, il componente di persistenza che verra collegato alle operazioni della fase 04 nei blocchi successivi. La versione operativa dell'app resta 0.12.5: la presenza del componente non abilita ancora registrazione o ripresa durante un'importazione reale.
+
+Ogni futuro lotto usa un file `batch-<UUID>.jsonl` sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`. Il primo evento lega il registro a versione dell'app, origine e fingerprint del server, hash dell'identita Passbolt, digest del piano, formati, destinazione e coppie `candidate_id`/SHA-256 del sorgente. Gli eventi successivi possono contenere soltanto intenzioni operative, ID remoti, stati di creazione e condivisione, contatori e codici di errore tecnici. Non sono ammessi titolo, username, URL delle credenziali, percorsi dei documenti, password, password Excel, chiavi, passphrase, MFA, cookie o identificatori di sessione.
+
+Ogni riga contiene numero di sequenza, timestamp UTC, hash della riga precedente e hash SHA-256 del record corrente. La scrittura viene sincronizzata prima di confermare l'append. Una riga finale parziale non viene considerata un evento riuscito, marca il lotto come da verificare e blocca nuove scritture; un errore o un'alterazione in una riga interna rende il registro non fidato. Un lotto concluso con `batch_completed` diventa immutabile. La catena SHA-256 rileva corruzioni e modifiche non coerenti, ma non e una firma digitale e non sostituisce la futura verifica autenticata dello stato su Passbolt.
+
+Il secondo blocco colleghera il bridge Node al backend Python tramite eventi di avanzamento privi di segreti. Il terzo aggiungera verifica autenticata e ripresa idempotente; il quarto completera interfaccia, archiviazione e documentazione operativa. Soltanto dopo questi blocchi l'app potra presentare la ripresa come funzione utilizzabile. Le fasi successive potranno aggiungere un editor esplicito dei permessi e dei gruppi, altri provider MFA e le operazioni controllate sulle risorse esistenti. L'app continua a interrompersi in modo sicuro quando non può dimostrare l'identità, verificare l'integrità del sorgente, validare le chiavi metadati o confrontare completamente cartelle e duplicati.
