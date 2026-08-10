@@ -6,17 +6,24 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 ### Added
 
-- aggiunto il componente locale `passbolt_reconciliation.py`, fondamento non ancora collegato alla fase 04, per creare un registro JSON Lines versionato e separato per ogni lotto;
+- aggiunto il componente locale `passbolt_reconciliation.py` per creare un registro JSON Lines versionato e separato per ogni lotto;
 - aggiunti identificativo UUID del lotto, sequenza monotona degli eventi, timestamp UTC, concatenamento SHA-256 e sincronizzazione su disco dopo ogni append;
 - definito uno schema a campi consentiti per piano, prove dei sorgenti, intenzioni operative, ID remoti, condivisioni, errori sicuri e completamento del lotto;
-- aggiunti test per troncamento dell'ultima scrittura, manomissione, record malformati, associazione fra nome file e lotto e immutabilita dei registri completati.
+- aggiunti test per troncamento dell'ultima scrittura, manomissione, record malformati, associazione fra nome file e lotto e immutabilita dei registri completati;
+- collegato il registro alla fase 04: Python lo crea dopo il dry-run e prima della scrittura, quindi inoltra al bridge soltanto l'UUID del lotto;
+- aggiunti envelope interni Node-Python per intenzione ed esito di creazione, condivisione, riconciliazione, duplicati saltati e completamento del lotto;
+- aggiunti all'esito finale l'UUID e lo stato del registro; la GUI annota il completamento oppure mostra l'UUID del lotto da verificare senza esporre il percorso locale;
+- aggiunti test end-to-end per assorbimento degli eventi intermedi, chiusura del registro e interruzione del bridge dopo un'intenzione operativa.
 
 ### Security
 
 - il registro accetta soltanto identificativi, hash, contatori e stati tecnici; rifiuta campi sconosciuti, URL con credenziali, materiale OpenPGP, header di autorizzazione e nomi di campo riconducibili a password, passphrase, MFA, cookie, sessioni o chiavi private;
 - l'identificativo utente Passbolt viene trasformato in SHA-256 prima della persistenza e i candidati sono rappresentati soltanto da `candidate_id` e hash SHA-256 del sorgente;
 - una riga finale incompleta viene ignorata come conferma ma marca il lotto come da verificare e impedisce ulteriori append automatici; una corruzione interna blocca completamente la lettura fidata;
-- i registri sono destinati a `%LOCALAPPDATA%` e sono esclusi dal controllo versione come difesa aggiuntiva.
+- i registri sono destinati a `%LOCALAPPDATA%` e sono esclusi dal controllo versione come difesa aggiuntiva;
+- ogni intenzione viene sincronizzata prima della richiesta irreversibile a Passbolt e ogni esito viene sincronizzato prima della risposta finale alla GUI;
+- gli envelope di avanzamento sono consumati esclusivamente dal backend Python e non modificano il protocollo a risposta singola usato dalla GUI;
+- se un evento non e valido o non puo essere scritto, Python termina il bridge e marca il lotto come da verificare; la ripresa automatica resta disabilitata fino ai successivi blocchi della 0.13.
 
 ## 0.12.5 - 2026-08-08
 

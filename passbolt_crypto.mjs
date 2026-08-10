@@ -29,6 +29,7 @@ const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
 const METADATA_PRIVATE_KEY_OBJECT_TYPE = 'PASSBOLT_METADATA_PRIVATE_KEY';
 const TOKEN_PATTERN = /^gpgauthv1\.3\.0\|36\|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\|gpgauthv1\.3\.0$/i;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class SafeError extends Error {
   constructor(code, message, details = undefined) {
@@ -636,6 +637,13 @@ function normalizeDestinationFolderId(value) {
   const folderId = String(value).trim();
   assert(folderId.length <= 200 && !/[\u0000-\u001f\u007f]/.test(folderId), 'INVALID_DESTINATION_FOLDER', 'La cartella Passbolt selezionata non contiene un identificatore valido.');
   return folderId;
+}
+
+function normalizeReconciliationBatchId(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const batchId = String(value).trim().toLowerCase();
+  assert(UUID_V4_PATTERN.test(batchId), 'INVALID_RECONCILIATION_BATCH', 'L’identificativo del registro di riconciliazione non e valido.');
+  return batchId;
 }
 
 function requiredClientLabels(candidates) {
@@ -2177,7 +2185,12 @@ function importResources(value, candidates) {
   });
 }
 
-async function createPlannedContent(session, createPlan, resources, runtime, keyMaterial) {
+function technicalDigest(value) {
+  return createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex');
+}
+
+async function createPlannedContent(session, createPlan, resources, runtime, keyMaterial, progress = async () => {}) {
+  assert(typeof progress === 'function', 'INVALID_PROGRESS_WRITER', 'Il canale di avanzamento non e valido.');
   const created = [];
   const createdFolders = [];
   const reconciledFolders = [];
@@ -2190,6 +2203,13 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
     }
     if (folder.action === 'repair_share') {
       folderIds.set(folder.destination_key, folder.folder_id);
+      const operationId = randomUUID();
+      await progress('operation_intent', {
+        operation_id: operationId,
+        object_type: 'folder',
+        action: 'reconcile_folder',
+        destination_key_hash: technicalDigest(folder.destination_key),
+      });
       try {
         const shareResult = await shareCreatedFolder(session, folder.folder_id, folder.existing_permission, folder);
         reconciledFolders.push({
@@ -2204,7 +2224,24 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
           share_recipient_count: Number(folder.share_recipient_count ?? 0),
           share_inherited_from_folder_id: folder.share_inherited_from_folder_id ?? null,
         });
+        await progress('folder_shared', {
+          operation_id: operationId,
+          folder_id: folder.folder_id,
+          status: 'reconciled_shared',
+          added_user_count: Number(shareResult.added_user_count ?? 0),
+          permission_change_count: Number(shareResult.permission_changes ?? 0),
+        });
       } catch (error) {
+        await progress('operation_failed', {
+          operation_id: operationId,
+          object_type: 'folder',
+          folder_id: folder.folder_id,
+          error_code: error instanceof SafeError ? error.code : 'INTERNAL_ERROR',
+          outcome: 'unknown',
+          ...(error instanceof SafeError && Number.isInteger(error.details?.http_status)
+            ? { http_status: error.details.http_status }
+            : {}),
+        });
         const failureMessage = error instanceof SafeError ? error.message : 'La riconciliazione della cartella non e stata completata.';
         throw new SafeError(
           'IMPORT_PARTIAL_FAILURE',
@@ -2225,12 +2262,26 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       continue;
     }
     const payload = await buildFolderPayload(folder, runtime, keyMaterial);
+    const createFolderOperationId = randomUUID();
+    await progress('operation_intent', {
+      operation_id: createFolderOperationId,
+      object_type: 'folder',
+      action: 'create_folder',
+      destination_key_hash: technicalDigest(folder.destination_key),
+    });
     const response = await session.request('/folders.json?api-version=v2&contain[permission]=1', {
       method: 'POST',
       body: payload,
       allowError: true,
     });
     if (response.status < 200 || response.status >= 300) {
+      await progress('operation_failed', {
+        operation_id: createFolderOperationId,
+        object_type: 'folder',
+        error_code: 'FOLDER_CREATE_FAILED',
+        outcome: 'confirmed',
+        http_status: response.status,
+      });
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         apiMessage(response.document, `Creazione della cartella ${folder.name} non riuscita (HTTP ${response.status}).`),
@@ -2240,6 +2291,13 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
     const body = apiBody(response.document);
     const folderId = body && typeof body === 'object' && typeof body.id === 'string' ? body.id : '';
     if (!folderId) {
+      await progress('operation_failed', {
+        operation_id: createFolderOperationId,
+        object_type: 'folder',
+        error_code: 'FOLDER_ID_MISSING',
+        outcome: 'unknown',
+        http_status: response.status,
+      });
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         `Passbolt ha creato la cartella ${folder.name} senza restituire un identificatore utilizzabile.`,
@@ -2257,13 +2315,44 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       share_inherited_from_folder_id: folder.share_inherited_from_folder_id ?? null,
     };
     createdFolders.push(createdFolder);
+    await progress('folder_created', {
+      operation_id: createFolderOperationId,
+      folder_id: folderId,
+      parent_folder_id: folder.folder_parent_id ?? null,
+      destination_key_hash: technicalDigest(folder.destination_key),
+      status: folder.shared ? 'created_unshared' : 'created',
+    });
     if (folder.shared) {
+      const shareFolderOperationId = randomUUID();
+      await progress('operation_intent', {
+        operation_id: shareFolderOperationId,
+        object_type: 'folder',
+        action: 'share_folder',
+        destination_key_hash: technicalDigest(folder.destination_key),
+      });
       try {
         const shareResult = await shareCreatedFolder(session, folderId, body.permission, folder);
         createdFolder.status = 'created_shared';
         createdFolder.permission_changes = shareResult.permission_changes;
         createdFolder.added_user_count = shareResult.added_user_count;
+        await progress('folder_shared', {
+          operation_id: shareFolderOperationId,
+          folder_id: folderId,
+          status: 'created_shared',
+          added_user_count: Number(shareResult.added_user_count ?? 0),
+          permission_change_count: Number(shareResult.permission_changes ?? 0),
+        });
       } catch (error) {
+        await progress('operation_failed', {
+          operation_id: shareFolderOperationId,
+          object_type: 'folder',
+          folder_id: folderId,
+          error_code: error instanceof SafeError ? error.code : 'INTERNAL_ERROR',
+          outcome: 'partial',
+          ...(error instanceof SafeError && Number.isInteger(error.details?.http_status)
+            ? { http_status: error.details.http_status }
+            : {}),
+        });
         const failureMessage = error instanceof SafeError ? error.message : 'La condivisione della cartella non e stata completata.';
         throw new SafeError(
           'IMPORT_PARTIAL_FAILURE',
@@ -2293,12 +2382,27 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       : folderIds.get(planned.destination_key);
     assert(planned.folder_action === 'root' || typeof folderParentId === 'string', 'FOLDER_DESTINATION_MISSING', `La destinazione di ${resource.title} non e disponibile.`);
     const payload = await buildResourcePayload(resource, runtime, keyMaterial, folderParentId ?? null);
+    const createResourceOperationId = randomUUID();
+    await progress('operation_intent', {
+      operation_id: createResourceOperationId,
+      object_type: 'resource',
+      action: 'create_resource',
+      candidate_id: resource.candidate_id,
+    });
     const response = await session.request('/resources.json?api-version=v2&contain[permission]=1', {
       method: 'POST',
       body: payload,
       allowError: true,
     });
     if (response.status < 200 || response.status >= 300) {
+      await progress('operation_failed', {
+        operation_id: createResourceOperationId,
+        object_type: 'resource',
+        candidate_id: resource.candidate_id,
+        error_code: 'RESOURCE_CREATE_FAILED',
+        outcome: 'confirmed',
+        http_status: response.status,
+      });
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         apiMessage(response.document, `Creazione di ${resource.title} non riuscita (HTTP ${response.status}).`),
@@ -2308,6 +2412,14 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
     const body = apiBody(response.document);
     const resourceId = body && typeof body === 'object' && typeof body.id === 'string' ? body.id : '';
     if (!resourceId) {
+      await progress('operation_failed', {
+        operation_id: createResourceOperationId,
+        object_type: 'resource',
+        candidate_id: resource.candidate_id,
+        error_code: 'RESOURCE_ID_MISSING',
+        outcome: 'unknown',
+        http_status: response.status,
+      });
       throw new SafeError(
         'IMPORT_PARTIAL_FAILURE',
         `Passbolt ha creato ${resource.title} senza restituire un identificatore utilizzabile.`,
@@ -2322,13 +2434,45 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       share_recipient_count: Number(planned.share_recipient_count ?? 0),
     };
     created.push(createdEntry);
+    await progress('resource_created', {
+      operation_id: createResourceOperationId,
+      resource_id: resourceId,
+      candidate_id: resource.candidate_id,
+      status: planned.shared ? 'created_unshared' : 'created',
+    });
     if (planned.shared) {
+      const shareResourceOperationId = randomUUID();
+      await progress('operation_intent', {
+        operation_id: shareResourceOperationId,
+        object_type: 'resource',
+        action: 'share_resource',
+        candidate_id: resource.candidate_id,
+      });
       try {
         const shareResult = await shareCreatedResource(session, resourceId, body.permission, planned, resource, runtime, keyMaterial);
         createdEntry.status = 'created_shared';
         createdEntry.encrypted_secret_copies = shareResult.encrypted_secret_copies;
         createdEntry.permission_changes = shareResult.permission_changes;
+        await progress('resource_shared', {
+          operation_id: shareResourceOperationId,
+          resource_id: resourceId,
+          candidate_id: resource.candidate_id,
+          status: 'created_shared',
+          recipient_count: Number(planned.share_recipient_count ?? 0),
+          permission_change_count: Number(shareResult.permission_changes ?? 0),
+        });
       } catch (error) {
+        await progress('operation_failed', {
+          operation_id: shareResourceOperationId,
+          object_type: 'resource',
+          candidate_id: resource.candidate_id,
+          resource_id: resourceId,
+          error_code: error instanceof SafeError ? error.code : 'INTERNAL_ERROR',
+          outcome: 'partial',
+          ...(error instanceof SafeError && Number.isInteger(error.details?.http_status)
+            ? { http_status: error.details.http_status }
+            : {}),
+        });
         const failureMessage = error instanceof SafeError ? error.message : 'La condivisione non e stata completata.';
         throw new SafeError(
           'IMPORT_PARTIAL_FAILURE',
@@ -2424,8 +2568,19 @@ async function verifyPersistentSession(session, expectedUserId) {
 }
 
 class PersistentImportSession {
-  constructor() {
+  constructor(progressWriter = null) {
     this.state = null;
+    this.progressWriter = typeof progressWriter === 'function' ? progressWriter : null;
+  }
+
+  async emitProgress(batchId, eventType, payload) {
+    if (!batchId || !this.progressWriter) return;
+    await this.progressWriter({
+      type: 'progress',
+      batch_id: batchId,
+      event_type: eventType,
+      payload,
+    });
   }
 
   async open(input) {
@@ -2502,6 +2657,10 @@ class PersistentImportSession {
 
   async import(input) {
     const state = this.requireState(input);
+    const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
+    assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il registro locale di riconciliazione non e stato inizializzato.');
+    assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole di avanzamento non e disponibile.');
+    const progress = async (eventType, payload) => this.emitProgress(reconciliationBatchId, eventType, payload);
     await verifyPersistentSession(state.session, String(state.user.id));
     const candidates = safeCandidates(input.candidates);
     const { capabilities, runtime } = await analyzeCapabilities(
@@ -2522,8 +2681,22 @@ class PersistentImportSession {
     assert(String(input.confirmation ?? '') === `IMPORTA ${createPlan.length}`, 'CONFIRMATION_MISMATCH', `Conferma richiesta: IMPORTA ${createPlan.length}`);
     const resources = importResources(input.resources, createPlan);
     try {
-      const { created, createdFolders, reconciledFolders } = await createPlannedContent(state.session, createPlan, resources, runtime, state.key);
-      return {
+      for (const duplicate of capabilities.candidates.filter((item) => item.action === 'duplicate')) {
+        await progress('duplicate_skipped', {
+          candidate_id: duplicate.candidate_id,
+          duplicate_kind: duplicate.duplicate_kind,
+          ...(duplicate.duplicate_resource_id ? { resource_id: duplicate.duplicate_resource_id } : {}),
+        });
+      }
+      const { created, createdFolders, reconciledFolders } = await createPlannedContent(
+        state.session,
+        createPlan,
+        resources,
+        runtime,
+        state.key,
+        progress,
+      );
+      const result = {
         command: 'import',
         session_id: state.sessionId,
         authentication: state.mfaProvider ? 'GPGAuth + TOTP' : 'GPGAuth',
@@ -2544,6 +2717,14 @@ class PersistentImportSession {
         created,
         complete: true,
       };
+      await progress('batch_completed', {
+        created_folder_count: createdFolders.length,
+        reconciled_folder_count: reconciledFolders.length,
+        created_resource_count: created.length,
+        shared_resource_count: created.filter((item) => item.status === 'created_shared').length,
+        skipped_duplicate_count: capabilities.duplicate_count,
+      });
+      return result;
     } finally {
       resources.length = 0;
       if (Array.isArray(input.resources)) input.resources.length = 0;
@@ -2668,6 +2849,7 @@ async function selfTest() {
     passbolt_string_secret_schema: true,
     duplicate_detection: true,
     persistent_session_protocol: true,
+    reconciliation_progress_protocol: true,
     secrets_serialized: false,
   };
 }
@@ -2727,7 +2909,7 @@ async function writeSessionEnvelope(document) {
 }
 
 async function mainPersistentSession() {
-  const worker = new PersistentImportSession();
+  const worker = new PersistentImportSession(writeSessionEnvelope);
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity, terminal: false });
   try {
     for await (let line of lines) {

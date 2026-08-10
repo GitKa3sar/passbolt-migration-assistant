@@ -2014,6 +2014,9 @@ function Invoke-ConfirmedImport {
                 $CreatedFoldersBeforeFailure = @($Envelope.error.details.created_folders).Count
             }
             $Message = Get-SecureErrorMessage $Envelope
+            if ($null -ne $Envelope.error.details -and -not [string]::IsNullOrWhiteSpace([string]$Envelope.error.details.reconciliation_batch_id)) {
+                $Message += "`n`nRegistro locale del lotto: $([string]$Envelope.error.details.reconciliation_batch_id). Lo stato richiede verifica; la ripresa guidata sara' aggiunta nel prossimo blocco della roadmap. Prima di riprovare, eseguire un nuovo dry-run."
+            }
             if ($CreatedBeforeFailure -gt 0 -or $CreatedFoldersBeforeFailure -gt 0) {
                 $Message += "`n`nAttenzione: $CreatedFoldersBeforeFailure cartelle e $CreatedBeforeFailure risorse risultano create prima dell'errore. Ripetere il dry-run per riconciliare lo stato; non verranno eliminate automaticamente."
             }
@@ -2050,6 +2053,9 @@ function Invoke-ConfirmedImport {
         }
         $ImportPlanGrid.Items.Refresh()
         Add-Activity "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        if (-not [string]::IsNullOrWhiteSpace([string]$Result.reconciliation_batch_id)) {
+            Add-Activity "Registro locale del lotto $([string]$Result.reconciliation_batch_id) completato."
+        }
         [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle personali riconciliate: $($Result.reconciled_shared_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
     } catch {
         $FailureMessage = [string]$_.Exception.Message
@@ -2950,11 +2956,11 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
@@ -3043,6 +3049,7 @@ for line in sys.stdin:
         review_candidate_editor = "OK"
         protected_excel_password_prompt = "OK"
         persistent_import_session = "OK"
+        reconciliation_progress_protocol = "OK"
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"
         secrets_serialized = $false

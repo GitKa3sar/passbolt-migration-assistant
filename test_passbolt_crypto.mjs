@@ -1307,16 +1307,29 @@ async function main() {
         return { status: 200, document: { body: { id: 'simulated-resource-id' } } };
       },
     };
+    const simulatedProgress = [];
     const simulatedCreation = await createPlannedContent(
       simulatedSession,
       newFolderAnalysis.capabilities.candidates,
       [plannedResource],
       newFolderAnalysis.runtime,
       keyMaterial,
+      async (eventType, payload) => simulatedProgress.push({ eventType, payload }),
     );
     assert.equal(simulatedCalls.length, 2);
     assert.equal(simulatedCreation.createdFolders.length, 1);
     assert.equal(simulatedCreation.created.length, 1);
+    assert.deepEqual(
+      simulatedProgress.map((event) => event.eventType),
+      ['operation_intent', 'folder_created', 'operation_intent', 'resource_created'],
+    );
+    assert.deepEqual(
+      simulatedProgress.filter((event) => event.eventType === 'operation_intent').map((event) => event.payload.action),
+      ['create_folder', 'create_resource'],
+    );
+    assert.match(simulatedProgress[0].payload.operation_id, /^[0-9a-f-]{36}$/i);
+    assert.match(simulatedProgress[0].payload.destination_key_hash, /^[0-9a-f]{64}$/);
+    assert.equal(JSON.stringify(simulatedProgress).includes('beta-password'), false);
 
     const failingSession = {
       async request(path) {
@@ -1326,6 +1339,7 @@ async function main() {
         return { status: 500, document: { header: { message: 'Simulated resource failure.' } } };
       },
     };
+    const failingProgress = [];
     await assert.rejects(
       createPlannedContent(
         failingSession,
@@ -1333,11 +1347,19 @@ async function main() {
         [plannedResource],
         newFolderAnalysis.runtime,
         keyMaterial,
+        async (eventType, payload) => failingProgress.push({ eventType, payload }),
       ),
       (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
         && error?.details?.created_folders?.length === 1
         && error?.details?.created?.length === 0,
     );
+    assert.deepEqual(
+      failingProgress.map((event) => event.eventType),
+      ['operation_intent', 'folder_created', 'operation_intent', 'operation_failed'],
+    );
+    assert.equal(failingProgress.at(-1).payload.error_code, 'RESOURCE_CREATE_FAILED');
+    assert.equal(failingProgress.at(-1).payload.outcome, 'confirmed');
+    assert.equal(failingProgress.at(-1).payload.http_status, 500);
 
     await session.request('/auth/logout.json?api-version=v2', { method: 'POST' });
     assert.equal(authenticated, false);
@@ -1548,7 +1570,10 @@ async function main() {
     assert.equal(mfaAuthentication.user.id, 'user-id');
     assert.equal(mfaAuthentication.mfaProvider, 'totp');
     assert.equal(mfaSession.getCookie('passbolt_mfa'), 'mock-mfa');
-    const persistentWorker = new PersistentImportSession();
+    const persistentProgress = [];
+    const persistentWorker = new PersistentImportSession(
+      async (envelope) => persistentProgress.push(envelope),
+    );
     persistentWorker.state = {
       sessionId: 'persistent-test-session',
       baseUrl,
@@ -1586,6 +1611,31 @@ async function main() {
     assert.equal(firstPersistentReadiness.session_id, 'persistent-test-session');
     assert.equal(secondPersistentReadiness.authentication, 'GPGAuth + TOTP');
     assert.equal(completedLoginCount, loginCountBeforePersistentRequests);
+    const persistentBatchId = 'd688ad13-eef7-4ee4-89ce-13f574fbcfaa';
+    const persistentImport = await persistentWorker.import({
+      command: 'session-import',
+      session_id: 'persistent-test-session',
+      reconciliation_batch_id: persistentBatchId,
+      candidates: persistentCandidates,
+      resources: [{
+        ...persistentCandidates[0],
+        password: 'mock-resource-password',
+        description: 'mock description',
+      }],
+      resource_format: 'v4',
+      destination_mode: 'root',
+      folder_format: 'auto',
+      plan_digest: secondPersistentReadiness.plan_digest,
+      confirmation: 'IMPORTA 1',
+    });
+    assert.equal(persistentImport.complete, true);
+    assert.deepEqual(
+      persistentProgress.map((envelope) => envelope.event_type),
+      ['operation_intent', 'resource_created', 'batch_completed'],
+    );
+    assert.equal(persistentProgress.every((envelope) => envelope.type === 'progress'), true);
+    assert.equal(persistentProgress.every((envelope) => envelope.batch_id === persistentBatchId), true);
+    assert.equal(JSON.stringify(persistentProgress).includes('mock-resource-password'), false);
     await assert.rejects(
       persistentWorker.readiness({
         session_id: 'wrong-session-id',
@@ -1608,6 +1658,7 @@ async function main() {
         mfa_totp_rejected: true,
         mfa_totp_authenticated: true,
         persistent_authenticated_session: true,
+        reconciliation_progress_envelopes: true,
         mfa_reused_without_reprompt: true,
         csrf: true,
         duplicate_detection: true,

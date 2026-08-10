@@ -24,6 +24,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - creazione di sottocartelle personali e condivise con permessi ereditati;
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
+- registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - nessun caricamento dei documenti sorgente su servizi esterni.
 
 ## Requisiti
@@ -108,9 +109,11 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 La versione 0.12.5 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
 
-La fase 0.13 prevista introduce un registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. Il primo blocco di sviluppo e presente in `passbolt_reconciliation.py`: definisce il formato JSON Lines versionato, il concatenamento SHA-256, la scrittura sincronizzata e il comportamento sicuro in caso di troncamento o manomissione. Questo componente non e ancora collegato alla fase 04 e non abilita ancora una ripresa dell'importazione; la versione operativa resta `0.12.5` finche eventi del bridge, verifica remota e interfaccia di recupero non saranno completi.
+La fase 0.13 introduce un registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. I primi due blocchi sono presenti: `passbolt_reconciliation.py` definisce il formato JSON Lines versionato, il concatenamento SHA-256, la scrittura sincronizzata e il comportamento sicuro in caso di troncamento o manomissione; il workflow della fase 04 crea ora un registro reale e persiste gli eventi interni emessi dal bridge prima e dopo ogni operazione irreversibile. La GUI continua a ricevere una sola risposta finale e mostra soltanto l'UUID tecnico del lotto.
 
-I registri saranno conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali. Le fasi successive potranno estendere provider MFA, gestione controllata dei permessi e operazioni sicure sulle risorse esistenti.
+La ripresa automatica non e ancora abilitata: un registro incompleto segnala che il lotto deve essere verificato e l'operatore deve ripetere il dry-run. Il terzo blocco aggiungera la verifica autenticata dello stato remoto e la ripresa idempotente; il quarto completera interfaccia di recupero, archiviazione e documentazione operativa. La versione operativa resta `0.12.5` finche queste funzioni non saranno complete.
+
+I registri sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali. Le fasi successive potranno estendere provider MFA, gestione controllata dei permessi e operazioni sicure sulle risorse esistenti.
 
 ## Contribuire
 

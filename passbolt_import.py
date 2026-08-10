@@ -4,8 +4,10 @@
 Reviewed candidates contain no cleartext secrets. Immediately before a dry-run
 or write, this module re-opens only the reviewed source files, verifies their
 SHA-256 digests, reconstructs the selected candidate records, and (for a write)
-passes the secrets directly to the local OpenPGP bridge over stdin. Cleartext is
-returned to the desktop UI only by the explicit ``--reveal`` action.
+passes the secrets directly to the local OpenPGP bridge over stdin. During a
+persistent import it also consumes secret-free progress envelopes and commits
+them to a reconciliation journal before returning the single final response.
+Cleartext is returned to the desktop UI only by the explicit ``--reveal`` action.
 """
 
 from __future__ import annotations
@@ -18,7 +20,14 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping
+
+from passbolt_reconciliation import (
+    CandidateProof,
+    ReconciliationJournal,
+    ReconciliationJournalError,
+    hash_user_identifier,
+)
 
 from passbolt_review import (
     MAX_FILE_BYTES,
@@ -687,8 +696,191 @@ def _session_bridge_request(
     )
 
 
+class _SessionReconciliationCoordinator:
+    """Bind one authenticated import session to a durable local journal."""
+
+    def __init__(self, journal_root: str | Path | None = None) -> None:
+        self._journal_root = journal_root
+        self._session: dict[str, Any] | None = None
+        self._readiness: dict[str, Any] | None = None
+        self._journal: ReconciliationJournal | None = None
+
+    @property
+    def active_batch_id(self) -> str | None:
+        return self._journal.batch_id if self._journal is not None else None
+
+    @staticmethod
+    def _successful_payload(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
+        payload = envelope.get("result")
+        if envelope.get("ok") is not True or not isinstance(payload, dict):
+            return None
+        return payload
+
+    def observe(self, command: str, envelope: Mapping[str, Any]) -> None:
+        payload = self._successful_payload(envelope)
+        if command == "session-open":
+            self._session = dict(payload) if payload is not None else None
+            self._readiness = None
+        elif command == "session-readiness":
+            self._readiness = dict(payload) if payload is not None else None
+        elif command == "session-close":
+            self._session = None
+            self._readiness = None
+
+    def start_import(
+        self,
+        request: Mapping[str, Any],
+        bridge_request: dict[str, Any],
+    ) -> str:
+        if self._journal is not None:
+            raise ImportPreparationError(
+                "Un registro di riconciliazione è già attivo per questa sessione."
+            )
+        if self._session is None or self._readiness is None:
+            raise ImportPreparationError(
+                "Ripetere il dry-run prima di iniziare l’importazione."
+            )
+
+        session_id = str(request.get("session_id", "")).strip()
+        if (
+            not session_id
+            or session_id != str(self._session.get("session_id", "")).strip()
+            or session_id != str(self._readiness.get("session_id", "")).strip()
+        ):
+            raise ImportPreparationError(
+                "La sessione del dry-run non corrisponde all’importazione."
+            )
+
+        plan_digest = str(request.get("plan_digest", "")).strip().lower()
+        readiness_digest = str(self._readiness.get("plan_digest", "")).strip().lower()
+        if not SHA256_PATTERN.fullmatch(plan_digest) or plan_digest != readiness_digest:
+            raise ImportPreparationError(
+                "Il piano dell’importazione non corrisponde all’ultimo dry-run."
+            )
+
+        user = self._session.get("user")
+        candidates = bridge_request.get("candidates")
+        if not isinstance(user, Mapping) or not isinstance(candidates, list):
+            raise ImportPreparationError(
+                "La sessione non contiene i dati necessari al registro locale."
+            )
+        proofs: list[CandidateProof] = []
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                raise ImportPreparationError(
+                    "Il piano contiene un candidato non valido per il registro locale."
+                )
+            proofs.append(
+                CandidateProof(
+                    candidate_id=str(candidate.get("candidate_id", "")).strip(),
+                    source_sha256=str(candidate.get("source_sha256", "")).strip(),
+                )
+            )
+
+        try:
+            journal = ReconciliationJournal.create(
+                app_version=APP_VERSION,
+                server_origin=str(self._session.get("base_url", "")),
+                server_fingerprint=str(
+                    self._session.get("server_fingerprint", "")
+                ),
+                user_id_hash=hash_user_identifier(str(user.get("id", ""))),
+                plan_digest=plan_digest,
+                resource_format=str(
+                    self._readiness.get("resource_format_selected", "")
+                ),
+                folder_format=str(
+                    self._readiness.get("folder_format_selected") or "none"
+                ),
+                destination_mode=str(
+                    self._readiness.get("destination_mode", "")
+                ),
+                destination_folder_id=self._readiness.get("destination_folder_id"),
+                candidates=proofs,
+                root=self._journal_root,
+            )
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "Impossibile inizializzare il registro locale di riconciliazione."
+            ) from exc
+
+        self._journal = journal
+        bridge_request["reconciliation_batch_id"] = journal.batch_id
+        return journal.batch_id
+
+    def persist_progress(self, envelope: Mapping[str, Any]) -> None:
+        if set(envelope) != {"type", "batch_id", "event_type", "payload"}:
+            raise ReconciliationJournalError(
+                "Struttura dell’evento di avanzamento non valida."
+            )
+        if envelope.get("type") != "progress" or self._journal is None:
+            raise ReconciliationJournalError(
+                "Evento di avanzamento fuori da un’importazione attiva."
+            )
+        if str(envelope.get("batch_id", "")).strip().lower() != self._journal.batch_id:
+            raise ReconciliationJournalError(
+                "L’evento appartiene a un registro differente."
+            )
+        event_type = str(envelope.get("event_type", "")).strip()
+        payload = envelope.get("payload")
+        if not event_type or not isinstance(payload, Mapping):
+            raise ReconciliationJournalError(
+                "Contenuto dell’evento di avanzamento non valido."
+            )
+        self._journal.append(event_type, **dict(payload))
+
+    def finish_import(self, envelope: dict[str, Any]) -> dict[str, Any]:
+        journal = self._journal
+        if journal is None:
+            raise ImportPreparationError(
+                "Il registro locale dell’importazione non è disponibile."
+            )
+        batch_id = journal.batch_id
+        if envelope.get("ok") is True:
+            try:
+                snapshot = journal.read()
+            except ReconciliationJournalError as exc:
+                raise ImportPreparationError(
+                    "Impossibile verificare il registro locale dell’importazione."
+                ) from exc
+            if not snapshot.complete:
+                raise ImportPreparationError(
+                    "L’importazione non ha chiuso correttamente il registro locale; verificare il lotto prima di riprovare."
+                )
+            result = envelope.get("result")
+            if not isinstance(result, dict):
+                raise ImportPreparationError(
+                    "La risposta finale dell’importazione non è valida."
+                )
+            result["reconciliation_batch_id"] = batch_id
+            result["reconciliation_status"] = "complete"
+        else:
+            error = envelope.get("error")
+            if not isinstance(error, dict):
+                error = {
+                    "code": "IMPORT_FAILED",
+                    "message": "L’importazione non è stata completata.",
+                }
+                envelope["error"] = error
+            details = error.get("details")
+            safe_details = dict(details) if isinstance(details, Mapping) else {}
+            safe_details["reconciliation_batch_id"] = batch_id
+            safe_details["reconciliation_status"] = "verification_required"
+            error["details"] = safe_details
+        self._journal = None
+        return envelope
+
+    def abandon_import(self) -> str | None:
+        batch_id = self.active_batch_id
+        self._journal = None
+        return batch_id
+
+
 def _bridge_line_exchange(
-    process: subprocess.Popen[bytes], request: dict[str, Any]
+    process: subprocess.Popen[bytes],
+    request: dict[str, Any],
+    *,
+    progress_handler: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     if process.stdin is None or process.stdout is None:
         raise ImportPreparationError("Canale della sessione OpenPGP non disponibile.")
@@ -700,36 +892,60 @@ def _bridge_line_exchange(
     try:
         process.stdin.write(encoded)
         process.stdin.flush()
-        raw = process.stdout.readline(MAX_BRIDGE_OUTPUT_BYTES + 1)
     except (OSError, ValueError) as exc:
         raise ImportPreparationError(
             "La sessione OpenPGP locale non è più disponibile."
         ) from exc
     finally:
         encoded = b""
-    if not raw:
-        raise ImportPreparationError(
-            "La sessione OpenPGP locale si è chiusa senza risposta."
-        )
-    if len(raw) > MAX_BRIDGE_OUTPUT_BYTES:
-        raise ImportPreparationError(
-            "La risposta della sessione OpenPGP è troppo grande."
-        )
-    try:
-        result = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ImportPreparationError(
-            "La sessione OpenPGP locale ha restituito una risposta non valida."
-        ) from exc
-    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
-        raise ImportPreparationError(
-            "La sessione OpenPGP locale ha restituito una struttura inattesa."
-        )
-    return result
+    while True:
+        try:
+            raw = process.stdout.readline(MAX_BRIDGE_OUTPUT_BYTES + 1)
+        except (OSError, ValueError) as exc:
+            raise ImportPreparationError(
+                "La sessione OpenPGP locale non è più disponibile."
+            ) from exc
+        if not raw:
+            raise ImportPreparationError(
+                "La sessione OpenPGP locale si è chiusa senza risposta."
+            )
+        if len(raw) > MAX_BRIDGE_OUTPUT_BYTES:
+            raise ImportPreparationError(
+                "La risposta della sessione OpenPGP è troppo grande."
+            )
+        try:
+            result = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ImportPreparationError(
+                "La sessione OpenPGP locale ha restituito una risposta non valida."
+            ) from exc
+        if isinstance(result, dict) and result.get("type") == "progress":
+            if progress_handler is None:
+                raise ImportPreparationError(
+                    "La sessione OpenPGP ha inviato un avanzamento inatteso."
+                )
+            try:
+                progress_handler(result)
+            except ReconciliationJournalError as exc:
+                if process.poll() is None:
+                    process.kill()
+                raise ImportPreparationError(
+                    "Il registro locale non ha potuto salvare l’avanzamento; verificare il lotto prima di riprovare."
+                ) from exc
+            continue
+        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+            raise ImportPreparationError(
+                "La sessione OpenPGP locale ha restituito una struttura inattesa."
+            )
+        return result
 
 
 def run_import_session(
-    root: str | Path, *, node_path: str, crypto_script: str
+    root: str | Path,
+    *,
+    node_path: str,
+    crypto_script: str,
+    journal_root: str | Path | None = None,
 ) -> int:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
@@ -751,6 +967,7 @@ def run_import_session(
         ) from exc
 
     opened = False
+    reconciliation = _SessionReconciliationCoordinator(journal_root)
     try:
         while True:
             raw = sys.stdin.buffer.readline(MAX_STDIN_BYTES + 1)
@@ -781,7 +998,20 @@ def run_import_session(
                 request = document
                 command = str(request.get("command", ""))
                 bridge_request, resources = _session_bridge_request(root_path, request)
-                result = _bridge_line_exchange(process, bridge_request)
+                if command == "session-import":
+                    reconciliation.start_import(request, bridge_request)
+                result = _bridge_line_exchange(
+                    process,
+                    bridge_request,
+                    progress_handler=(
+                        reconciliation.persist_progress
+                        if command == "session-import"
+                        else None
+                    ),
+                )
+                if command == "session-import":
+                    result = reconciliation.finish_import(result)
+                reconciliation.observe(command, result)
                 if command == "session-open" and result.get("ok") is True:
                     opened = True
                 if command == "session-close" and result.get("ok") is True:
@@ -799,13 +1029,20 @@ def run_import_session(
                     flush=True,
                 )
             except ImportPreparationError as exc:
+                batch_id = reconciliation.abandon_import()
+                error: dict[str, Any] = {
+                    "code": "IMPORT_PREPARATION_FAILED",
+                    "message": str(exc),
+                }
+                if batch_id is not None:
+                    error["details"] = {
+                        "reconciliation_batch_id": batch_id,
+                        "reconciliation_status": "verification_required",
+                    }
                 _write_json(
                     {
                         "ok": False,
-                        "error": {
-                            "code": "IMPORT_PREPARATION_FAILED",
-                            "message": str(exc),
-                        },
+                        "error": error,
                     },
                     flush=True,
                 )
@@ -884,6 +1121,7 @@ def main() -> int:
                     "max_import_candidates": MAX_IMPORT_CANDIDATES,
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
+                    "reconciliation_progress_protocol": True,
                     "explicit_reveal_supported": True,
                     "protected_excel_integrity_supported": True,
                     "secrets_serialized": False,

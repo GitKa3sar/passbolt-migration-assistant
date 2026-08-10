@@ -1,8 +1,8 @@
 """Durable, secret-free reconciliation journals for Passbolt imports.
 
-The journal is intentionally independent from the live import flow in the
-first 0.13 development block.  It provides the storage and validation layer
-that later bridge progress events and the recovery UI will use.
+The live session workflow appends validated bridge progress events here.  The
+future recovery UI will use the same records only after revalidating remote
+state and source identity through an authenticated Passbolt session.
 """
 
 from __future__ import annotations
@@ -136,7 +136,7 @@ _RESOURCE_STATUSES = {"created", "created_unshared", "created_shared"}
 _FAILURE_OUTCOMES = {"not_started", "unknown", "partial", "confirmed"}
 _DUPLICATE_KINDS = {"batch", "server_destination"}
 _DESTINATION_MODES = {"client_folders", "client_mapping", "direct_folder", "root"}
-_FORMATS = {"auto", "v4", "v5"}
+_FORMATS = {"auto", "v4", "v5", "none"}
 
 
 class ReconciliationJournalError(RuntimeError):

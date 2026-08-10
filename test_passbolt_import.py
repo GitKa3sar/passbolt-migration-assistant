@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,12 +13,14 @@ from unittest import mock
 
 from passbolt_import import (
     ImportPreparationError,
+    _bridge_line_exchange,
     _session_bridge_request,
     execute_import,
     extract_resources,
     verify_integrity,
 )
 from passbolt_review import analyze_files
+from passbolt_reconciliation import ReconciliationJournalError, read_journal
 
 
 def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
@@ -79,6 +82,43 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(result["verified_candidate_count"], 1)
         self.assertFalse(result["secrets_serialized"])
         self.assertNotIn(self.secret, json.dumps(result))
+
+    def test_invalid_progress_terminates_bridge_before_a_final_response(self) -> None:
+        progress = {
+            "type": "progress",
+            "batch_id": "0cd2d92f-17f2-4d64-aeaa-a27fc8ec42fc",
+            "event_type": "operation_failed",
+            "payload": {"password": "must-never-be-persisted"},
+        }
+
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.stdin = io.BytesIO()
+                self.stdout = io.BytesIO(
+                    (json.dumps(progress, separators=(",", ":")) + "\n").encode(
+                        "utf-8"
+                    )
+                )
+                self.killed = False
+
+            def poll(self) -> int | None:
+                return 1 if self.killed else None
+
+            def kill(self) -> None:
+                self.killed = True
+
+        process = FakeProcess()
+
+        def reject_progress(_: object) -> None:
+            raise ReconciliationJournalError("Evento rifiutato.")
+
+        with self.assertRaisesRegex(ImportPreparationError, "registro locale"):
+            _bridge_line_exchange(  # type: ignore[arg-type]
+                process,
+                {"command": "session-import"},
+                progress_handler=reject_progress,  # type: ignore[arg-type]
+            )
+        self.assertTrue(process.killed)
 
     def test_secret_is_reextracted_only_for_immediate_handoff(self) -> None:
         resources, source_count = extract_resources(
@@ -305,22 +345,80 @@ class ImportPreparationTests(unittest.TestCase):
 import sys
 
 session_id = "test-session-id"
+plan_digest = "d" * 64
+operation_id = "9db7dd10-9f94-458a-af2f-102936db06a7"
+resource_id = "35c7ddd2-a27b-4481-8f4c-5fd6033603f7"
 for raw in sys.stdin:
     request = json.loads(raw)
     command = request.get("command")
     if command == "session-open":
         assert request.get("passphrase") == "key-passphrase"
         assert request.get("mfa_totp") == "654321"
-        result = {"session_id": session_id, "authentication": "GPGAuth + TOTP"}
+        result = {
+            "session_id": session_id,
+            "authentication": "GPGAuth + TOTP",
+            "base_url": "https://pass.example.test",
+            "server_fingerprint": "A" * 40,
+            "user": {"id": "f5bb3e91-2a72-4e38-8603-b983e868be22"},
+        }
     elif command == "session-readiness":
         assert request.get("session_id") == session_id
         assert "passphrase" not in request and "mfa_totp" not in request
         assert "resources" not in request
-        result = {"session_id": session_id, "command": "readiness", "can_import": True}
+        result = {
+            "session_id": session_id,
+            "command": "readiness",
+            "can_import": True,
+            "plan_digest": plan_digest,
+            "resource_format_selected": "v5",
+            "folder_format_selected": None,
+            "destination_mode": "root",
+            "destination_folder_id": None,
+        }
     elif command == "session-import":
         assert request.get("session_id") == session_id
         assert "passphrase" not in request and "mfa_totp" not in request
         assert request["resources"][0]["password"] == "Segreto-importazione-123"
+        batch_id = request["reconciliation_batch_id"]
+        candidate_id = request["candidates"][0]["candidate_id"]
+        progress = [
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "operation_intent",
+                "payload": {
+                    "operation_id": operation_id,
+                    "object_type": "resource",
+                    "action": "create_resource",
+                    "candidate_id": candidate_id,
+                },
+            },
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "resource_created",
+                "payload": {
+                    "operation_id": operation_id,
+                    "resource_id": resource_id,
+                    "candidate_id": candidate_id,
+                    "status": "created",
+                },
+            },
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "batch_completed",
+                "payload": {
+                    "created_folder_count": 0,
+                    "reconciled_folder_count": 0,
+                    "created_resource_count": 1,
+                    "shared_resource_count": 0,
+                    "skipped_duplicate_count": 0,
+                },
+            },
+        ]
+        for envelope in progress:
+            print(json.dumps(envelope), flush=True)
         result = {"session_id": session_id, "command": "import", "created_count": 1}
     elif command == "session-close":
         result = {"session_id": session_id, "command": "session-close", "closed": True}
@@ -357,7 +455,7 @@ for raw in sys.stdin:
                 "folder_format": "auto",
                 "candidates": [self.request],
                 "create_candidate_ids": [self.request["candidate_id"]],
-                "plan_digest": "digest",
+                "plan_digest": "d" * 64,
                 "confirmation": "IMPORTA 1",
             },
             {"command": "session-close", "session_id": "test-session-id"},
@@ -382,6 +480,7 @@ for raw in sys.stdin:
             stderr=subprocess.PIPE,
             timeout=30,
             check=False,
+            env={**os.environ, "LOCALAPPDATA": str(self.root / "localappdata")},
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
@@ -390,10 +489,160 @@ for raw in sys.stdin:
         self.assertTrue(all(response["ok"] for response in responses))
         self.assertEqual(responses[0]["result"]["session_id"], "test-session-id")
         self.assertEqual(responses[2]["result"]["created_count"], 1)
+        self.assertEqual(
+            responses[2]["result"]["reconciliation_status"], "complete"
+        )
+        batch_id = responses[2]["result"]["reconciliation_batch_id"]
+        journal_files = list(
+            (self.root / "localappdata" / "Passbolt Migration Assistant" / "Reconciliation").glob(
+                "batch-*.jsonl"
+            )
+        )
+        self.assertEqual(len(journal_files), 1)
+        snapshot = read_journal(journal_files[0])
+        self.assertEqual(snapshot.batch_id, batch_id)
+        self.assertTrue(snapshot.complete)
+        self.assertEqual(
+            [event["event_type"] for event in snapshot.events],
+            [
+                "batch_started",
+                "operation_intent",
+                "resource_created",
+                "batch_completed",
+            ],
+        )
+        serialized_journal = journal_files[0].read_text(encoding="utf-8")
+        self.assertNotIn(self.secret, serialized_journal)
+        self.assertNotIn("key-passphrase", serialized_journal)
+        self.assertNotIn("654321", serialized_journal)
         serialized_responses = completed.stdout.decode("utf-8")
         self.assertNotIn(self.secret, serialized_responses)
         self.assertNotIn("key-passphrase", serialized_responses)
         self.assertNotIn("654321", serialized_responses)
+
+    def test_interrupted_import_keeps_incomplete_journal_for_verification(self) -> None:
+        fake_bridge = self.root / "interrupted_session_bridge.py"
+        fake_bridge.write_text(
+            """import json
+import sys
+
+session_id = "interrupted-session-id"
+for raw in sys.stdin:
+    request = json.loads(raw)
+    command = request.get("command")
+    if command == "session-open":
+        result = {
+            "session_id": session_id,
+            "base_url": "https://pass.example.test",
+            "server_fingerprint": "B" * 40,
+            "user": {"id": "59a882e6-4909-4db0-ab84-91093461c777"},
+        }
+        print(json.dumps({"ok": True, "result": result}), flush=True)
+    elif command == "session-readiness":
+        result = {
+            "session_id": session_id,
+            "plan_digest": "e" * 64,
+            "resource_format_selected": "v5",
+            "folder_format_selected": None,
+            "destination_mode": "root",
+            "destination_folder_id": None,
+        }
+        print(json.dumps({"ok": True, "result": result}), flush=True)
+    elif command == "session-import":
+        event = {
+            "type": "progress",
+            "batch_id": request["reconciliation_batch_id"],
+            "event_type": "operation_intent",
+            "payload": {
+                "operation_id": "2f42a04b-bf31-4095-a492-573fb3e091ba",
+                "object_type": "resource",
+                "action": "create_resource",
+                "candidate_id": request["candidates"][0]["candidate_id"],
+            },
+        }
+        print(json.dumps(event), flush=True)
+        raise SystemExit(0)
+""",
+            encoding="utf-8",
+        )
+        requests = [
+            {
+                "command": "session-open",
+                "base_url": "https://pass.example.test",
+                "expected_server_fingerprint": "B" * 40,
+                "private_key_path": "C:/private.asc",
+                "passphrase": "key-passphrase",
+                "mfa_totp": "654321",
+            },
+            {
+                "command": "session-readiness",
+                "session_id": "interrupted-session-id",
+                "resource_format": "v5",
+                "destination_mode": "root",
+                "folder_format": "v5",
+                "candidates": [self.request],
+            },
+            {
+                "command": "session-import",
+                "session_id": "interrupted-session-id",
+                "resource_format": "v5",
+                "destination_mode": "root",
+                "folder_format": "v5",
+                "candidates": [self.request],
+                "create_candidate_ids": [self.request["candidate_id"]],
+                "plan_digest": "e" * 64,
+                "confirmation": "IMPORTA 1",
+            },
+        ]
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("passbolt_import.py")),
+                "--session",
+                "--root",
+                str(self.root),
+                "--node",
+                sys.executable,
+                "--crypto-script",
+                str(fake_bridge),
+            ],
+            input="".join(
+                json.dumps(request, separators=(",", ":")) + "\n"
+                for request in requests
+            ).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+            env={
+                **os.environ,
+                "LOCALAPPDATA": str(self.root / "interrupted-localappdata"),
+            },
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+        responses = [json.loads(line) for line in completed.stdout.splitlines()]
+        self.assertEqual(len(responses), 3)
+        self.assertTrue(responses[0]["ok"])
+        self.assertTrue(responses[1]["ok"])
+        self.assertFalse(responses[2]["ok"])
+        details = responses[2]["error"]["details"]
+        self.assertEqual(details["reconciliation_status"], "verification_required")
+        journal_files = list(
+            (
+                self.root
+                / "interrupted-localappdata"
+                / "Passbolt Migration Assistant"
+                / "Reconciliation"
+            ).glob("batch-*.jsonl")
+        )
+        self.assertEqual(len(journal_files), 1)
+        snapshot = read_journal(journal_files[0])
+        self.assertEqual(snapshot.batch_id, details["reconciliation_batch_id"])
+        self.assertFalse(snapshot.complete)
+        self.assertTrue(snapshot.requires_verification)
+        self.assertEqual(snapshot.events[-1]["event_type"], "operation_intent")
+        self.assertNotIn(self.secret, journal_files[0].read_text(encoding="utf-8"))
 
     def test_changed_source_is_rejected(self) -> None:
         self.source.write_text(
