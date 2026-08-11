@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.12.5 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.13.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -25,6 +25,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
+- recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
 - nessun caricamento dei documenti sorgente su servizi esterni.
 
 ## Requisiti
@@ -64,6 +65,17 @@ Al primo utilizzo:
 5. completare revisione, mappatura delle destinazioni e dry-run prima di autorizzare la scrittura.
 
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
+
+Se un import si interrompe dopo l'avvio delle scritture, non ripetere direttamente una nuova importazione dello stesso lotto. Nella fase 04 aprire **Recupero import interrotto**, quindi:
+
+1. selezionare il journal indicato dall'errore;
+2. usare la stessa cartella sorgente e rivedere tutti i documenti del lotto, riapplicando eventuali correzioni fatte nella fase 03;
+3. avviare la sessione autenticata e scegliere **Verifica lotto**;
+4. controllare i conteggi **Già riuscite**, **Da applicare** e **Conflitti**, verificando che non siano previste azioni distruttive;
+5. digitare la frase esatta `RECUPERA N` e confermare la ripresa;
+6. al completamento, archiviare il journal dalla stessa scheda.
+
+I journal troncati o corrotti vengono mostrati ma restano bloccati in modalità fail-closed: richiedono un controllo manuale su Passbolt. Possono essere archiviati esplicitamente come abbandonati, senza essere cancellati.
 
 Il controllo pubblico può essere eseguito anche senza aprire la GUI:
 
@@ -107,13 +119,15 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
-La versione 0.12.5 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+La versione 0.13.0 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
 
-La fase 0.13 introduce un registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. I primi tre blocchi sono presenti: `passbolt_reconciliation.py` definisce il formato JSON Lines versionato, il concatenamento SHA-256, la scrittura sincronizzata e il comportamento sicuro in caso di troncamento o manomissione; il workflow della fase 04 persiste gli eventi prima e dopo ogni operazione irreversibile; il protocollo di sessione può ora riaprire un lotto incompleto, riverificare server, fingerprint, utente, sorgenti e stato remoto e costruire una ripresa idempotente.
+La versione 0.13 completa il registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. `passbolt_reconciliation.py` definisce il formato JSON Lines versionato, il concatenamento SHA-256, la scrittura sincronizzata e il comportamento sicuro in caso di troncamento o manomissione; il workflow della fase 04 persiste gli eventi prima e dopo ogni operazione irreversibile; il protocollo di sessione riapre un lotto incompleto, riverifica server, fingerprint, utente, sorgenti e stato remoto e costruisce una ripresa idempotente.
 
-La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella destinazione prevista, una richiesta dimostrabilmente non applicata oppure una maschera ancora limitata al solo proprietario. Un esito riuscito seguito dalla scomparsa dell'oggetto, duplicati multipli, contenuti spostati, permessi parziali, variazioni della ACL prevista, registri corrotti o con l'ultima riga troncata bloccano ogni automatismo. Non sono pianificate cancellazioni o spostamenti. Il quarto blocco esporra nella GUI la selezione dei lotti, la conferma del piano e l'archiviazione; fino ad allora il motore e coperto dai test ma non e ancora presentato come flusso operativo nella UI. La versione operativa resta `0.12.5` finche queste funzioni non saranno complete.
+La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella destinazione prevista, una richiesta dimostrabilmente non applicata oppure una maschera ancora limitata al solo proprietario. Un esito riuscito seguito dalla scomparsa dell'oggetto, duplicati multipli, contenuti spostati, permessi parziali o variazioni della ACL prevista bloccano ogni automatismo. La GUI distingue lotti recuperabili, completati, troncati e corrotti; presenta il riepilogo autenticato, richiede `RECUPERA N` e non pianifica cancellazioni, spostamenti o sovrascritture.
 
-I registri sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali. Le fasi successive potranno estendere provider MFA, gestione controllata dei permessi e operazioni sicure sulle risorse esistenti.
+I registri attivi sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. L'archiviazione li sposta sotto `Reconciliation\Archive\<stato>` e non elimina l'evidenza. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali.
+
+La prossima fase della roadmap potrà estendere i provider MFA, introdurre un editor esplicito dei permessi e dei gruppi e progettare operazioni controllate sulle risorse esistenti. Tali funzioni non fanno parte della 0.13 e non devono indebolire le garanzie fail-closed del recupero.
 
 ## Contribuire
 

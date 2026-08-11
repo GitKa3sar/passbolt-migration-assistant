@@ -27,7 +27,7 @@ from typing import Iterable, Iterator, Mapping
 from xml.etree import ElementTree
 
 
-APP_VERSION = "0.12.5"
+APP_VERSION = "0.13.0"
 ROOT_CLIENT_LABEL = "(radice)"
 MAX_SELECTED_FILES = 50
 MAX_FILE_BYTES = 20 * 1024 * 1024

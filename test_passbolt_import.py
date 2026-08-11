@@ -15,6 +15,9 @@ from passbolt_import import (
     ImportPreparationError,
     _bridge_line_exchange,
     _prepare_recovery_context,
+    _reconciliation_archive_result,
+    _reconciliation_describe_result,
+    _reconciliation_list_result,
     _session_bridge_request,
     execute_import,
     extract_resources,
@@ -920,6 +923,50 @@ for raw in sys.stdin:
                 },
                 self.root / "proof-journals",
             )
+
+    def test_reconciliation_management_protocol_exposes_no_paths_or_secrets(self) -> None:
+        journal_root = self.root / "management-journals"
+        journal = ReconciliationJournal.create(
+            app_version="0.13.0",
+            server_origin="https://pass.example.test",
+            server_fingerprint="D" * 40,
+            user_id_hash=hash_user_identifier(
+                "59a882e6-4909-4db0-ab84-91093461c777"
+            ),
+            plan_digest="d" * 64,
+            resource_format="v4",
+            folder_format="none",
+            destination_mode="root",
+            destination_folder_id=None,
+            candidates=(
+                CandidateProof(
+                    self.request["candidate_id"], self.request["source_sha256"]
+                ),
+            ),
+            root=journal_root,
+        )
+
+        listing = _reconciliation_list_result(journal_root)
+        self.assertEqual(listing["batches"][0]["batch_id"], journal.batch_id)
+        self.assertNotIn("candidate_ids", listing["batches"][0])
+        details = _reconciliation_describe_result(
+            {"batch_id": journal.batch_id}, journal_root
+        )
+        self.assertEqual(details["candidate_ids"], [self.request["candidate_id"]])
+        serialized = json.dumps({"listing": listing, "details": details})
+        self.assertNotIn(str(journal_root), serialized)
+        self.assertNotIn(self.secret, serialized)
+
+        archived = _reconciliation_archive_result(
+            {
+                "batch_id": journal.batch_id,
+                "expected_status": "recovery_required",
+                "confirmation": f"ARCHIVIA {journal.batch_id}",
+            },
+            journal_root,
+        )
+        self.assertFalse(archived["deleted"])
+        self.assertEqual(archived["previous_status"], "recovery_required")
 
     def test_changed_source_is_rejected(self) -> None:
         self.source.write_text(

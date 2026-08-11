@@ -2,7 +2,7 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## In sviluppo - 0.13.0
+## 0.13.0 - 2026-08-11
 
 ### Added
 
@@ -21,6 +21,13 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 - aggiunta la riparazione controllata delle condivisioni rimaste personali, inclusa la riestrazione in memoria del segreto soltanto quando serve ricifrarlo per i destinatari;
 - aggiunti test per ripresa completa dopo interruzione, oggetti remoti gia riusciti, richieste non applicate, variazione delle ACL, prove sorgente non corrispondenti, conteggi di recupero e journal troncati.
 - aggiunto un lease esclusivo per lotto, mantenuto dalla verifica all'applicazione e rilasciato alla chiusura o dal sistema in caso di arresto, per impedire recuperi concorrenti da due istanze dell'app.
+- aggiunta nella fase 04 la scheda **Recupero import interrotto**, con elenco dei journal attivi e stati visibili Recuperabile, Completato, Troncato e Corrotto;
+- aggiunta l'associazione fail-closed fra lotto e candidati riletti dalla cartella sorgente corrente, inclusi file Excel protetti e correzioni mantenute in memoria;
+- aggiunto il riepilogo autenticato delle operazioni già riuscite, non applicate e in conflitto, con indicazione esplicita dell'assenza di azioni distruttive;
+- aggiunta la conferma esatta `RECUPERA N` prima della ripresa idempotente, legata a UUID e digest dell'ultima verifica nella stessa sessione;
+- aggiunta l'archiviazione esplicita di lotti completati o abbandonati tramite spostamento sotto `Reconciliation\Archive\<stato>`, senza cancellazione del journal;
+- aggiunti comandi locali separati per elencare, descrivere e archiviare i lotti senza esporre percorsi o segreti alla GUI;
+- completata la documentazione operativa del recupero e attivata la versione 0.13.0.
 
 ### Security
 
@@ -35,6 +42,8 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 - le intenzioni di condivisione registrano l'hash della maschera prevista; se la ACL del contenitore o quella dell'oggetto cambia, la ripresa automatica viene bloccata;
 - il recupero non cancella, non sposta e non sovrascrive oggetti esistenti; registri corrotti o troncati e stati remoti ambigui richiedono verifica manuale;
 - verifica e applicazione sono legate nella stessa sessione tramite UUID e digest del piano di recupero, e i segreti vengono riestratti soltanto per le risorse che devono essere create o ricondivise.
+- i journal troncati o corrotti sono visibili ma non possono raggiungere la verifica remota; l'archiviazione richiede UUID, stato corrente, conferma esatta e lease esclusivo e conserva integralmente l'evidenza disponibile;
+- dopo una verifica riuscita, la selezione del lotto resta bloccata fino al recupero o alla chiusura della sessione, impedendo di sostituire silenziosamente il piano autenticato.
 
 ## 0.12.5 - 2026-08-08
 

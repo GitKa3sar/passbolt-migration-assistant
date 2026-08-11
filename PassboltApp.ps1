@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.12.5"
+        Title="Passbolt Migration Assistant - v0.13.0"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -419,44 +419,101 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                     </Grid>
                 </Border>
 
-                <Grid Grid.Row="3">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                    <Grid Grid.Row="0" Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,0"><StackPanel><TextBlock Text="Selezionati" Foreground="#66737F" /><TextBlock x:Name="ImportMetricSelected" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
-                        <Border Grid.Column="1" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Da creare" Foreground="#66737F" /><TextBlock x:Name="ImportMetricCreate" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
-                        <Border Grid.Column="2" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Duplicati esatti" Foreground="#66737F" /><TextBlock x:Name="ImportMetricDuplicates" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
-                        <Border Grid.Column="3" Style="{StaticResource Card}" Margin="5,0,0,0"><StackPanel><TextBlock Text="Cartelle nuove" Foreground="#66737F" /><TextBlock x:Name="ImportMetricExisting" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
-                    </Grid>
-                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0" Padding="0">
-                        <Grid>
+                <TabControl x:Name="ImportModeTabs" Grid.Row="3" Grid.RowSpan="2" Margin="0,12,0,0">
+                    <TabItem Header="Nuova importazione">
+                        <Grid Margin="8,10,8,8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <Border Grid.Row="0" Background="#F8FAFB" BorderBrush="#E3E8EC" BorderThickness="0,0,0,1" Padding="12,9">
-                                <TextBlock x:Name="ImportIdentity" Text="Eseguire il dry-run per verificare identit&#xE0; e piano." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,0"><StackPanel><TextBlock Text="Selezionati" Foreground="#66737F" /><TextBlock x:Name="ImportMetricSelected" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
+                                <Border Grid.Column="1" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Da creare" Foreground="#66737F" /><TextBlock x:Name="ImportMetricCreate" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
+                                <Border Grid.Column="2" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Duplicati esatti" Foreground="#66737F" /><TextBlock x:Name="ImportMetricDuplicates" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
+                                <Border Grid.Column="3" Style="{StaticResource Card}" Margin="5,0,0,0"><StackPanel><TextBlock Text="Cartelle nuove" Foreground="#66737F" /><TextBlock x:Name="ImportMetricExisting" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
+                            </Grid>
+                            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0" Padding="0">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Background="#F8FAFB" BorderBrush="#E3E8EC" BorderThickness="0,0,0,1" Padding="12,9">
+                                        <TextBlock x:Name="ImportIdentity" Text="Eseguire il dry-run per verificare identit&#xE0; e piano." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
+                                    </Border>
+                                    <DataGrid x:Name="ImportPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Azione" Binding="{Binding ActionLabel}" Width="205" />
+                                            <DataGridTextColumn Header="Destinazione" Binding="{Binding Destination}" Width="190" />
+                                            <DataGridTextColumn Header="Titolo" Binding="{Binding Title}" Width="165" />
+                                            <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="150" />
+                                            <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Border Grid.Row="2" Background="#FFF8E7" BorderBrush="#E5C36A" BorderThickness="0,1,0,0" Padding="12,8">
+                                        <TextBlock x:Name="ImportPlanStatus" Text="Nessuna richiesta sar&#xE0; inviata finch&#xE9; non viene avviato il dry-run." Foreground="#765B17" FontSize="11" TextWrapping="Wrap" />
+                                    </Border>
+                                </Grid>
                             </Border>
-                            <DataGrid x:Name="ImportPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Azione" Binding="{Binding ActionLabel}" Width="205" />
-                                    <DataGridTextColumn Header="Destinazione" Binding="{Binding Destination}" Width="190" />
-                                    <DataGridTextColumn Header="Titolo" Binding="{Binding Title}" Width="165" />
-                                    <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="150" />
-                                    <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" />
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <Border Grid.Row="2" Background="#FFF8E7" BorderBrush="#E5C36A" BorderThickness="0,1,0,0" Padding="12,8">
-                                <TextBlock x:Name="ImportPlanStatus" Text="Nessuna richiesta sar&#xE0; inviata finch&#xE9; non viene avviato il dry-run." Foreground="#765B17" FontSize="11" TextWrapping="Wrap" />
-                            </Border>
+                            <Grid Grid.Row="2" Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Button x:Name="ImportBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
+                                <TextBlock x:Name="ConfirmationHint" Grid.Column="1" Text="Prima esegui il dry-run." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
+                                <TextBox x:Name="ImportConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase di conferma esatta" Margin="6,0" />
+                                <Button x:Name="ExecuteImportButton" Grid.Column="3" Content="Importa in Passbolt" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
+                            </Grid>
                         </Grid>
-                    </Border>
-                </Grid>
-
-                <Grid Grid.Row="4" Margin="0,12,0,0">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <Button x:Name="ImportBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
-                    <TextBlock x:Name="ConfirmationHint" Grid.Column="1" Text="Prima esegui il dry-run." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
-                    <TextBox x:Name="ImportConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase di conferma esatta" Margin="6,0" />
-                    <Button x:Name="ExecuteImportButton" Grid.Column="3" Content="Importa in Passbolt" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                </Grid>
+                    </TabItem>
+                    <TabItem Header="Recupero import interrotto">
+                        <Grid Margin="8,10,8,8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="#EAF4FE" BorderBrush="#A8C9EA" BorderThickness="1" CornerRadius="5" Padding="12,9">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Registri locali di riconciliazione" FontWeight="SemiBold" Foreground="#1F2933" />
+                                        <TextBlock Text="Seleziona un lotto; l'app lo associa ai candidati riletti dalla cartella corrente prima di qualunque verifica remota." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Button x:Name="RefreshRecoveryButton" Grid.Column="1" Content="Aggiorna lotti" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" />
+                                    <Button x:Name="ArchiveRecoveryButton" Grid.Column="2" Content="Archivia..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" />
+                                </Grid>
+                            </Border>
+                            <Grid Grid.Row="1" Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="1.15*" /><ColumnDefinition Width="0.85*" /></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,0" Padding="0">
+                                    <DataGrid x:Name="RecoveryBatchesGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Stato" Binding="{Binding StatusLabel}" Width="155" />
+                                            <DataGridTextColumn Header="Registrato" Binding="{Binding RecordedAtLabel}" Width="145" />
+                                            <DataGridTextColumn Header="Candidati" Binding="{Binding CandidateCountLabel}" Width="80" />
+                                            <DataGridTextColumn Header="ID lotto" Binding="{Binding BatchId}" Width="*" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <Grid Grid.Column="1" Margin="5,0,0,0">
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="12,9">
+                                        <TextBlock x:Name="RecoveryStatus" Text="Aggiorna l'elenco e seleziona un lotto." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
+                                    </Border>
+                                    <Grid Grid.Row="1" Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,5"><StackPanel><TextBlock Text="Operazioni verificate" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricVerified" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
+                                        <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="5,0,0,5"><StackPanel><TextBlock Text="Gi&#xE0; riuscite" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricRemoteSuccess" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
+                                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,5,5,0"><StackPanel><TextBlock Text="Da applicare" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricNotApplied" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
+                                        <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Margin="5,5,0,0"><StackPanel><TextBlock Text="Conflitti" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricConflicts" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#C43D4B" /></StackPanel></Border>
+                                    </Grid>
+                                    <Border Grid.Row="2" Background="#E5F6EF" BorderBrush="#A7DCC9" BorderThickness="1" CornerRadius="5" Padding="12,9" Margin="0,10,0,0">
+                                        <TextBlock x:Name="RecoverySafetyStatus" Text="Nessuna cancellazione, spostamento o sovrascrittura viene pianificata dal recupero." Foreground="#16875D" FontSize="11" TextWrapping="Wrap" />
+                                    </Border>
+                                </Grid>
+                            </Grid>
+                            <Grid Grid.Row="2" Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="245" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Button x:Name="RecoveryBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
+                                <TextBlock x:Name="RecoveryConfirmationHint" Grid.Column="1" Text="Seleziona un lotto recuperabile." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
+                                <TextBox x:Name="RecoveryConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase RECUPERA N esatta" Margin="6,0" />
+                                <Button x:Name="VerifyRecoveryButton" Grid.Column="3" Content="Verifica lotto" Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
+                                <Button x:Name="ExecuteRecoveryButton" Grid.Column="4" Content="Recupera" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </Grid>
         </Grid>
     </Grid>
@@ -533,6 +590,7 @@ $ReviewBackButton = Get-Control "ReviewBackButton"
 $PrepareImportButton = Get-Control "PrepareImportButton"
 $ImportPage = Get-Control "ImportPage"
 $ImportSummary = Get-Control "ImportSummary"
+$ImportModeTabs = Get-Control "ImportModeTabs"
 $PrivateKeyPath = Get-Control "PrivateKeyPath"
 $BrowseKeyButton = Get-Control "BrowseKeyButton"
 $KeyPassphrase = Get-Control "KeyPassphrase"
@@ -555,6 +613,20 @@ $ImportBackButton = Get-Control "ImportBackButton"
 $ConfirmationHint = Get-Control "ConfirmationHint"
 $ImportConfirmation = Get-Control "ImportConfirmation"
 $ExecuteImportButton = Get-Control "ExecuteImportButton"
+$RecoveryBatchesGrid = Get-Control "RecoveryBatchesGrid"
+$RefreshRecoveryButton = Get-Control "RefreshRecoveryButton"
+$ArchiveRecoveryButton = Get-Control "ArchiveRecoveryButton"
+$RecoveryStatus = Get-Control "RecoveryStatus"
+$RecoveryMetricVerified = Get-Control "RecoveryMetricVerified"
+$RecoveryMetricRemoteSuccess = Get-Control "RecoveryMetricRemoteSuccess"
+$RecoveryMetricNotApplied = Get-Control "RecoveryMetricNotApplied"
+$RecoveryMetricConflicts = Get-Control "RecoveryMetricConflicts"
+$RecoverySafetyStatus = Get-Control "RecoverySafetyStatus"
+$RecoveryBackButton = Get-Control "RecoveryBackButton"
+$RecoveryConfirmationHint = Get-Control "RecoveryConfirmationHint"
+$RecoveryConfirmation = Get-Control "RecoveryConfirmation"
+$VerifyRecoveryButton = Get-Control "VerifyRecoveryButton"
+$ExecuteRecoveryButton = Get-Control "ExecuteRecoveryButton"
 
 $script:ConnectionVerified = $false
 $script:VerifiedUrl = ""
@@ -581,6 +653,13 @@ $script:ImportSessionLastActivityUtc = [DateTime]::MinValue
 $script:ImportSessionRoot = ""
 $script:ImportSessionKeyPath = ""
 $script:ImportSessionIdleTimeoutMinutes = 30
+$script:RecoveryBatches = @()
+$script:RecoveryBatchDetails = $null
+$script:RecoveryCandidates = @()
+$script:RecoverySecretOverrides = @{}
+$script:RecoverySourceFilePasswords = @{}
+$script:RecoveryPlan = $null
+$script:UpdatingRecoverySelection = $false
 $script:ClosingApplication = $false
 $script:PopulatingDestinationFolders = $false
 $script:AvailableDestinationFolders = @()
@@ -833,15 +912,17 @@ function Update-ImportSessionState {
     if ($Active) {
         $ImportSessionButton.Content = "Chiudi sessione"
         $ImportSessionButton.IsEnabled = $true
-        $DryRunButton.IsEnabled = ($script:ConnectionVerified -and $script:ImportCandidates.Count -gt 0 -and $script:ImportSessionRoot -eq $script:InventoryFolder)
+        $DryRunButton.IsEnabled = ($script:ConnectionVerified -and $script:ImportCandidates.Count -gt 0 -and $script:ImportSessionRoot -eq $script:InventoryFolder -and $null -eq $script:RecoveryPlan)
         if ($null -eq $script:ImportPlan) { $ImportIdentity.Text = Get-ImportSessionIdentityText }
     } else {
         $ImportSessionButton.Content = "Avvia sessione"
-        $ImportSessionButton.IsEnabled = ($script:ConnectionVerified -and $script:ImportCandidates.Count -gt 0 -and (Test-Path -LiteralPath $script:InventoryFolder -PathType Container))
+        $PreparedCandidateCount = [Math]::Max($script:ImportCandidates.Count, $script:RecoveryCandidates.Count)
+        $ImportSessionButton.IsEnabled = ($script:ConnectionVerified -and $PreparedCandidateCount -gt 0 -and (Test-Path -LiteralPath $script:InventoryFolder -PathType Container))
         $DryRunButton.IsEnabled = $false
         if ($null -eq $script:ImportPlan) { $ImportIdentity.Text = "Avviare la sessione sicura per verificare identita' e piano." }
     }
     Update-ExecuteImportState
+    Update-RecoveryActionState
 }
 
 function Stop-ImportSession(
@@ -880,6 +961,11 @@ function Stop-ImportSession(
     if ($ResetPlan) {
         $Status = if ($Reason) { $Reason } else { "Sessione chiusa. Avviare una nuova sessione prima del dry-run." }
         Reset-ImportPlan $Status
+        if ($null -ne $script:RecoveryBatchDetails) {
+            Reset-RecoveryPlan "Sessione chiusa. Il lotto resta associato ai sorgenti; avviare una nuova sessione prima della verifica."
+        } else {
+            Reset-RecoveryPlan
+        }
     }
     Update-ImportSessionState
     if ($Reason -and -not $script:ClosingApplication) { Add-Activity $Reason }
@@ -902,8 +988,8 @@ function Open-ImportSession {
         [System.Windows.MessageBox]::Show("La connessione Passbolt non e' verificata. Tornare alla configurazione.", "Connessione non verificata", "OK", "Warning") | Out-Null
         return
     }
-    if ($script:ImportCandidates.Count -lt 1 -or -not (Test-Path -LiteralPath $script:InventoryFolder -PathType Container)) {
-        [System.Windows.MessageBox]::Show("Preparare prima almeno un candidato pronto dalla revisione.", "Importazione non preparata", "OK", "Warning") | Out-Null
+    if (($script:ImportCandidates.Count -lt 1 -and $script:RecoveryCandidates.Count -lt 1) -or -not (Test-Path -LiteralPath $script:InventoryFolder -PathType Container)) {
+        [System.Windows.MessageBox]::Show("Preparare almeno un candidato pronto oppure associare un lotto di recupero alla cartella sorgente.", "Importazione non preparata", "OK", "Warning") | Out-Null
         return
     }
     $KeyPath = $PrivateKeyPath.Text.Trim()
@@ -948,11 +1034,18 @@ function Open-ImportSession {
         $script:ImportSessionKeyPath = $KeyPath
         $script:ImportSessionLastActivityUtc = [DateTime]::UtcNow
         Reset-ImportPlan "Sessione autenticata attiva. Configurare la destinazione ed eseguire il dry-run."
+        if ($null -ne $script:RecoveryBatchDetails) {
+            Reset-RecoveryPlan "Sessione autenticata attiva. Il lotto e' associato ai sorgenti: eseguire la verifica remota."
+            $RecoveryConfirmationHint.Text = "Sessione attiva: verifica il lotto."
+        }
         Add-Activity "Sessione autenticata aperta; passphrase e MFA non saranno richiesti di nuovo durante questa sessione."
     } catch {
         $FailureMessage = [string]$_.Exception.Message
         Stop-ImportSession "" $false
         Reset-ImportPlan "Apertura sessione non riuscita. Nessuna credenziale e' stata conservata."
+        if ($null -ne $script:RecoveryBatchDetails) {
+            Reset-RecoveryPlan "Apertura sessione non riuscita. Il lotto resta associato, ma nessuna credenziale e' stata conservata."
+        }
         Add-Activity "Apertura sessione non riuscita: $FailureMessage"
         [System.Windows.MessageBox]::Show($FailureMessage, "Sessione non avviata", "OK", "Error") | Out-Null
     } finally {
@@ -974,6 +1067,265 @@ function Get-SecureErrorMessage($Envelope) {
         return [string]$Envelope.error.message
     }
     return "Operazione protetta non riuscita."
+}
+
+function Get-RecoveryStatusLabel([string]$Status) {
+    switch ($Status) {
+        "recovery_required" { return "Recuperabile" }
+        "truncated" { return "Troncato - manuale" }
+        "corrupt" { return "Corrotto - manuale" }
+        "complete" { return "Completato" }
+        default { return "Sconosciuto" }
+    }
+}
+
+function Reset-RecoveryPlan([string]$Status = "Seleziona un lotto recuperabile e associa la cartella sorgente corrente.") {
+    $script:RecoveryPlan = $null
+    $RecoveryMetricVerified.Text = [string][char]0x2014
+    $RecoveryMetricRemoteSuccess.Text = [string][char]0x2014
+    $RecoveryMetricNotApplied.Text = [string][char]0x2014
+    $RecoveryMetricConflicts.Text = [string][char]0x2014
+    $RecoverySafetyStatus.Text = "Nessuna cancellazione, spostamento o sovrascrittura viene pianificata dal recupero."
+    $RecoverySafetyStatus.Foreground = Get-Brush "#16875D"
+    $RecoveryConfirmation.Text = ""
+    $RecoveryConfirmation.IsEnabled = $false
+    $RecoveryConfirmationHint.Text = "Prima esegui la verifica autenticata del lotto."
+    $RecoveryStatus.Text = $Status
+    Update-RecoveryActionState
+}
+
+function Clear-RecoveryCandidateState {
+    $script:RecoveryBatchDetails = $null
+    $script:RecoveryCandidates = @()
+    $script:RecoverySecretOverrides = @{}
+    $script:RecoverySourceFilePasswords = @{}
+}
+
+function Update-RecoveryActionState {
+    $Selected = $RecoveryBatchesGrid.SelectedItem
+    $HasSelected = $null -ne $Selected
+    $Recoverable = $HasSelected -and [string]$Selected.Status -eq "recovery_required"
+    $Associated = (
+        $Recoverable -and
+        $null -ne $script:RecoveryBatchDetails -and
+        [string]$script:RecoveryBatchDetails.batch_id -eq [string]$Selected.BatchId -and
+        $script:RecoveryCandidates.Count -eq [int]$Selected.CandidateCount
+    )
+    $SessionReady = (
+        (Test-ImportSessionActive) -and
+        $script:ImportSessionRoot -eq $script:InventoryFolder
+    )
+    $HasPlan = $null -ne $script:RecoveryPlan
+    $VerifyRecoveryButton.IsEnabled = ($Associated -and $SessionReady -and -not $HasPlan)
+    $ArchiveRecoveryButton.IsEnabled = ($HasSelected -and -not $HasPlan)
+    $RefreshRecoveryButton.IsEnabled = -not $HasPlan
+    $RecoveryBatchesGrid.IsEnabled = -not $HasPlan
+    $RecoveryConfirmation.IsEnabled = $HasPlan
+    $ExpectedConfirmation = if ($HasPlan) { [string]$script:RecoveryPlan.confirmation_required } else { "" }
+    $ExecuteRecoveryButton.IsEnabled = (
+        $HasPlan -and
+        $SessionReady -and
+        [bool]$script:RecoveryPlan.can_recover -and
+        -not [bool]$script:RecoveryPlan.destructive_actions_planned -and
+        [int]$script:RecoveryPlan.conflict_count -eq 0 -and
+        $RecoveryConfirmation.Text.Trim() -eq $ExpectedConfirmation
+    )
+}
+
+function Set-RecoveryBatchSelection {
+    if ($script:UpdatingRecoverySelection) { return }
+    Clear-RecoveryCandidateState
+    Reset-RecoveryPlan
+    $Selected = $RecoveryBatchesGrid.SelectedItem
+    if ($null -eq $Selected) {
+        $RecoveryStatus.Text = if ($script:RecoveryBatches.Count -gt 0) { "Seleziona un lotto dall'elenco." } else { "Nessun registro locale attivo." }
+        Update-ImportSessionState
+        return
+    }
+
+    $Status = [string]$Selected.Status
+    if ($Status -eq "complete") {
+        $RecoveryStatus.Text = "Il lotto e' completato e puo' essere archiviato senza cancellarne l'evidenza."
+        $RecoveryConfirmationHint.Text = "Nessuna ripresa necessaria."
+        Update-ImportSessionState
+        return
+    }
+    if ($Status -eq "truncated") {
+        $RecoveryStatus.Text = "L'ultima scrittura del registro e' troncata: il recupero automatico resta bloccato. Verificare manualmente Passbolt oppure archiviare il lotto come abbandonato."
+        $RecoverySafetyStatus.Text = "Fail-closed: nessuna richiesta remota verra' inviata per questo registro troncato."
+        $RecoverySafetyStatus.Foreground = Get-Brush "#B7791F"
+        Update-ImportSessionState
+        return
+    }
+    if ($Status -eq "corrupt") {
+        $RecoveryStatus.Text = "L'integrita' del registro non e' verificabile: il recupero automatico resta bloccato. Verificare manualmente Passbolt oppure archiviare il lotto come abbandonato."
+        $RecoverySafetyStatus.Text = "Fail-closed: nessuna richiesta remota verra' inviata per questo registro corrotto."
+        $RecoverySafetyStatus.Foreground = Get-Brush "#C43D4B"
+        Update-ImportSessionState
+        return
+    }
+    if ($Status -ne "recovery_required") {
+        $RecoveryStatus.Text = "Stato del lotto non supportato. Aggiornare l'elenco."
+        Update-ImportSessionState
+        return
+    }
+
+    $Envelope = $null
+    try {
+        $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--reconciliation-describe") ([pscustomobject]@{
+            batch_id = [string]$Selected.BatchId
+        }) 30000
+        if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+        $Details = $Envelope.result
+        if ([string]$Details.batch_id -ne [string]$Selected.BatchId -or [string]$Details.status -ne "recovery_required") {
+            throw "Lo stato del lotto e' cambiato. Aggiornare l'elenco."
+        }
+
+        $RowsById = @{}
+        $DuplicateIds = @{}
+        foreach ($Row in @($script:AllReviewRows)) {
+            $CandidateId = [string]$Row.CandidateId
+            if ($RowsById.ContainsKey($CandidateId)) { $DuplicateIds[$CandidateId] = $true }
+            else { $RowsById[$CandidateId] = $Row }
+        }
+        $Candidates = New-Object System.Collections.Generic.List[object]
+        $Missing = New-Object System.Collections.Generic.List[string]
+        $Incomplete = New-Object System.Collections.Generic.List[string]
+        $RecoveryPasswords = @{}
+        $RecoveryOverrides = @{}
+        foreach ($CandidateIdValue in @($Details.candidate_ids)) {
+            $CandidateId = [string]$CandidateIdValue
+            if (-not $RowsById.ContainsKey($CandidateId) -or $DuplicateIds.ContainsKey($CandidateId)) {
+                $Missing.Add($CandidateId)
+                continue
+            }
+            $Row = $RowsById[$CandidateId]
+            if ([string]$Row.Status -ne "ready") {
+                $Incomplete.Add($CandidateId)
+                continue
+            }
+            if ([bool]$Row.SourcePasswordRequired) {
+                $RelativePath = [string]$Row.SourceRelativePath
+                if (-not $script:ReviewFilePasswords.ContainsKey($RelativePath) -or -not [string]$script:ReviewFilePasswords[$RelativePath]) {
+                    $Incomplete.Add($CandidateId)
+                    continue
+                }
+                $RecoveryPasswords[$RelativePath] = [string]$script:ReviewFilePasswords[$RelativePath]
+            }
+            if ([bool]$Row.PasswordOverridden) {
+                if (-not [string]$Row.SecretValue) {
+                    $Incomplete.Add($CandidateId)
+                    continue
+                }
+                $RecoveryOverrides[$CandidateId] = [string]$Row.SecretValue
+            }
+            $Candidates.Add((Get-ReviewCandidateRequest $Row))
+        }
+        if ($Missing.Count -gt 0 -or $Incomplete.Count -gt 0 -or $Candidates.Count -ne [int]$Details.candidate_count) {
+            $RecoveryStatus.Text = "Cartella non ancora associata: trovati $($Candidates.Count) di $([int]$Details.candidate_count) candidati. Torna all'inventario, rivedi tutti i documenti originali e riapplica eventuali correzioni fatte prima dell'import interrotto."
+            $RecoveryConfirmationHint.Text = "Associazione sorgente incompleta."
+            return
+        }
+
+        $script:RecoveryBatchDetails = $Details
+        $script:RecoveryCandidates = $Candidates.ToArray()
+        $script:RecoverySourceFilePasswords = $RecoveryPasswords
+        $script:RecoverySecretOverrides = $RecoveryOverrides
+        $RecoveryStatus.Text = "Lotto associato alla cartella corrente: $($Candidates.Count) candidati riletti. Server, utente, sorgenti, destinazione e stato remoto saranno verificati nella sessione autenticata."
+        $RecoveryConfirmationHint.Text = if (Test-ImportSessionActive) { "Sessione attiva: verifica il lotto." } else { "Avvia la sessione sicura, poi verifica il lotto." }
+    } catch {
+        Clear-RecoveryCandidateState
+        $RecoveryStatus.Text = "Associazione del lotto non riuscita: $($_.Exception.Message)"
+        $RecoveryConfirmationHint.Text = "Aggiorna l'elenco e riprova."
+    } finally {
+        $Envelope = $null
+        Update-ImportSessionState
+    }
+}
+
+function Refresh-RecoveryBatches([switch]$Quiet) {
+    if ($null -ne $script:RecoveryPlan) { return }
+    $PreviousBatchId = if ($null -ne $RecoveryBatchesGrid.SelectedItem) { [string]$RecoveryBatchesGrid.SelectedItem.BatchId } else { "" }
+    $RefreshRecoveryButton.IsEnabled = $false
+    try {
+        $Envelope = Invoke-PythonJson $ImportScript @("--reconciliation-list")
+        if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+        $Rows = New-Object System.Collections.Generic.List[object]
+        foreach ($Batch in @($Envelope.result.batches)) {
+            $RecordedAtLabel = "Non disponibile"
+            if ([string]$Batch.recorded_at) {
+                try { $RecordedAtLabel = ([DateTimeOffset]::Parse([string]$Batch.recorded_at)).ToLocalTime().ToString("dd/MM/yyyy HH:mm") } catch { $RecordedAtLabel = [string]$Batch.recorded_at }
+            }
+            $Rows.Add([pscustomobject]@{
+                BatchId = [string]$Batch.batch_id
+                Status = [string]$Batch.status
+                StatusLabel = Get-RecoveryStatusLabel ([string]$Batch.status)
+                RecordedAtLabel = $RecordedAtLabel
+                CandidateCount = if ($null -eq $Batch.candidate_count) { -1 } else { [int]$Batch.candidate_count }
+                CandidateCountLabel = if ($null -eq $Batch.candidate_count) { [string][char]0x2014 } else { [string]$Batch.candidate_count }
+                EventCount = if ($null -eq $Batch.event_count) { -1 } else { [int]$Batch.event_count }
+            })
+        }
+        $script:RecoveryBatches = $Rows.ToArray()
+        $script:UpdatingRecoverySelection = $true
+        try {
+            $RecoveryBatchesGrid.ItemsSource = $script:RecoveryBatches
+            $RecoveryBatchesGrid.SelectedItem = @($script:RecoveryBatches | Where-Object { [string]$_.BatchId -eq $PreviousBatchId }) | Select-Object -First 1
+        } finally {
+            $script:UpdatingRecoverySelection = $false
+        }
+        if ($null -eq $RecoveryBatchesGrid.SelectedItem -and $script:RecoveryBatches.Count -gt 0) {
+            $RecoveryBatchesGrid.SelectedIndex = 0
+        } else {
+            Set-RecoveryBatchSelection
+        }
+        if (-not $Quiet) { Add-Activity "Registri locali aggiornati: $($script:RecoveryBatches.Count) lotti attivi; nessun documento o segreto letto." }
+    } catch {
+        $script:RecoveryBatches = @()
+        $RecoveryBatchesGrid.ItemsSource = $null
+        Clear-RecoveryCandidateState
+        Reset-RecoveryPlan "Elenco dei registri non disponibile: $($_.Exception.Message)"
+        if (-not $Quiet) { Add-Activity "Aggiornamento registri non riuscito: $($_.Exception.Message)" }
+    } finally {
+        Update-RecoveryActionState
+    }
+}
+
+function Invoke-ArchiveRecoveryBatch([switch]$AlreadyConfirmed) {
+    $Selected = $RecoveryBatchesGrid.SelectedItem
+    if ($null -eq $Selected -or $null -ne $script:RecoveryPlan) { return }
+    $Status = [string]$Selected.Status
+    $StatusText = Get-RecoveryStatusLabel $Status
+    if (-not $AlreadyConfirmed) {
+        $Warning = if ($Status -eq "complete") {
+            "Il registro completato verra' spostato nell'archivio locale. L'evidenza non sara' cancellata. Continuare?"
+        } else {
+            "Il lotto $StatusText verra' marcato come abbandonato e spostato nell'archivio locale. L'evidenza non sara' cancellata, ma non comparira' piu tra i recuperi attivi. Continuare?"
+        }
+        $Decision = [System.Windows.MessageBox]::Show($Warning, "Archivia lotto", "YesNo", "Warning")
+        if ([string]$Decision -ne "Yes") { return }
+    }
+
+    $BatchId = [string]$Selected.BatchId
+    $ArchiveRecoveryButton.IsEnabled = $false
+    try {
+        $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--reconciliation-archive") ([pscustomobject]@{
+            batch_id = $BatchId
+            expected_status = $Status
+            confirmation = "ARCHIVIA $BatchId"
+        }) 30000
+        if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+        Clear-RecoveryCandidateState
+        Reset-RecoveryPlan "Lotto archiviato senza cancellarne l'evidenza locale."
+        Add-Activity "Registro locale $BatchId archiviato dallo stato $Status; nessuna evidenza eliminata."
+        Refresh-RecoveryBatches -Quiet
+        [System.Windows.MessageBox]::Show("Lotto archiviato correttamente. Il journal e' stato spostato, non cancellato.", "Archiviazione completata", "OK", "Information") | Out-Null
+    } catch {
+        Add-Activity "Archiviazione del lotto non riuscita: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Archiviazione non riuscita", "OK", "Error") | Out-Null
+    } finally {
+        Update-RecoveryActionState
+    }
 }
 
 function Reset-ImportPlan([string]$Status = "Eseguire il dry-run per preparare un nuovo piano.") {
@@ -1266,9 +1618,11 @@ function Reset-ImportWorkflow {
     $script:ImportSecretOverrides = @{}
     $script:ImportSourceFilePasswords = @{}
     $script:ClientDestinationMap = @{}
+    Clear-RecoveryCandidateState
     $ImportMetricSelected.Text = [string][char]0x2014
     $ImportSummary.Text = "Prepara i candidati dalla revisione"
     Reset-ImportPlan
+    Reset-RecoveryPlan "Rivedi i documenti sorgente, quindi seleziona il lotto da associare."
     $StepImportNumber.Foreground = Get-Brush "#667683"
     $StepImportText.Foreground = Get-Brush "#667683"
     Update-ClientMappingButtonState
@@ -1314,22 +1668,26 @@ function Get-ReviewSourceFilePasswordPayload([object[]]$Rows) {
     return $Payload.ToArray()
 }
 
-function Get-ImportSourceFilePasswordPayload([object[]]$Candidates) {
+function Get-CandidateSourceFilePasswordPayload([object[]]$Candidates, [hashtable]$PasswordMap) {
     $Payload = New-Object System.Collections.Generic.List[object]
     $Seen = @{}
     foreach ($Candidate in @($Candidates | Where-Object { [bool]$_.source_password_required })) {
         $RelativePath = [string]$Candidate.source_relative_path
         if ($Seen.ContainsKey($RelativePath)) { continue }
-        if (-not $script:ImportSourceFilePasswords.ContainsKey($RelativePath) -or -not [string]$script:ImportSourceFilePasswords[$RelativePath]) {
+        if ($null -eq $PasswordMap -or -not $PasswordMap.ContainsKey($RelativePath) -or -not [string]$PasswordMap[$RelativePath]) {
             throw "La password del file Excel $RelativePath non e' piu disponibile in memoria. Tornare alla revisione."
         }
         $Payload.Add([pscustomobject][ordered]@{
             relative_path = $RelativePath
-            password = [string]$script:ImportSourceFilePasswords[$RelativePath]
+            password = [string]$PasswordMap[$RelativePath]
         })
         $Seen[$RelativePath] = $true
     }
     return $Payload.ToArray()
+}
+
+function Get-ImportSourceFilePasswordPayload([object[]]$Candidates) {
+    return @(Get-CandidateSourceFilePasswordPayload $Candidates $script:ImportSourceFilePasswords)
 }
 
 function Update-ReviewRowState($Row) {
@@ -1772,7 +2130,9 @@ function Open-ImportPreparation {
     $StepImportText.Foreground = Get-Brush "#D6DEE5"
     Add-Activity "Preparazione importazione: $($script:ImportCandidates.Count) candidati, nessun segreto registrato."
     Update-ImportSessionState
+    $ImportModeTabs.SelectedIndex = 0
     Show-Page "Import"
+    Refresh-RecoveryBatches -Quiet
 }
 
 function Invoke-ImportReadiness {
@@ -2015,17 +2375,17 @@ function Invoke-ConfirmedImport {
             }
             $Message = Get-SecureErrorMessage $Envelope
             if ($null -ne $Envelope.error.details -and -not [string]::IsNullOrWhiteSpace([string]$Envelope.error.details.reconciliation_batch_id)) {
-                $Message += "`n`nRegistro locale del lotto: $([string]$Envelope.error.details.reconciliation_batch_id). Lo stato richiede una verifica autenticata prima di qualunque nuovo tentativo. Il motore di recupero sicuro e' disponibile; la selezione guidata dei lotti verra' esposta nella prossima fase dell'interfaccia."
+                $Message += "`n`nRegistro locale del lotto: $([string]$Envelope.error.details.reconciliation_batch_id). Lo stato richiede una verifica autenticata prima di qualunque nuovo tentativo. Apri la scheda 'Recupero import interrotto' della fase 04 e associa la cartella sorgente corrente."
             }
             if ($CreatedBeforeFailure -gt 0 -or $CreatedFoldersBeforeFailure -gt 0) {
-                $Message += "`n`nAttenzione: $CreatedFoldersBeforeFailure cartelle e $CreatedBeforeFailure risorse risultano create prima dell'errore. Ripetere il dry-run per riconciliare lo stato; non verranno eliminate automaticamente."
+                $Message += "`n`nAttenzione: $CreatedFoldersBeforeFailure cartelle e $CreatedBeforeFailure risorse risultano create prima dell'errore. Usare il recupero guidato per riverificare lo stato; non verranno eliminate automaticamente."
             }
             if ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_reconciliation_failed) {
-                $Message += "`n`nLa cartella personale $($Envelope.error.details.existing_personal_folder_id) non e' stata riconciliata con i permessi del contenitore. Nessuna risorsa del cliente e' stata inserita al suo interno. Ripetere il dry-run per verificare lo stato corrente."
+                $Message += "`n`nLa cartella personale $($Envelope.error.details.existing_personal_folder_id) non e' stata riconciliata con i permessi del contenitore. Nessuna risorsa del cliente e' stata inserita al suo interno. Usare il recupero guidato per verificare lo stato corrente."
             } elseif ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.folder_sharing_failed) {
-                $Message += "`n`nLa cartella $($Envelope.error.details.created_unshared_folder_id) e' stata creata ma i permessi ereditati non sono stati applicati. Al momento resta personale; nessuna risorsa del cliente e' stata inserita al suo interno. Ripetere il dry-run per riconciliare lo stato."
+                $Message += "`n`nLa cartella $($Envelope.error.details.created_unshared_folder_id) e' stata creata ma i permessi ereditati non sono stati applicati. Al momento resta personale; nessuna risorsa del cliente e' stata inserita al suo interno. Usare il recupero guidato per riconciliare lo stato."
             } elseif ($null -ne $Envelope.error.details -and [bool]$Envelope.error.details.sharing_failed) {
-                $Message += "`n`nLa risorsa $($Envelope.error.details.created_unshared_resource_id) e' stata creata ma la condivisione non e' stata applicata. Al momento resta personale e deve essere riconciliata con un nuovo dry-run prima di continuare."
+                $Message += "`n`nLa risorsa $($Envelope.error.details.created_unshared_resource_id) e' stata creata ma la condivisione non e' stata applicata. Al momento resta personale e deve essere riconciliata dal recupero guidato prima di continuare."
             }
             throw $Message
         }
@@ -2056,15 +2416,17 @@ function Invoke-ConfirmedImport {
         if (-not [string]::IsNullOrWhiteSpace([string]$Result.reconciliation_batch_id)) {
             Add-Activity "Registro locale del lotto $([string]$Result.reconciliation_batch_id) completato."
         }
+        Refresh-RecoveryBatches -Quiet
         [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle personali riconciliate: $($Result.reconciled_shared_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
     } catch {
         $FailureMessage = [string]$_.Exception.Message
         if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
             Stop-ImportSession "" $false
         }
-        Reset-ImportPlan "Importazione interrotta. Ripetere il dry-run per riconciliare lo stato del server."
+        Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
+        Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.12.5", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.13.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -2074,6 +2436,192 @@ function Invoke-ConfirmedImport {
         }
         $WriteSourceFilePasswords = @()
         $SecretOverrides = $null
+        $ExecuteRequest = $null
+        Update-ImportSessionState
+    }
+}
+
+function Invoke-RecoveryReadiness {
+    $Selected = $RecoveryBatchesGrid.SelectedItem
+    if ($null -eq $Selected -or [string]$Selected.Status -ne "recovery_required") { return }
+    if ($null -eq $script:RecoveryBatchDetails -or [string]$script:RecoveryBatchDetails.batch_id -ne [string]$Selected.BatchId -or $script:RecoveryCandidates.Count -lt 1) {
+        [System.Windows.MessageBox]::Show("Associare prima il lotto a tutti i candidati riletti dalla cartella sorgente corrente.", "Sorgenti non associati", "OK", "Warning") | Out-Null
+        return
+    }
+    if (-not (Test-ImportSessionActive) -or $script:ImportSessionRoot -ne $script:InventoryFolder) {
+        [System.Windows.MessageBox]::Show("Avviare prima la sessione sicura con chiave privata, passphrase e MFA.", "Sessione non attiva", "OK", "Warning") | Out-Null
+        return
+    }
+
+    if ($null -ne $script:ImportPlan) {
+        Reset-ImportPlan "Il piano della nuova importazione e' stato invalidato per verificare un lotto interrotto."
+    }
+    Reset-RecoveryPlan "Verifica autenticata di identita', sorgenti, destinazione e stato remoto in corso..."
+    $VerifyRecoveryButton.IsEnabled = $false
+    $ReadinessRequest = $null
+    $SourceFilePasswords = @()
+    $Envelope = $null
+    $CloseSessionForError = $false
+    $BatchId = [string]$Selected.BatchId
+    Add-Activity "Avvio verifica autenticata del lotto $BatchId."
+    Update-Ui
+    try {
+        $SourceFilePasswords = @(Get-CandidateSourceFilePasswordPayload $script:RecoveryCandidates $script:RecoverySourceFilePasswords)
+        $ReadinessRequest = [pscustomobject][ordered]@{
+            command = "session-recovery-readiness"
+            session_id = $script:ImportSessionId
+            reconciliation_batch_id = $BatchId
+            candidates = $script:RecoveryCandidates
+            source_file_passwords = $SourceFilePasswords
+        }
+        $Envelope = Invoke-ImportSessionJson $ReadinessRequest
+        if (-not [bool]$Envelope.ok) {
+            $CloseSessionForError = Test-TerminalImportSessionError $Envelope
+            throw (Get-SecureErrorMessage $Envelope)
+        }
+        $Result = $Envelope.result
+        if (
+            [string]$Result.reconciliation_batch_id -ne $BatchId -or
+            -not [bool]$Result.can_recover -or
+            [bool]$Result.destructive_actions_planned -or
+            [int]$Result.conflict_count -ne 0 -or
+            [string]$Result.confirmation_required -ne "RECUPERA $([int]$Result.retry_action_count)" -or
+            -not [string]$Result.recovery_id -or
+            -not [string]$Result.recovery_plan_digest
+        ) {
+            $CloseSessionForError = $true
+            throw "La verifica del recupero ha restituito un piano incoerente o non sicuro."
+        }
+        $script:RecoveryPlan = $Result
+        $RecoveryMetricVerified.Text = [string]$Result.verified_operation_count
+        $RecoveryMetricRemoteSuccess.Text = [string]$Result.remote_success_count
+        $RecoveryMetricNotApplied.Text = [string]$Result.not_applied_count
+        $RecoveryMetricConflicts.Text = [string]$Result.conflict_count
+        $RecoverySafetyStatus.Text = "Piano verificato: nessuna azione distruttiva. Le operazioni gia' riuscite saranno riconciliate; saranno ripetute soltanto $([int]$Result.retry_action_count) azioni dimostrate come non applicate."
+        $RecoverySafetyStatus.Foreground = Get-Brush "#16875D"
+        $RecoveryStatus.Text = "Verifica completata: $([int]$Result.remote_success_count) operazioni gia' riuscite, $([int]$Result.not_applied_count) non applicate, $([int]$Result.conflict_count) conflitti. Il lotto e' bloccato a questo piano fino al recupero o alla chiusura della sessione."
+        $RecoveryConfirmationHint.Text = "Digita: $([string]$Result.confirmation_required)"
+        $RecoveryConfirmation.IsEnabled = $true
+        Add-Activity "Lotto $BatchId verificato: $([int]$Result.remote_success_count) esiti remoti confermati, $([int]$Result.retry_action_count) azioni idempotenti da applicare, nessun conflitto."
+    } catch {
+        $FailureMessage = [string]$_.Exception.Message
+        if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
+            Stop-ImportSession "" $false
+        }
+        Reset-RecoveryPlan "Verifica del lotto non riuscita. Nessuna azione di recupero e' stata applicata."
+        Add-Activity "Verifica del lotto non riuscita: $FailureMessage"
+        [System.Windows.MessageBox]::Show($FailureMessage, "Verifica recupero non riuscita", "OK", "Error") | Out-Null
+    } finally {
+        foreach ($Entry in $SourceFilePasswords) { $Entry.password = $null }
+        if ($null -ne $ReadinessRequest) { $ReadinessRequest.source_file_passwords = $null }
+        $SourceFilePasswords = @()
+        $ReadinessRequest = $null
+        Update-ImportSessionState
+    }
+}
+
+function Invoke-ConfirmedRecovery {
+    Update-RecoveryActionState
+    if (-not $ExecuteRecoveryButton.IsEnabled -or $null -eq $script:RecoveryPlan) { return }
+    if (-not (Test-ImportSessionActive)) {
+        [System.Windows.MessageBox]::Show("La sessione sicura non e' piu attiva. Avviarne una nuova e ripetere la verifica del lotto.", "Sessione scaduta", "OK", "Warning") | Out-Null
+        return
+    }
+
+    $Plan = $script:RecoveryPlan
+    $RetryCount = [int]$Plan.retry_action_count
+    $RemoteSuccessCount = [int]$Plan.remote_success_count
+    $Decision = [System.Windows.MessageBox]::Show(
+        "Il recupero riconciliera' $RemoteSuccessCount operazioni gia' riuscite e applichera' soltanto $RetryCount azioni verificate come non eseguite. Non sono previste cancellazioni, spostamenti o sovrascritture. Continuare?",
+        "Conferma recupero idempotente",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Warning
+    )
+    if ($Decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
+
+    $ResourceCandidateIds = @($Plan.resource_candidate_ids | ForEach-Object { [string]$_ })
+    $SecretOverrides = New-Object System.Collections.Generic.List[object]
+    foreach ($CandidateId in $ResourceCandidateIds) {
+        $Candidate = @($script:RecoveryCandidates | Where-Object { [string]$_.candidate_id -eq $CandidateId }) | Select-Object -First 1
+        if ($null -ne $Candidate -and [bool]$Candidate.password_overridden) {
+            if (-not $script:RecoverySecretOverrides.ContainsKey($CandidateId) -or -not [string]$script:RecoverySecretOverrides[$CandidateId]) {
+                [System.Windows.MessageBox]::Show("Una password modificata non e' piu disponibile in memoria. Tornare alla revisione, riapplicare la modifica e riverificare il lotto.", "Password non disponibile", "OK", "Error") | Out-Null
+                return
+            }
+            $SecretOverrides.Add([pscustomobject][ordered]@{
+                candidate_id = $CandidateId
+                password = [string]$script:RecoverySecretOverrides[$CandidateId]
+            })
+        }
+    }
+
+    $SourceFilePasswords = @()
+    $ExecuteRequest = $null
+    $Envelope = $null
+    $CloseSessionForError = $false
+    $BatchId = [string]$Plan.reconciliation_batch_id
+    try {
+        $SourceFilePasswords = @(Get-CandidateSourceFilePasswordPayload $script:RecoveryCandidates $script:RecoverySourceFilePasswords)
+        $ExecuteRequest = [pscustomobject][ordered]@{
+            command = "session-recovery-import"
+            session_id = $script:ImportSessionId
+            reconciliation_batch_id = $BatchId
+            recovery_id = [string]$Plan.recovery_id
+            recovery_plan_digest = [string]$Plan.recovery_plan_digest
+            resource_candidate_ids = $ResourceCandidateIds
+            candidates = $script:RecoveryCandidates
+            secret_overrides = $SecretOverrides.ToArray()
+            source_file_passwords = $SourceFilePasswords
+            confirmation = [string]$Plan.confirmation_required
+        }
+        $ExecuteRecoveryButton.IsEnabled = $false
+        $VerifyRecoveryButton.IsEnabled = $false
+        Add-Activity "Avvio recupero confermato del lotto $BatchId con $RetryCount azioni idempotenti."
+        Update-Ui
+        $Envelope = Invoke-ImportSessionJson $ExecuteRequest
+        if (-not [bool]$Envelope.ok) {
+            $CloseSessionForError = Test-TerminalImportSessionError $Envelope
+            throw (Get-SecureErrorMessage $Envelope)
+        }
+        $Result = $Envelope.result
+        if (-not [bool]$Result.complete -or [bool]$Result.destructive_actions_performed) {
+            $CloseSessionForError = $true
+            throw "Il recupero non ha restituito una chiusura sicura e verificabile del lotto."
+        }
+        $script:RecoveryPlan = $null
+        $RecoveryConfirmation.Text = ""
+        $RecoveryConfirmation.IsEnabled = $false
+        $RecoveryStatus.Text = "Recupero completato e journal chiuso."
+        $RecoveryConfirmationHint.Text = "Il lotto completato puo' essere archiviato."
+        Add-Activity "Recupero del lotto $BatchId completato: $([int]$Result.created_folder_count) cartelle create, $([int]$Result.reconciled_folder_count) riconciliate, $([int]$Result.created_count) risorse create e $([int]$Result.repaired_resource_count) condivisioni riparate."
+        Refresh-RecoveryBatches -Quiet
+        $ArchiveDecision = [System.Windows.MessageBox]::Show(
+            "Recupero completato correttamente.`n`nCartelle create: $([int]$Result.created_folder_count)`nCartelle riconciliate: $([int]$Result.reconciled_folder_count)`nRisorse create: $([int]$Result.created_count)`nCondivisioni riparate: $([int]$Result.repaired_resource_count)`nOperazioni remote gia' riuscite: $([int]$Result.remote_success_count)`nAzioni distruttive: nessuna`n`nArchiviare ora il journal completato?",
+            "Recupero completato",
+            [System.Windows.MessageBoxButton]::YesNo,
+            [System.Windows.MessageBoxImage]::Information
+        )
+        if ($ArchiveDecision -eq [System.Windows.MessageBoxResult]::Yes) {
+            Invoke-ArchiveRecoveryBatch -AlreadyConfirmed
+        }
+    } catch {
+        $FailureMessage = [string]$_.Exception.Message
+        if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
+            Stop-ImportSession "" $false
+        }
+        Reset-RecoveryPlan "Recupero interrotto. Aggiornare il lotto e ripetere la verifica autenticata; nessuna operazione distruttiva verra' tentata."
+        Add-Activity "Recupero del lotto non completato: $FailureMessage"
+        [System.Windows.MessageBox]::Show($FailureMessage, "Recupero non completato", "OK", "Error") | Out-Null
+        Refresh-RecoveryBatches -Quiet
+    } finally {
+        foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
+        foreach ($Entry in $SourceFilePasswords) { $Entry.password = $null }
+        if ($null -ne $ExecuteRequest) {
+            $ExecuteRequest.secret_overrides = $null
+            $ExecuteRequest.source_file_passwords = $null
+        }
+        $SecretOverrides = $null
+        $SourceFilePasswords = @()
         $ExecuteRequest = $null
         Update-ImportSessionState
     }
@@ -2778,6 +3326,20 @@ $ReviewPasswordToggle.Add_Unchecked({
 $EditReviewCandidateButton.Add_Click({ Show-ReviewCandidateEditor })
 $PrepareImportButton.Add_Click({ Open-ImportPreparation })
 $ImportBackButton.Add_Click({ Show-Page "Review"; Apply-ReviewFilters })
+$RecoveryBackButton.Add_Click({ Show-Page "Review"; Apply-ReviewFilters })
+$RecoveryBatchesGrid.Add_SelectionChanged({ Set-RecoveryBatchSelection })
+$RefreshRecoveryButton.Add_Click({ Refresh-RecoveryBatches })
+$ArchiveRecoveryButton.Add_Click({ Invoke-ArchiveRecoveryBatch })
+$RecoveryConfirmation.Add_TextChanged({ Update-RecoveryActionState })
+$VerifyRecoveryButton.Add_Click({ Invoke-RecoveryReadiness })
+$ExecuteRecoveryButton.Add_Click({ Invoke-ConfirmedRecovery })
+$ImportModeTabs.Add_SelectionChanged({
+    param($Sender, $EventArgs)
+    if ($EventArgs.OriginalSource -ne $ImportModeTabs) { return }
+    if ($ImportModeTabs.SelectedIndex -eq 1 -and $script:RecoveryBatches.Count -eq 0 -and $null -eq $script:RecoveryPlan) {
+        Refresh-RecoveryBatches -Quiet
+    }
+})
 
 $BrowseKeyButton.Add_Click({
     $Dialog = New-Object System.Windows.Forms.OpenFileDialog
@@ -2895,6 +3457,9 @@ $Window.Add_Closing({
     $script:ImportSecretOverrides = @{}
     $script:ReviewFilePasswords = @{}
     $script:ImportSourceFilePasswords = @{}
+    $script:RecoverySecretOverrides = @{}
+    $script:RecoverySourceFilePasswords = @{}
+    $script:RecoveryCandidates = @()
     if ($null -ne $script:ImportSessionTimer) { $script:ImportSessionTimer.Stop() }
     Stop-ImportSession "" $false
 })
@@ -2956,7 +3521,7 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
@@ -2965,6 +3530,9 @@ for line in sys.stdin:
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
+    }
+    if ($ImportModeTabs.Items.Count -ne 2 -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
+        throw "I controlli UI del recupero guidato non sono nello stato fail-closed previsto."
     }
     if ($null -ne $Window.FindName("ServerFingerprint") -or [string]$DetectedFingerprint.Text -ne "Non ancora rilevata") {
         throw "La configurazione deve rilevare la fingerprint senza richiedere un inserimento manuale."
@@ -3034,10 +3602,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.12.5"
+        version = "0.13.0"
         ui = "WPF"
         phases = 4
-        controls = 76
+        controls = 91
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -3051,6 +3619,8 @@ for line in sys.stdin:
         persistent_import_session = "OK"
         reconciliation_progress_protocol = "OK"
         authenticated_recovery_protocol = "OK"
+        guided_recovery_ui = "OK"
+        recoverable_journal_archive = "OK"
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"
         secrets_serialized = $false

@@ -8,8 +8,10 @@ from unittest import mock
 
 from passbolt_reconciliation import (
     acquire_journal_lease,
+    archive_reconciliation_batch,
     build_recovery_state,
     CandidateProof,
+    describe_reconciliation_batch,
     hash_client_destination_mapping,
     list_reconciliation_batches,
     ReconciliationJournal,
@@ -437,6 +439,13 @@ class ReconciliationJournalTests(unittest.TestCase):
         self.assertEqual(summaries[0].batch_id, journal.batch_id)
         self.assertEqual(summaries[0].status, "recovery_required")
 
+        details = describe_reconciliation_batch(journal.batch_id, self.root)
+        self.assertEqual(details.status, "recovery_required")
+        self.assertEqual(
+            details.candidate_ids,
+            ("aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"),
+        )
+
     def test_truncated_journal_is_listed_but_never_built_for_recovery(self) -> None:
         journal = self.create_journal()
         with journal.path.open("ab") as stream:
@@ -479,6 +488,106 @@ class ReconciliationJournalTests(unittest.TestCase):
             first.close()
         second = acquire_journal_lease(journal)
         second.close()
+
+    def test_archiving_moves_recoverable_journal_without_deleting_evidence(self) -> None:
+        journal = self.create_journal()
+        result = archive_reconciliation_batch(
+            journal.batch_id,
+            expected_status="recovery_required",
+            confirmation=f"ARCHIVIA {journal.batch_id}",
+            root=self.root,
+        )
+
+        archived = self.root / "Archive" / "recovery_required" / journal.path.name
+        self.assertEqual(result.batch_id, journal.batch_id)
+        self.assertEqual(result.previous_status, "recovery_required")
+        self.assertFalse(journal.path.exists())
+        self.assertTrue(archived.is_file())
+        self.assertEqual(read_journal(archived).batch_id, journal.batch_id)
+        self.assertEqual(list_reconciliation_batches(self.root, incomplete_only=False), ())
+
+    def test_archiving_requires_current_status_confirmation_and_exclusive_lease(self) -> None:
+        journal = self.create_journal()
+        with self.assertRaises(ReconciliationJournalError):
+            archive_reconciliation_batch(
+                journal.batch_id,
+                expected_status="complete",
+                confirmation=f"ARCHIVIA {journal.batch_id}",
+                root=self.root,
+            )
+        with self.assertRaises(ReconciliationJournalError):
+            archive_reconciliation_batch(
+                journal.batch_id,
+                expected_status="recovery_required",
+                confirmation="ARCHIVIA lotto-sbagliato",
+                root=self.root,
+            )
+
+        lease = acquire_journal_lease(journal)
+        try:
+            with self.assertRaises(ReconciliationJournalBusy):
+                archive_reconciliation_batch(
+                    journal.batch_id,
+                    expected_status="recovery_required",
+                    confirmation=f"ARCHIVIA {journal.batch_id}",
+                    root=self.root,
+                )
+        finally:
+            lease.close()
+
+    def test_corrupt_journal_can_only_be_preserved_in_corrupt_archive(self) -> None:
+        self.root.mkdir(parents=True)
+        batch_id = str(uuid.uuid4())
+        path = self.root / f"batch-{batch_id}.jsonl"
+        path.write_bytes(b"not-json\n")
+
+        result = archive_reconciliation_batch(
+            batch_id,
+            expected_status="corrupt",
+            confirmation=f"ARCHIVIA {batch_id}",
+            root=self.root,
+        )
+
+        self.assertEqual(result.previous_status, "corrupt")
+        self.assertFalse(path.exists())
+        self.assertTrue((self.root / "Archive" / "corrupt" / path.name).is_file())
+
+    def test_completed_and_truncated_journals_are_archived_by_exact_status(self) -> None:
+        completed = self.create_journal()
+        completed.append(
+            "batch_completed",
+            created_folder_count=0,
+            reconciled_folder_count=0,
+            created_resource_count=0,
+            shared_resource_count=0,
+            skipped_duplicate_count=0,
+        )
+        completed_result = archive_reconciliation_batch(
+            completed.batch_id,
+            expected_status="complete",
+            confirmation=f"ARCHIVIA {completed.batch_id}",
+            root=self.root,
+        )
+        self.assertEqual(completed_result.previous_status, "complete")
+        self.assertTrue(
+            (self.root / "Archive" / "complete" / completed.path.name).is_file()
+        )
+
+        truncated = self.create_journal()
+        with truncated.path.open("ab") as stream:
+            stream.write(b'{"schema_version":1')
+            stream.flush()
+            os.fsync(stream.fileno())
+        truncated_result = archive_reconciliation_batch(
+            truncated.batch_id,
+            expected_status="truncated",
+            confirmation=f"ARCHIVIA {truncated.batch_id}",
+            root=self.root,
+        )
+        self.assertEqual(truncated_result.previous_status, "truncated")
+        self.assertTrue(
+            (self.root / "Archive" / "truncated" / truncated.path.name).is_file()
+        )
 
 
 if __name__ == "__main__":

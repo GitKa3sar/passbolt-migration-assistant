@@ -24,8 +24,11 @@ from typing import Any, Callable, Iterable, Mapping
 
 from passbolt_reconciliation import (
     acquire_journal_lease,
+    archive_reconciliation_batch,
     build_recovery_state,
     CandidateProof,
+    describe_reconciliation_batch,
+    list_reconciliation_batches,
     ReconciliationJournal,
     ReconciliationJournalCorrupt,
     ReconciliationJournalError,
@@ -51,7 +54,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.12.5"
+APP_VERSION = "0.13.0"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -932,6 +935,10 @@ class _SessionReconciliationCoordinator:
         request: Mapping[str, Any],
         bridge_request: dict[str, Any],
     ) -> str:
+        if self._journal is not None or self._lease is not None:
+            raise ImportPreparationError(
+                "Un lotto è già verificato in questa sessione; completarlo oppure chiudere la sessione."
+            )
         self._validate_recovery_identity(request, bridge_request)
         state = bridge_request.get("recovery_state")
         assert isinstance(state, Mapping)
@@ -1422,6 +1429,78 @@ def _write_json(document: dict[str, Any], *, flush: bool = False) -> None:
     )
 
 
+def _reconciliation_list_result(
+    journal_root: str | Path | None = None,
+) -> dict[str, Any]:
+    try:
+        summaries = list_reconciliation_batches(
+            journal_root,
+            incomplete_only=False,
+        )
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "L’elenco dei registri locali non è disponibile."
+        ) from exc
+    return {
+        "batches": [
+            {
+                "batch_id": item.batch_id,
+                "recorded_at": item.recorded_at,
+                "status": item.status,
+                "candidate_count": item.candidate_count,
+                "event_count": item.event_count,
+                "truncated_tail": item.truncated_tail,
+            }
+            for item in summaries
+        ]
+    }
+
+
+def _reconciliation_describe_result(
+    request: Mapping[str, Any],
+    journal_root: str | Path | None = None,
+) -> dict[str, Any]:
+    try:
+        details = describe_reconciliation_batch(
+            request.get("batch_id"),
+            journal_root,
+        )
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "Il registro locale selezionato non può essere descritto in modo affidabile."
+        ) from exc
+    return {
+        "batch_id": details.batch_id,
+        "recorded_at": details.recorded_at,
+        "status": details.status,
+        "candidate_count": details.candidate_count,
+        "event_count": details.event_count,
+        "truncated_tail": details.truncated_tail,
+        "candidate_ids": list(details.candidate_ids),
+    }
+
+
+def _reconciliation_archive_result(
+    request: Mapping[str, Any],
+    journal_root: str | Path | None = None,
+) -> dict[str, Any]:
+    try:
+        archived = archive_reconciliation_batch(
+            request.get("batch_id"),
+            expected_status=request.get("expected_status"),
+            confirmation=request.get("confirmation"),
+            root=journal_root,
+        )
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(str(exc)) from exc
+    return {
+        "batch_id": archived.batch_id,
+        "previous_status": archived.previous_status,
+        "archived_at": archived.archived_at,
+        "deleted": False,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Controllo integrità e handoff in memoria per l’importazione Passbolt."
@@ -1431,8 +1510,12 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--reveal", action="store_true")
     mode.add_argument("--execute", action="store_true")
     mode.add_argument("--session", action="store_true")
+    mode.add_argument("--reconciliation-list", action="store_true")
+    mode.add_argument("--reconciliation-describe", action="store_true")
+    mode.add_argument("--reconciliation-archive", action="store_true")
     mode.add_argument("--self-test", action="store_true")
     parser.add_argument("--root")
+    parser.add_argument("--journal-root")
     parser.add_argument("--node")
     parser.add_argument("--crypto-script")
     return parser.parse_args()
@@ -1451,6 +1534,8 @@ def main() -> int:
                     "persistent_session_protocol": True,
                     "reconciliation_progress_protocol": True,
                     "authenticated_recovery_protocol": True,
+                    "recovery_management_protocol": True,
+                    "recoverable_archive_protocol": True,
                     "explicit_reveal_supported": True,
                     "protected_excel_integrity_supported": True,
                     "secrets_serialized": False,
@@ -1462,6 +1547,28 @@ def main() -> int:
     request: dict[str, Any] | None = None
     file_passwords: dict[str, str] = {}
     try:
+        if args.reconciliation_list:
+            _write_json(
+                {
+                    "ok": True,
+                    "result": _reconciliation_list_result(args.journal_root),
+                }
+            )
+            return 0
+        if args.reconciliation_describe or args.reconciliation_archive:
+            request = _read_stdin_json()
+            if args.reconciliation_describe:
+                operation_result = _reconciliation_describe_result(
+                    request,
+                    args.journal_root,
+                )
+            else:
+                operation_result = _reconciliation_archive_result(
+                    request,
+                    args.journal_root,
+                )
+            _write_json({"ok": True, "result": operation_result})
+            return 0
         if not args.root:
             raise ImportPreparationError("La cartella clienti non è configurata.")
         if args.session:
@@ -1473,6 +1580,7 @@ def main() -> int:
                 args.root,
                 node_path=args.node,
                 crypto_script=args.crypto_script,
+                journal_root=args.journal_root,
             )
         request = _read_stdin_json()
         if args.integrity:

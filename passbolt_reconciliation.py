@@ -1,8 +1,8 @@
 """Durable, secret-free reconciliation journals for Passbolt imports.
 
 The live session workflow appends validated bridge progress events here.  The
-future recovery UI will use the same records only after revalidating remote
-state and source identity through an authenticated Passbolt session.
+recovery UI uses the same records only after revalidating remote state and
+source identity through an authenticated Passbolt session.
 """
 
 from __future__ import annotations
@@ -220,6 +220,24 @@ class ReconciliationBatchSummary:
     candidate_count: int | None
     event_count: int | None
     truncated_tail: bool
+
+
+@dataclass(frozen=True)
+class ReconciliationBatchDetails:
+    batch_id: str
+    recorded_at: str
+    status: str
+    candidate_count: int
+    event_count: int
+    truncated_tail: bool
+    candidate_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ArchivedReconciliationBatch:
+    batch_id: str
+    previous_status: str
+    archived_at: str
 
 
 class ReconciliationJournalLease:
@@ -1020,7 +1038,15 @@ def acquire_journal_lease(
     """Hold a separate one-byte lock for the whole verify/apply lifecycle."""
 
     snapshot = journal.read()
-    lock_path = snapshot.path.with_suffix(".lock")
+    return _acquire_path_lease(snapshot.path)
+
+
+def _acquire_path_lease(journal_path: Path) -> ReconciliationJournalLease:
+    """Acquire a batch lock after the caller resolved the canonical journal path."""
+
+    if not journal_path.is_file() or journal_path.is_symlink():
+        raise ReconciliationJournalError("File del registro non disponibile.")
+    lock_path = journal_path.with_suffix(".lock")
     if lock_path.exists() and (not lock_path.is_file() or lock_path.is_symlink()):
         raise ReconciliationJournalError("File di lock del registro non valido.")
     flags = os.O_RDWR | os.O_CREAT
@@ -1055,12 +1081,20 @@ def acquire_journal_lease(
     return ReconciliationJournalLease(lock_path, handle)
 
 
+def _snapshot_status(snapshot: JournalSnapshot) -> str:
+    if snapshot.complete:
+        return "complete"
+    if snapshot.truncated_tail:
+        return "truncated"
+    return "recovery_required"
+
+
 def list_reconciliation_batches(
     root: str | Path | None = None,
     *,
     incomplete_only: bool = True,
 ) -> tuple[ReconciliationBatchSummary, ...]:
-    """List bounded, secret-free journal summaries for the future recovery UI."""
+    """List bounded, secret-free journal summaries for the recovery UI."""
 
     journal_root = Path(root) if root is not None else default_journal_root()
     if not journal_root.exists():
@@ -1089,13 +1123,7 @@ def list_reconciliation_batches(
         try:
             snapshot = read_journal(path)
             header = snapshot.events[0]
-            status = (
-                "complete"
-                if snapshot.complete
-                else "truncated"
-                if snapshot.truncated_tail
-                else "recovery_required"
-            )
+            status = _snapshot_status(snapshot)
             if incomplete_only and status == "complete":
                 continue
             summaries.append(
@@ -1125,6 +1153,109 @@ def list_reconciliation_batches(
             key=lambda item: (item.recorded_at or "", item.batch_id),
             reverse=True,
         )
+    )
+
+
+def describe_reconciliation_batch(
+    batch_id: object, root: str | Path | None = None
+) -> ReconciliationBatchDetails:
+    """Return bounded source proofs for one trusted batch selected by UUID."""
+
+    snapshot = read_batch(batch_id, root)
+    header = snapshot.events[0]
+    payload = header["payload"]
+    candidate_ids = tuple(
+        str(candidate["candidate_id"]) for candidate in payload["candidates"]
+    )
+    return ReconciliationBatchDetails(
+        batch_id=snapshot.batch_id,
+        recorded_at=str(header["recorded_at"]),
+        status=_snapshot_status(snapshot),
+        candidate_count=int(payload["candidate_count"]),
+        event_count=len(snapshot.events),
+        truncated_tail=snapshot.truncated_tail,
+        candidate_ids=candidate_ids,
+    )
+
+
+def archive_reconciliation_batch(
+    batch_id: object,
+    *,
+    expected_status: object,
+    confirmation: object,
+    root: str | Path | None = None,
+) -> ArchivedReconciliationBatch:
+    """Move one exact journal into a status archive without deleting its evidence."""
+
+    normalized_batch_id = _batch_uuid(batch_id)
+    normalized_expected = str(expected_status).strip().lower()
+    if normalized_expected not in {
+        "complete",
+        "recovery_required",
+        "truncated",
+        "corrupt",
+    }:
+        raise ReconciliationJournalError("Stato atteso del lotto non valido.")
+    if str(confirmation).strip() != f"ARCHIVIA {normalized_batch_id}":
+        raise ReconciliationJournalError("Conferma di archiviazione non valida.")
+
+    journal_path = journal_path_for_batch(normalized_batch_id, root)
+    lease = _acquire_path_lease(journal_path)
+    archive_path: Path | None = None
+    previous_status = "corrupt"
+    try:
+        try:
+            snapshot = read_journal(journal_path)
+            previous_status = _snapshot_status(snapshot)
+        except ReconciliationJournalCorrupt:
+            previous_status = "corrupt"
+        except ReconciliationJournalError:
+            previous_status = "corrupt"
+        if previous_status != normalized_expected:
+            raise ReconciliationJournalError(
+                "Lo stato del lotto è cambiato; aggiornare l’elenco prima di archiviarlo."
+            )
+
+        journal_root = journal_path.parent
+        archive_base = journal_root / "Archive"
+        _prepare_root(archive_base)
+        archive_root = archive_base / previous_status
+        _prepare_root(archive_root)
+        archive_path = archive_root / journal_path.name
+        if archive_path.exists() or archive_path.is_symlink():
+            raise ReconciliationJournalError("Il lotto risulta già archiviato.")
+        try:
+            journal_path.rename(archive_path)
+        except OSError as exc:
+            raise ReconciliationJournalError(
+                "Archiviazione del registro non riuscita."
+            ) from exc
+    finally:
+        lock_path = lease.path
+        lease.close()
+
+    archived_lock_path = archive_path.with_suffix(".lock") if archive_path else None
+    if lock_path.exists():
+        if not lock_path.is_file() or lock_path.is_symlink():
+            raise ReconciliationJournalError(
+                "Il registro è archiviato, ma il relativo lock non è valido."
+            )
+        if archived_lock_path is not None and archived_lock_path.exists():
+            raise ReconciliationJournalError(
+                "Il registro è archiviato, ma il relativo lock esiste già."
+            )
+        try:
+            if archived_lock_path is not None:
+                lock_path.rename(archived_lock_path)
+        except OSError as exc:
+            raise ReconciliationJournalError(
+                "Il registro è archiviato, ma il relativo lock non è stato spostato."
+            ) from exc
+
+    return ArchivedReconciliationBatch(
+        batch_id=normalized_batch_id,
+        previous_status=previous_status,
+        archived_at=_utc_now(),
     )
 
 
