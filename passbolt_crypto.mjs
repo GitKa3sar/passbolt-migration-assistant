@@ -26,7 +26,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.16.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.17.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -1885,6 +1885,71 @@ function aclDirectoryStateDigest(permissions, shareDirectory) {
   return digestPlan(proof);
 }
 
+function aclEffectiveUserAccess(permissions, shareDirectory) {
+  const access = new Map();
+  const grant = (userId, type) => {
+    const current = access.get(userId) ?? 0;
+    if (type > current) access.set(userId, type);
+  };
+  for (const permission of normalizeFolderPermissions(permissions)) {
+    if (permission.aro === 'User') {
+      const user = shareDirectory.users.get(permission.aro_foreign_key);
+      assert(user?.active, 'ACL_PLAN_EFFECTIVE_USER_UNAVAILABLE', `L’utente ${permission.aro_foreign_key} non e disponibile per il calcolo dell’impatto effettivo.`);
+      grant(permission.aro_foreign_key, permission.type);
+      continue;
+    }
+    const group = shareDirectory.groups.get(permission.aro_foreign_key);
+    assert(group && !group.deleted, 'ACL_PLAN_EFFECTIVE_GROUP_UNAVAILABLE', `Il gruppo ${permission.aro_foreign_key} non e disponibile per il calcolo dell’impatto effettivo.`);
+    const members = [...shareDirectory.users.values()]
+      .filter((user) => user.active && user.memberships.includes(permission.aro_foreign_key));
+    assert(
+      group.user_count === null || members.length === group.user_count,
+      'ACL_PLAN_EFFECTIVE_GROUP_INCOMPLETE',
+      `La composizione del gruppo ${group.name || group.id} non e completa.`,
+    );
+    for (const member of members) grant(member.id, permission.type);
+  }
+  return access;
+}
+
+function aclEffectiveUserImpact(currentPermissions, desiredPermissions, shareDirectory, currentUserId) {
+  const before = aclEffectiveUserAccess(currentPermissions, shareDirectory);
+  const after = aclEffectiveUserAccess(desiredPermissions, shareDirectory);
+  assert(after.get(currentUserId) === 15, 'ACL_PLAN_CURRENT_OWNER_AT_RISK', 'Il proprietario autenticato perderebbe il livello Owner; il piano e stato bloccato.');
+  const changes = [];
+  for (const userId of [...new Set([...before.keys(), ...after.keys()])].sort()) {
+    if (userId === currentUserId) continue;
+    const beforeType = before.get(userId) ?? null;
+    const afterType = after.get(userId) ?? null;
+    if (beforeType === afterType) continue;
+    assert(changes.length < MAX_ACL_PLAN_OPERATIONS, 'ACL_PLAN_EFFECTIVE_IMPACT_TOO_LARGE', `L’impatto effettivo coinvolge piu di ${MAX_ACL_PLAN_OPERATIONS} utenti e non puo essere confermato in un unico piano.`);
+    const action = beforeType === null
+      ? 'gain'
+      : (afterType === null ? 'loss' : (afterType > beforeType ? 'upgrade' : 'downgrade'));
+    const user = shareDirectory.users.get(userId);
+    changes.push({
+      user_id: userId,
+      username: String(user?.username ?? '').slice(0, 300),
+      display_name: (`${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim() || user?.username || userId).slice(0, 300),
+      action,
+      action_label: action === 'gain' ? 'Ottiene accesso' : (action === 'loss' ? 'Perde accesso' : (action === 'upgrade' ? 'Accesso aumentato' : 'Accesso ridotto')),
+      before_permission_type: beforeType,
+      before_permission_label: beforeType === null ? 'Nessuno' : permissionTypeLabel(beforeType),
+      after_permission_type: afterType,
+      after_permission_label: afterType === null ? 'Nessuno' : permissionTypeLabel(afterType),
+    });
+  }
+  const counts = {
+    before: before.size,
+    after: after.size,
+    gain: changes.filter((entry) => entry.action === 'gain').length,
+    loss: changes.filter((entry) => entry.action === 'loss').length,
+    upgrade: changes.filter((entry) => entry.action === 'upgrade').length,
+    downgrade: changes.filter((entry) => entry.action === 'downgrade').length,
+  };
+  return { before, after, changes, counts };
+}
+
 function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, currentUserId) {
   assert(target && typeof target === 'object', 'ACL_PLAN_OBJECT_NOT_FOUND', 'L’oggetto selezionato non e piu presente su Passbolt.');
   assert(target.acl_complete, 'ACL_PLAN_OBJECT_INCOMPLETE', 'La maschera ACL dell’oggetto selezionato non e completa; il dry-run e bloccato.');
@@ -1913,6 +1978,16 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
   ]);
   const desiredRows = aclPermissionRows(desiredPermissions, shareDirectory, currentUserId);
   assert(desiredRows.every((row) => row.verified), 'ACL_PLAN_DESIRED_UNVERIFIED', 'La ACL desiderata contiene utenti, gruppi o chiavi non completamente verificabili.');
+  const currentOwnerCount = currentPermissions.filter((permission) => permission.type === 15).length;
+  const desiredOwnerCount = desiredPermissions.filter((permission) => permission.type === 15).length;
+  assert(currentOwnerCount > 0, 'ACL_PLAN_LAST_OWNER_UNVERIFIED', 'La ACL corrente non contiene alcun proprietario verificato.');
+  assert(desiredOwnerCount > 0, 'ACL_PLAN_LAST_OWNER_BLOCKED', 'Il piano eliminerebbe l’ultimo proprietario dell’oggetto.');
+  assert(
+    desiredPermissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === currentUserId && permission.type === 15),
+    'ACL_PLAN_CURRENT_OWNER_AT_RISK',
+    'Il piano ridurrebbe o revocherebbe l’accesso del proprietario autenticato.',
+  );
+  const effectiveImpact = aclEffectiveUserImpact(currentPermissions, desiredPermissions, shareDirectory, currentUserId);
 
   const currentBySubject = new Map(currentPermissions.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
   const desiredBySubject = new Map(desiredPermissions.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
@@ -1988,6 +2063,13 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
       before_permission_type: operation.before_permission_type,
       after_permission_type: operation.after_permission_type,
     })),
+    effective_user_changes: effectiveImpact.changes.map((entry) => ({
+      user_id: entry.user_id,
+      action: entry.action,
+      before_permission_type: entry.before_permission_type,
+      after_permission_type: entry.after_permission_type,
+    })),
+    owner_count_after: desiredOwnerCount,
   });
   return {
     plan_id: randomUUID(),
@@ -2006,6 +2088,14 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
     desired_permission_count: desiredPermissions.length,
     change_count: operations.length,
     sensitive_action_count: operations.filter((operation) => operation.sensitive).length,
+    effective_user_counts: effectiveImpact.counts,
+    effective_user_changes: effectiveImpact.changes,
+    last_owner_protection: {
+      owner_count_before: currentOwnerCount,
+      owner_count_after: desiredOwnerCount,
+      current_user_owner_retained: true,
+      protected: true,
+    },
     counts,
     operations,
   };
@@ -2996,23 +3086,36 @@ function buildFolderPermissionChanges(createdPermission, parentPermissions, fold
   return buildPermissionChanges(createdPermission, parentPermissions, 'Folder', folderId);
 }
 
-function simulatedAddedUserIds(document) {
+function simulatedUserChanges(document) {
   const body = apiBody(document);
   const changes = body && typeof body === 'object' ? body.changes : null;
   assert(changes && typeof changes === 'object', 'SHARE_SIMULATION_INVALID', 'La simulazione Passbolt non contiene il riepilogo delle modifiche.');
   const added = Array.isArray(changes.added) ? changes.added : [];
   const removed = Array.isArray(changes.removed) ? changes.removed : [];
-  assert(removed.length === 0, 'ACL_APPLY_SIMULATION_RESTRICTIVE', 'La simulazione Passbolt contiene rimozioni impreviste; nessuna modifica e stata applicata.');
-  const ids = [];
-  for (const item of added) {
-    const id = String(item?.User?.id ?? '');
-    assert(id, 'SHARE_SIMULATION_INVALID', 'La simulazione Passbolt contiene un destinatario non riconoscibile.');
-    if (!ids.includes(id)) ids.push(id);
-  }
-  return ids.sort();
+  const userIds = (items, label) => {
+    const ids = [];
+    for (const item of items) {
+      const id = String(item?.User?.id ?? '');
+      assert(id, 'SHARE_SIMULATION_INVALID', `La simulazione Passbolt contiene un destinatario ${label} non riconoscibile.`);
+      assert(!ids.includes(id), 'SHARE_SIMULATION_INVALID', `La simulazione Passbolt contiene due volte lo stesso destinatario ${label}.`);
+      ids.push(id);
+    }
+    return ids.sort();
+  };
+  const addedUserIds = userIds(added, 'aggiunto');
+  const removedUserIds = userIds(removed, 'rimosso');
+  assert(!addedUserIds.some((id) => removedUserIds.includes(id)), 'SHARE_SIMULATION_INVALID', 'La simulazione Passbolt aggiunge e rimuove lo stesso destinatario.');
+  return { addedUserIds, removedUserIds };
 }
 
-function buildExistingAdditivePermissionChanges(target, desiredPermissions, permissionRecords) {
+function sameStringSet(left, right) {
+  const normalizedLeft = [...new Set(left.map(String))].sort();
+  const normalizedRight = [...new Set(right.map(String))].sort();
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function buildExistingPermissionChanges(target, desiredPermissions, permissionRecords, currentUserId) {
   const objectType = normalizeAclObjectType(target?.object_type);
   const objectId = normalizeAclObjectId(target?.object_id);
   const aco = objectType === 'folder' ? 'Folder' : 'Resource';
@@ -3020,11 +3123,13 @@ function buildExistingAdditivePermissionChanges(target, desiredPermissions, perm
   const currentBySubject = new Map(currentPermissions.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
   const desired = normalizeFolderPermissions(desiredPermissions);
   const desiredBySubject = new Map(desired.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
-  assert(desired.length >= currentPermissions.length, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Il piano omette uno o piu permessi correnti; riduzioni e revoche non sono applicabili in questa fase.');
-  for (const [subjectKey, current] of currentBySubject) {
-    const after = desiredBySubject.get(subjectKey);
-    assert(after && after.type >= current.type, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Il piano contiene una riduzione o una revoca; nessuna modifica e stata applicata.');
-  }
+  assert(
+    currentBySubject.get(`User:${currentUserId}`)?.type === 15
+    && desiredBySubject.get(`User:${currentUserId}`)?.type === 15,
+    'ACL_APPLY_CURRENT_OWNER_AT_RISK',
+    'Il proprietario autenticato non e conservato come Owner; nessuna modifica e stata applicata.',
+  );
+  assert(desired.some((permission) => permission.type === 15), 'ACL_APPLY_LAST_OWNER_BLOCKED', 'Il piano eliminerebbe l’ultimo proprietario dell’oggetto.');
   assert(Array.isArray(permissionRecords) && permissionRecords.length === currentPermissions.length, 'ACL_APPLY_PERMISSION_RECORDS_INCOMPLETE', 'Passbolt non ha restituito gli identificativi completi dei permessi correnti.');
   const recordBySubject = new Map();
   for (const record of permissionRecords) {
@@ -3043,10 +3148,25 @@ function buildExistingAdditivePermissionChanges(target, desiredPermissions, perm
     recordBySubject.set(key, record);
   }
   const changes = [];
-  for (const after of desired) {
-    const key = `${after.aro}:${after.aro_foreign_key}`;
+  const keys = [...new Set([...currentBySubject.keys(), ...desiredBySubject.keys()])].sort();
+  for (const key of keys) {
     const before = currentBySubject.get(key);
-    if (before?.type === after.type) continue;
+    const after = desiredBySubject.get(key);
+    if (before && after && before.type === after.type) continue;
+    if (!after) {
+      const record = recordBySubject.get(key);
+      assert(record?.id && before, 'ACL_APPLY_PERMISSION_RECORD_INVALID', 'La revoca non dispone dell’identificativo del permesso corrente.');
+      changes.push({
+        id: record.id,
+        delete: true,
+        aco,
+        aco_foreign_key: objectId,
+        aro: before.aro,
+        aro_foreign_key: before.aro_foreign_key,
+        type: before.type,
+      });
+      continue;
+    }
     const base = {
       aco,
       aco_foreign_key: objectId,
@@ -3056,7 +3176,7 @@ function buildExistingAdditivePermissionChanges(target, desiredPermissions, perm
     };
     if (before) {
       const record = recordBySubject.get(key);
-      assert(record?.id, 'ACL_APPLY_PERMISSION_RECORD_INVALID', 'L’aumento di livello non dispone dell’identificativo del permesso corrente.');
+      assert(record?.id, 'ACL_APPLY_PERMISSION_RECORD_INVALID', 'La modifica di livello non dispone dell’identificativo del permesso corrente.');
       changes.push({ ...base, id: record.id });
     } else {
       changes.push({ ...base, is_new: true });
@@ -3124,18 +3244,28 @@ async function simulateExistingAclChange(session, objectType, objectId, permissi
       { http_status: simulation.status },
     );
   }
-  return simulatedAddedUserIds(simulation.document);
+  return simulatedUserChanges(simulation.document);
 }
 
-async function applyExistingAdditiveAcl(session, target, desiredPermissions, runtime, keyMaterial, currentUserId, progress) {
+async function applyExistingAcl(session, target, desiredPermissions, runtime, keyMaterial, currentUserId, planCounts, progress) {
   const objectType = normalizeAclObjectType(target.object_type);
   const objectId = normalizeAclObjectId(target.object_id);
   const permissionRecords = runtime.permissionRecordsByObject.get(`${objectType}:${objectId}`);
-  const permissionChanges = buildExistingAdditivePermissionChanges(target, desiredPermissions, permissionRecords);
-  const addedUserIds = await simulateExistingAclChange(session, objectType, objectId, permissionChanges);
-  const sharePlan = buildFolderSharePlan(desiredPermissions, runtime.shareDirectory, String(currentUserId ?? ''));
-  assert(sharePlan.ready, 'ACL_APPLY_RECIPIENTS_UNAVAILABLE', sharePlan.failure || 'I destinatari della ACL non sono verificabili.');
-  const plannedRecipientIds = new Set(sharePlan.recipients.map((entry) => String(entry.user_id)));
+  const permissionChanges = buildExistingPermissionChanges(target, desiredPermissions, permissionRecords, String(currentUserId));
+  const currentPermissions = aclMaskFromRows(target.permissions);
+  const currentEffective = aclEffectiveUserAccess(currentPermissions, runtime.shareDirectory);
+  const desiredEffective = aclEffectiveUserAccess(desiredPermissions, runtime.shareDirectory);
+  assert(desiredEffective.get(String(currentUserId)) === 15, 'ACL_APPLY_CURRENT_OWNER_AT_RISK', 'Il proprietario autenticato perderebbe il livello Owner.');
+  const expectedAddedUserIds = [...desiredEffective.keys()].filter((id) => !currentEffective.has(id)).sort();
+  const expectedRemovedUserIds = [...currentEffective.keys()].filter((id) => !desiredEffective.has(id)).sort();
+  const { addedUserIds, removedUserIds } = await simulateExistingAclChange(session, objectType, objectId, permissionChanges);
+  assert(
+    sameStringSet(addedUserIds, expectedAddedUserIds) && sameStringSet(removedUserIds, expectedRemovedUserIds),
+    'ACL_APPLY_SIMULATION_MISMATCH',
+    'La simulazione Passbolt non coincide con gli utenti effettivi aggiunti o rimossi dal piano confermato.',
+  );
+  const plannedRecipientIds = new Set(desiredEffective.keys());
+  const restrictiveChangeCount = Number(planCounts?.downgrade ?? 0) + Number(planCounts?.revoke ?? 0);
   const secrets = [];
   let cleartext = null;
   try {
@@ -3156,6 +3286,8 @@ async function applyExistingAdditiveAcl(session, target, desiredPermissions, run
       object_id: objectId,
       permission_change_count: permissionChanges.length,
       added_user_count: addedUserIds.length,
+      removed_user_count: removedUserIds.length,
+      restrictive_change_count: restrictiveChangeCount,
     });
     const endpoint = `/share/${objectType}/${objectId}.json?api-version=v2`;
     let response;
@@ -3192,8 +3324,15 @@ async function applyExistingAdditiveAcl(session, target, desiredPermissions, run
       object_id: objectId,
       permission_change_count: permissionChanges.length,
       added_user_count: addedUserIds.length,
+      removed_user_count: removedUserIds.length,
+      restrictive_change_count: restrictiveChangeCount,
     });
-    return { permissionChangeCount: permissionChanges.length, addedUserCount: addedUserIds.length };
+    return {
+      permissionChangeCount: permissionChanges.length,
+      addedUserCount: addedUserIds.length,
+      removedUserCount: removedUserIds.length,
+      restrictiveChangeCount,
+    };
   } finally {
     cleartext = null;
     secrets.length = 0;
@@ -3215,7 +3354,8 @@ async function shareCreatedResource(session, resourceId, createdPermission, plan
     );
   }
 
-  const addedUserIds = simulatedAddedUserIds(simulation.document);
+  const { addedUserIds, removedUserIds } = simulatedUserChanges(simulation.document);
+  assert(removedUserIds.length === 0, 'SHARE_SIMULATION_RESTRICTIVE', 'La simulazione della nuova risorsa contiene rimozioni impreviste.');
   const plannedRecipientIds = new Set((Array.isArray(planned.share_recipients) ? planned.share_recipients : []).map((entry) => String(entry.user_id)));
   const secrets = [];
   for (const userId of addedUserIds) {
@@ -3824,7 +3964,13 @@ class PersistentImportSession {
       { aro: 'User', aro_foreign_key: String(state.user.id), type: 15 },
     ]);
     const additiveOnly = plan.change_count > 0 && plan.counts.downgrade === 0 && plan.counts.revoke === 0;
-    const confirmationRequired = additiveOnly ? `APPLICA ACL ${plan.change_count} ${plan.plan_digest.slice(0, 8).toUpperCase()}` : null;
+    const restrictiveCount = plan.counts.downgrade + plan.counts.revoke;
+    const applyMode = restrictiveCount === 0 ? 'additive' : ((plan.counts.add + plan.counts.upgrade) > 0 ? 'mixed' : 'restrictive');
+    const confirmationRequired = plan.change_count === 0
+      ? null
+      : (additiveOnly
+        ? `APPLICA ACL ${plan.change_count} ${plan.plan_digest.slice(0, 8).toUpperCase()}`
+        : `CONFERMO RIDUZIONE ACL ${restrictiveCount} ${plan.effective_user_counts.loss} ${plan.plan_digest.slice(0, 8).toUpperCase()}`);
     state.aclPlan = {
       planId: plan.plan_id,
       objectType,
@@ -3836,6 +3982,8 @@ class PersistentImportSession {
       desiredTemplate,
       desiredPermissions,
       changeCount: plan.change_count,
+      counts: { ...plan.counts },
+      applyMode,
       confirmationRequired,
     };
     return {
@@ -3846,8 +3994,13 @@ class PersistentImportSession {
       remote_writes_planned: 0,
       complete: true,
       generated_from_fresh_remote_state: true,
+      apply_available: plan.change_count > 0,
       additive_apply_available: additiveOnly,
-      restrictive_changes_blocked: plan.counts.downgrade + plan.counts.revoke,
+      restrictive_apply_available: restrictiveCount > 0,
+      restrictive_change_count: restrictiveCount,
+      restrictive_changes_blocked: 0,
+      apply_mode: applyMode,
+      destructive_actions_planned: restrictiveCount > 0,
       confirmation_required: confirmationRequired,
       desired_permissions: desiredTemplate,
       owner: safeUser(state.user),
@@ -3867,7 +4020,7 @@ class PersistentImportSession {
     assert(String(input.desired_acl_digest ?? '') === saved.desiredAclDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest della ACL desiderata non corrisponde all’ultimo dry-run.');
     assert(String(input.directory_state_digest ?? '') === saved.directoryStateDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest della directory non corrisponde all’ultimo dry-run.');
     assert(String(input.plan_digest ?? '') === saved.planDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest del piano non corrisponde all’ultimo dry-run.');
-    assert(saved.changeCount > 0 && saved.confirmationRequired, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Il piano non contiene esclusivamente aggiunte o aumenti applicabili.');
+    assert(saved.changeCount > 0 && saved.confirmationRequired, 'ACL_APPLY_NOTHING_TO_DO', 'Il piano non contiene modifiche applicabili.');
     assert(String(input.confirmation ?? '') === saved.confirmationRequired, 'CONFIRMATION_MISMATCH', `Conferma richiesta: ${saved.confirmationRequired}`);
     await verifyPersistentSession(state.session, String(state.user.id));
     const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
@@ -3882,15 +4035,23 @@ class PersistentImportSession {
       'ACL_APPLY_STALE_PLAN',
       'La ACL remota e cambiata dopo il dry-run. Aggiornare il catalogo e preparare un nuovo piano.',
     );
-    assert(freshPlan.counts.downgrade === 0 && freshPlan.counts.revoke === 0, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Riduzioni e revoche non sono applicabili in questa fase.');
+    assert(
+      freshPlan.counts.add === saved.counts.add
+      && freshPlan.counts.upgrade === saved.counts.upgrade
+      && freshPlan.counts.downgrade === saved.counts.downgrade
+      && freshPlan.counts.revoke === saved.counts.revoke,
+      'ACL_APPLY_STALE_PLAN',
+      'La classificazione delle modifiche ACL non corrisponde piu al piano confermato.',
+    );
     const progress = async (eventType, payload) => this.emitProgress(batchId, eventType, payload);
-    const applied = await applyExistingAdditiveAcl(
+    const applied = await applyExistingAcl(
       state.session,
       matches[0],
       saved.desiredPermissions,
       analysis.runtime,
       state.key,
       String(state.user.id),
+      saved.counts,
       progress,
     );
     await progress('acl_batch_completed', {
@@ -3900,6 +4061,9 @@ class PersistentImportSession {
       applied_change_count: saved.changeCount,
       permission_change_count: applied.permissionChangeCount,
       added_user_count: applied.addedUserCount,
+      removed_user_count: applied.removedUserCount,
+      restrictive_change_count: applied.restrictiveChangeCount,
+      destructive_actions_performed: applied.restrictiveChangeCount > 0,
       recovered: false,
     });
     state.aclPlan = null;
@@ -3913,7 +4077,10 @@ class PersistentImportSession {
       applied_change_count: saved.changeCount,
       permission_change_count: applied.permissionChangeCount,
       added_user_count: applied.addedUserCount,
-      destructive_actions_performed: false,
+      removed_user_count: applied.removedUserCount,
+      restrictive_change_count: applied.restrictiveChangeCount,
+      apply_mode: saved.applyMode,
+      destructive_actions_performed: applied.restrictiveChangeCount > 0,
       complete: true,
     };
   }
@@ -3950,8 +4117,8 @@ class PersistentImportSession {
         && freshPlan.change_count === Number(recovery.change_count)
         && freshPlan.counts.add === Number(recovery.add_count)
         && freshPlan.counts.upgrade === Number(recovery.upgrade_count)
-        && freshPlan.counts.downgrade === 0
-        && freshPlan.counts.revoke === 0,
+        && freshPlan.counts.downgrade === Number(recovery.downgrade_count ?? 0)
+        && freshPlan.counts.revoke === Number(recovery.revoke_count ?? 0),
         'ACL_RECOVERY_PLAN_CHANGED',
         'Il piano ACL ricostruito non corrisponde al journal locale.',
       );
@@ -3978,9 +4145,16 @@ class PersistentImportSession {
       remote_acl_digest: freshPlan.object_state_digest,
       recovery_plan_digest: recoveryPlanDigest,
     });
+    const restrictiveCount = Number(recovery.downgrade_count ?? 0) + Number(recovery.revoke_count ?? 0);
+    const applyMode = String(recovery.apply_mode ?? (restrictiveCount > 0 ? 'restrictive' : 'additive'));
+    assert(['additive', 'mixed', 'restrictive'].includes(applyMode), 'ACL_RECOVERY_PLAN_CHANGED', 'La modalita del piano ACL nel journal non e valida.');
+    const expectedMode = restrictiveCount === 0 ? 'additive' : ((Number(recovery.add_count ?? 0) + Number(recovery.upgrade_count ?? 0)) > 0 ? 'mixed' : 'restrictive');
+    assert(applyMode === expectedMode, 'ACL_RECOVERY_PLAN_CHANGED', 'La modalita del piano ACL non corrisponde ai conteggi del journal.');
     const confirmationRequired = resolution === 'remote_success'
       ? `CHIUDI ACL ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`
-      : `RECUPERA ACL ${freshPlan.change_count} ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`;
+      : (restrictiveCount > 0
+        ? `RECUPERA RIDUZIONE ACL ${restrictiveCount} ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`
+        : `RECUPERA ACL ${freshPlan.change_count} ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`);
     state.aclRecovery = {
       batchId,
       recoveryId,
@@ -4000,6 +4174,13 @@ class PersistentImportSession {
         planDigest: String(recovery.plan_digest),
       },
       changeCount: freshPlan.change_count,
+      counts: {
+        add: Number(recovery.add_count ?? 0),
+        upgrade: Number(recovery.upgrade_count ?? 0),
+        downgrade: Number(recovery.downgrade_count ?? 0),
+        revoke: Number(recovery.revoke_count ?? 0),
+      },
+      applyMode,
     };
     return {
       command: 'acl-recovery-readiness',
@@ -4012,7 +4193,9 @@ class PersistentImportSession {
       retry_write_required: resolution === 'not_applied',
       change_count: freshPlan.change_count,
       confirmation_required: confirmationRequired,
-      destructive_actions_planned: false,
+      restrictive_change_count: restrictiveCount,
+      apply_mode: applyMode,
+      destructive_actions_planned: resolution === 'not_applied' && restrictiveCount > 0,
     };
   }
 
@@ -4045,26 +4228,33 @@ class PersistentImportSession {
     assert(resolutionNow === saved.resolution && digestNow === saved.recoveryPlanDigest, 'ACL_RECOVERY_PLAN_CHANGED', 'La ACL remota e cambiata dopo la verifica di recupero. Ripetere il controllo.');
     let permissionChangeCount = 0;
     let addedUserCount = 0;
+    let removedUserCount = 0;
+    let restrictiveChangeCount = 0;
     if (resolutionNow === 'not_applied') {
       assert(
         freshPlan.plan_digest === saved.recovery.planDigest
-        && freshPlan.counts.downgrade === 0
-        && freshPlan.counts.revoke === 0,
+        && freshPlan.counts.add === saved.counts.add
+        && freshPlan.counts.upgrade === saved.counts.upgrade
+        && freshPlan.counts.downgrade === saved.counts.downgrade
+        && freshPlan.counts.revoke === saved.counts.revoke,
         'ACL_RECOVERY_PLAN_CHANGED',
-        'Il piano di recupero non e piu applicabile in modo additivo.',
+        'Il piano di recupero non corrisponde piu alle modifiche confermate.',
       );
       const progress = async (eventType, payload) => this.emitProgress(batchId, eventType, payload);
-      const applied = await applyExistingAdditiveAcl(
+      const applied = await applyExistingAcl(
         state.session,
         matches[0],
         saved.desiredPermissions,
         analysis.runtime,
         state.key,
         String(state.user.id),
+        saved.counts,
         progress,
       );
       permissionChangeCount = applied.permissionChangeCount;
       addedUserCount = applied.addedUserCount;
+      removedUserCount = applied.removedUserCount;
+      restrictiveChangeCount = applied.restrictiveChangeCount;
     }
     await this.emitProgress(batchId, 'acl_batch_completed', {
       object_type: saved.objectType,
@@ -4073,6 +4263,9 @@ class PersistentImportSession {
       applied_change_count: resolutionNow === 'not_applied' ? saved.changeCount : 0,
       permission_change_count: permissionChangeCount,
       added_user_count: addedUserCount,
+      removed_user_count: removedUserCount,
+      restrictive_change_count: restrictiveChangeCount,
+      destructive_actions_performed: restrictiveChangeCount > 0,
       recovered: true,
     });
     state.aclRecovery = null;
@@ -4085,7 +4278,10 @@ class PersistentImportSession {
       remote_write_performed: resolutionNow === 'not_applied',
       permission_change_count: permissionChangeCount,
       added_user_count: addedUserCount,
-      destructive_actions_performed: false,
+      removed_user_count: removedUserCount,
+      restrictive_change_count: restrictiveChangeCount,
+      apply_mode: saved.applyMode,
+      destructive_actions_performed: restrictiveChangeCount > 0,
       complete: true,
     };
   }
@@ -4494,6 +4690,7 @@ async function selfTest() {
     existing_acl_viewer_protocol: true,
     existing_acl_dry_run_protocol: true,
     existing_acl_additive_apply_protocol: true,
+    existing_acl_restrictive_apply_protocol: true,
     existing_acl_recovery_protocol: true,
     secrets_serialized: false,
   };

@@ -2,6 +2,31 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.17.0 - 2026-08-11
+
+### Added
+
+- abilitate riduzioni di livello e revoche dei permessi su cartelle e risorse esistenti, anche all'interno di piani misti con aggiunte o aumenti;
+- aggiunto il riepilogo degli utenti effettivi che ottengono, perdono, aumentano o riducono l'accesso dopo l'espansione completa dei gruppi;
+- aggiunta la conferma rafforzata `CONFERMO RIDUZIONE ACL R L XXXXXXXX`, seguita da un secondo avviso esplicito prima della scrittura;
+- aggiunta la conferma `RECUPERA RIDUZIONE ACL R XXXXXXXX` per ripetere una modifica restrittiva da un journal verificato;
+- aggiunti test end-to-end per downgrade, revoca, `delete` dei permessi, perdita effettiva tramite gruppo, mismatch della simulazione e recupero restrittivo.
+
+### Changed
+
+- aggiornata l'applicazione e i metadati di progetto alla versione 0.17.0;
+- generalizzato il percorso ACL da additive-only a `additive`, `mixed` o `restrictive`, conservando l'ID dei permessi modificati e usando `delete: true` soltanto per le revoche pianificate;
+- esteso il journal ACL, in modo retrocompatibile con i journal 0.16.0, con conteggi di downgrade/revoca, utenti rimossi e indicatore delle azioni restrittive;
+- spostata la prossima fase della roadmap sulla descrizione e archiviazione non distruttiva dei journal ACL dalla GUI.
+
+### Security
+
+- riconciliati gli insiemi esatti di utenti effettivi `added` e `removed` restituiti da `share/simulate` con la differenza tra ACL iniziale e finale; qualsiasi scostamento blocca la `PUT`;
+- imposto che l'utente autenticato rimanga un permesso diretto `Owner` e che il risultato conservi almeno un proprietario, durante piano, applicazione e recupero;
+- incluso l'impatto effettivo degli utenti e il numero di Owner nel digest del piano, con limite di 2.000 utenti modificati per mantenere ispezionabile la conferma;
+- mantenuta la ricifratura del segreto soltanto per utenti effettivamente aggiunti; downgrade e revoche non leggono il segreto quando non aggiungono destinatari;
+- reso il recupero restrittivo idempotente e vincolato agli stessi conteggi, modalità, digest e ACL desiderata del journal originale.
+
 ## 0.16.0 - 2026-08-11
 
 ### Added

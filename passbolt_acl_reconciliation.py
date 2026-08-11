@@ -1,4 +1,4 @@
-"""Durable, secret-free journals for additive ACL updates on existing Passbolt objects."""
+"""Durable, secret-free journals for ACL updates on existing Passbolt objects."""
 
 from __future__ import annotations
 
@@ -178,13 +178,13 @@ def _payload(event_type: str, raw: Mapping[str, Any]) -> dict[str, Any]:
             "app_version", "server_origin", "server_fingerprint", "user_id_hash",
             "object_type", "object_id", "object_state_digest", "desired_acl_digest",
             "plan_digest", "desired_permissions", "change_count", "add_count", "upgrade_count",
-        }, set()),
+        }, {"downgrade_count", "revoke_count", "apply_mode"}),
         "acl_operation_intent": ({
             "operation_id", "object_type", "object_id", "permission_change_count", "added_user_count",
-        }, set()),
+        }, {"removed_user_count", "restrictive_change_count"}),
         "acl_operation_applied": ({
             "operation_id", "object_type", "object_id", "permission_change_count", "added_user_count",
-        }, set()),
+        }, {"removed_user_count", "restrictive_change_count"}),
         "acl_operation_failed": ({
             "operation_id", "object_type", "object_id", "error_code", "outcome",
         }, {"http_status"}),
@@ -194,7 +194,7 @@ def _payload(event_type: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         "acl_batch_completed": ({
             "object_type", "object_id", "resulting_acl_digest", "applied_change_count",
             "permission_change_count", "added_user_count", "recovered",
-        }, set()),
+        }, {"removed_user_count", "restrictive_change_count", "destructive_actions_performed"}),
     }
     if event_type not in fields:
         raise ReconciliationJournalError("Tipo di evento ACL non supportato.")
@@ -214,9 +214,20 @@ def _payload(event_type: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         change_count = _count(data["change_count"], "Numero modifiche", minimum=1)
         add_count = _count(data["add_count"], "Numero aggiunte")
         upgrade_count = _count(data["upgrade_count"], "Numero aumenti")
-        if change_count != add_count + upgrade_count:
+        restrictive_fields = {"downgrade_count", "revoke_count", "apply_mode"}
+        has_restrictive_metadata = bool(restrictive_fields.intersection(data))
+        if has_restrictive_metadata and not restrictive_fields.issubset(data):
+            raise ReconciliationJournalError("Metadati restrittivi ACL incompleti.")
+        downgrade_count = _count(data.get("downgrade_count", 0), "Numero riduzioni")
+        revoke_count = _count(data.get("revoke_count", 0), "Numero revoche")
+        if change_count != add_count + upgrade_count + downgrade_count + revoke_count:
             raise ReconciliationJournalError("Conteggi ACL incoerenti.")
-        return {
+        expected_mode = "additive" if downgrade_count + revoke_count == 0 else (
+            "mixed" if add_count + upgrade_count > 0 else "restrictive"
+        )
+        if has_restrictive_metadata and str(data["apply_mode"]).strip().lower() != expected_mode:
+            raise ReconciliationJournalError("Modalità ACL incoerente con i conteggi.")
+        result = {
             "app_version": version,
             "server_origin": _server_origin(data["server_origin"]),
             "server_fingerprint": fingerprint,
@@ -231,14 +242,30 @@ def _payload(event_type: str, raw: Mapping[str, Any]) -> dict[str, Any]:
             "add_count": add_count,
             "upgrade_count": upgrade_count,
         }
+        if has_restrictive_metadata:
+            result.update({
+                "downgrade_count": downgrade_count,
+                "revoke_count": revoke_count,
+                "apply_mode": expected_mode,
+            })
+        return result
     if event_type in {"acl_operation_intent", "acl_operation_applied"}:
-        return {
+        has_restrictive_metadata = "removed_user_count" in data or "restrictive_change_count" in data
+        if has_restrictive_metadata and not {"removed_user_count", "restrictive_change_count"}.issubset(data):
+            raise ReconciliationJournalError("Impatto effettivo ACL incompleto.")
+        result = {
             "operation_id": _uuid4(data["operation_id"], "Operazione ACL"),
             "object_type": _object_type(data["object_type"]),
             "object_id": _technical_id(data["object_id"], "Oggetto ACL"),
             "permission_change_count": _count(data["permission_change_count"], "Modifiche permesso", minimum=1),
             "added_user_count": _count(data["added_user_count"], "Nuovi utenti"),
         }
+        if has_restrictive_metadata:
+            result.update({
+                "removed_user_count": _count(data["removed_user_count"], "Utenti rimossi"),
+                "restrictive_change_count": _count(data["restrictive_change_count"], "Modifiche restrittive"),
+            })
+        return result
     if event_type == "acl_operation_failed":
         error_code = str(data["error_code"]).strip().upper()
         if not _ERROR_CODE.fullmatch(error_code) or str(data["outcome"]).strip().lower() not in {"unknown", "not_started", "confirmed"}:
@@ -268,7 +295,11 @@ def _payload(event_type: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         }
     if not isinstance(data["recovered"], bool):
         raise ReconciliationJournalError("Indicatore di recupero non valido.")
-    return {
+    restrictive_completion_fields = {"removed_user_count", "restrictive_change_count", "destructive_actions_performed"}
+    has_restrictive_metadata = bool(restrictive_completion_fields.intersection(data))
+    if has_restrictive_metadata and not restrictive_completion_fields.issubset(data):
+        raise ReconciliationJournalError("Esito restrittivo ACL incompleto.")
+    result = {
         "object_type": _object_type(data["object_type"]),
         "object_id": _technical_id(data["object_id"], "Oggetto ACL"),
         "resulting_acl_digest": _digest(data["resulting_acl_digest"], "Digest ACL risultante"),
@@ -277,6 +308,19 @@ def _payload(event_type: str, raw: Mapping[str, Any]) -> dict[str, Any]:
         "added_user_count": _count(data["added_user_count"], "Nuovi utenti"),
         "recovered": data["recovered"],
     }
+    if has_restrictive_metadata:
+        destructive = data["destructive_actions_performed"]
+        if not isinstance(destructive, bool):
+            raise ReconciliationJournalError("Indicatore di azione restrittiva non valido.")
+        restrictive_count = _count(data["restrictive_change_count"], "Modifiche restrittive")
+        if destructive != (restrictive_count > 0):
+            raise ReconciliationJournalError("Esito restrittivo ACL incoerente.")
+        result.update({
+            "removed_user_count": _count(data["removed_user_count"], "Utenti rimossi"),
+            "restrictive_change_count": restrictive_count,
+            "destructive_actions_performed": destructive,
+        })
+    return result
 
 
 def _object_type(value: object) -> str:
@@ -328,6 +372,8 @@ def _validate_flow(events: Sequence[Mapping[str, Any]]) -> None:
             if event_type == "acl_operation_applied" and (
                 payload["permission_change_count"] != intent["permission_change_count"]
                 or payload["added_user_count"] != intent["added_user_count"]
+                or payload.get("removed_user_count", 0) != intent.get("removed_user_count", 0)
+                or payload.get("restrictive_change_count", 0) != intent.get("restrictive_change_count", 0)
             ):
                 raise ReconciliationJournalError("Esito ACL incoerente con l’intento.")
             finished.add(operation_id)
@@ -474,6 +520,9 @@ def build_acl_recovery_state(batch_id: object, root: str | Path | None = None) -
         "change_count": header["change_count"],
         "add_count": header["add_count"],
         "upgrade_count": header["upgrade_count"],
+        "downgrade_count": header.get("downgrade_count", 0),
+        "revoke_count": header.get("revoke_count", 0),
+        "apply_mode": header.get("apply_mode", "additive"),
         "event_count": len(snapshot.events),
     }
 

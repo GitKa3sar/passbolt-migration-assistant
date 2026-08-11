@@ -86,6 +86,88 @@ class AclJournalTests(unittest.TestCase):
             self.assertNotIn("password", encoded.casefold())
             self.assertNotIn("BEGIN PGP", encoded)
 
+    def test_restrictive_counts_and_mode_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            journal = AclReconciliationJournal.create(
+                app_version="0.17.0",
+                server_origin=SERVER_ORIGIN,
+                server_fingerprint=SERVER_FINGERPRINT,
+                user_id_hash=USER_HASH,
+                object_type="folder",
+                object_id="folder-id",
+                object_state_digest=SNAPSHOT_DIGEST,
+                desired_acl_digest=DESIRED_DIGEST,
+                plan_digest=PLAN_DIGEST,
+                desired_permissions=[],
+                change_count=2,
+                add_count=0,
+                upgrade_count=0,
+                downgrade_count=1,
+                revoke_count=1,
+                apply_mode="restrictive",
+                root=temporary,
+            )
+            state = build_acl_recovery_state(journal.batch_id, temporary)
+            self.assertEqual(state["downgrade_count"], 1)
+            self.assertEqual(state["revoke_count"], 1)
+            self.assertEqual(state["apply_mode"], "restrictive")
+            operation_id = str(uuid.uuid4())
+            operation = {
+                "operation_id": operation_id,
+                "object_type": "folder",
+                "object_id": "folder-id",
+                "permission_change_count": 2,
+                "added_user_count": 0,
+                "removed_user_count": 1,
+                "restrictive_change_count": 2,
+            }
+            journal.append("acl_operation_intent", **operation)
+            journal.append("acl_operation_applied", **operation)
+            journal.append(
+                "acl_batch_completed",
+                object_type="folder",
+                object_id="folder-id",
+                resulting_acl_digest=DESIRED_DIGEST,
+                applied_change_count=2,
+                permission_change_count=2,
+                added_user_count=0,
+                removed_user_count=1,
+                restrictive_change_count=2,
+                destructive_actions_performed=True,
+                recovered=False,
+            )
+            self.assertTrue(journal.read().complete)
+
+    def test_partial_or_incoherent_restrictive_metadata_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = dict(
+                app_version="0.17.0",
+                server_origin=SERVER_ORIGIN,
+                server_fingerprint=SERVER_FINGERPRINT,
+                user_id_hash=USER_HASH,
+                object_type="resource",
+                object_id="resource-id",
+                object_state_digest=SNAPSHOT_DIGEST,
+                desired_acl_digest=DESIRED_DIGEST,
+                plan_digest=PLAN_DIGEST,
+                desired_permissions=[],
+                change_count=1,
+                add_count=0,
+                upgrade_count=0,
+                root=temporary,
+            )
+            with self.assertRaises(ReconciliationJournalError):
+                AclReconciliationJournal.create(
+                    **base, downgrade_count=0, revoke_count=1
+                )
+            with self.assertRaises(ReconciliationJournalError):
+                AclReconciliationJournal.create(
+                    **base,
+                    downgrade_count=0,
+                    revoke_count=1,
+                    apply_mode="additive",
+                )
+
     def test_complete_batch_is_terminal_and_listed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             journal = create_journal(temporary)
@@ -225,7 +307,9 @@ class AclCoordinatorTests(unittest.TestCase):
             ],
             "change_count": 1,
             "counts": {"add": 1, "upgrade": 0, "downgrade": 0, "revoke": 0},
+            "apply_available": True,
             "additive_apply_available": True,
+            "apply_mode": "additive",
             "confirmation_required": "APPLICA ACL 1 33333333",
         }
 
@@ -250,14 +334,18 @@ class AclCoordinatorTests(unittest.TestCase):
                 ("acl_operation_intent", {
                     "operation_id": operation_id, "object_type": "resource", "object_id": "resource-id",
                     "permission_change_count": 1, "added_user_count": 1,
+                    "removed_user_count": 0, "restrictive_change_count": 0,
                 }),
                 ("acl_operation_applied", {
                     "operation_id": operation_id, "object_type": "resource", "object_id": "resource-id",
                     "permission_change_count": 1, "added_user_count": 1,
+                    "removed_user_count": 0, "restrictive_change_count": 0,
                 }),
                 ("acl_batch_completed", {
                     "object_type": "resource", "object_id": "resource-id", "resulting_acl_digest": DESIRED_DIGEST,
-                    "applied_change_count": 1, "permission_change_count": 1, "added_user_count": 1, "recovered": False,
+                    "applied_change_count": 1, "permission_change_count": 1, "added_user_count": 1,
+                    "removed_user_count": 0, "restrictive_change_count": 0,
+                    "destructive_actions_performed": False, "recovered": False,
                 }),
             ):
                 coordinator.persist_progress({
@@ -287,6 +375,35 @@ class AclCoordinatorTests(unittest.TestCase):
             })
             self.assertEqual(envelope["error"]["details"]["acl_batch_id"], batch_id)
             self.assertEqual(list_acl_batches(temporary)[0].status, "recovery_required")
+
+    def test_restrictive_plan_is_journaled_with_all_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            coordinator = _SessionAclCoordinator(temporary)
+            self._opened(coordinator)
+            plan = self._plan()
+            plan.update({
+                "change_count": 2,
+                "counts": {"add": 0, "upgrade": 0, "downgrade": 1, "revoke": 1},
+                "additive_apply_available": False,
+                "apply_mode": "restrictive",
+                "confirmation_required": "CONFERMO RIDUZIONE ACL 2 1 33333333",
+            })
+            coordinator.observe("session-acl-plan", {"ok": True, "result": plan})
+            request = {
+                "session_id": "session-id", "plan_id": "plan-id",
+                "object_state_digest": SNAPSHOT_DIGEST,
+                "desired_acl_digest": DESIRED_DIGEST,
+                "directory_state_digest": "4" * 64,
+                "plan_digest": PLAN_DIGEST,
+                "confirmation": "CONFERMO RIDUZIONE ACL 2 1 33333333",
+            }
+            bridge_request = dict(request)
+            batch_id = coordinator.start_apply(request, bridge_request)
+            state = build_acl_recovery_state(batch_id, temporary)
+            self.assertEqual(state["downgrade_count"], 1)
+            self.assertEqual(state["revoke_count"], 1)
+            self.assertEqual(state["apply_mode"], "restrictive")
+            coordinator.abandon()
 
 
 if __name__ == "__main__":

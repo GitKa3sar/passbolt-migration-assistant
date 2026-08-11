@@ -62,7 +62,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.17.0"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -1362,7 +1362,7 @@ class _SessionReconciliationCoordinator:
 
 
 class _SessionAclCoordinator:
-    """Bind a volatile additive ACL plan to a dedicated durable journal."""
+    """Bind a volatile ACL plan to a dedicated durable journal."""
 
     def __init__(self, journal_root: str | Path | None = None) -> None:
         self._journal_root = journal_root
@@ -1431,9 +1431,9 @@ class _SessionAclCoordinator:
                 raise ImportPreparationError(
                     "La richiesta ACL non corrisponde all’ultimo dry-run."
                 )
-        if self._plan.get("additive_apply_available") is not True:
+        if self._plan.get("apply_available") is not True:
             raise ImportPreparationError(
-                "Il piano contiene riduzioni, revoche o nessuna modifica applicabile."
+                "Il piano non contiene modifiche ACL applicabili."
             )
         expected_confirmation = str(self._plan.get("confirmation_required", ""))
         if not expected_confirmation or str(request.get("confirmation", "")) != expected_confirmation:
@@ -1466,6 +1466,9 @@ class _SessionAclCoordinator:
                 change_count=int(self._plan.get("change_count", 0)),
                 add_count=int(counts.get("add", 0)),
                 upgrade_count=int(counts.get("upgrade", 0)),
+                downgrade_count=int(counts.get("downgrade", 0)),
+                revoke_count=int(counts.get("revoke", 0)),
+                apply_mode=str(self._plan.get("apply_mode", "")),
                 root=self._journal_root,
             )
             lease = acquire_acl_journal_lease(journal)
@@ -2098,6 +2101,7 @@ def main() -> int:
                     "existing_acl_viewer_protocol": True,
                     "existing_acl_dry_run_protocol": True,
                     "existing_acl_additive_apply_protocol": True,
+                    "existing_acl_restrictive_apply_protocol": True,
                     "existing_acl_recovery_protocol": True,
                     "dedicated_acl_journal_protocol": True,
                     "secrets_serialized": False,

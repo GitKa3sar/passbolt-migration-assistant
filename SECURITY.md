@@ -6,9 +6,9 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.16.x | Sì |
-| 0.15.x | No |
-| < 0.15 | No |
+| 0.17.x | Sì |
+| 0.16.x | No |
+| < 0.16 | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultima versione pubblicata.
 
@@ -53,3 +53,7 @@ La versione 0.16.0 aggiunge un percorso di scrittura separato e limitato alle so
 Quando una risorsa ottiene nuovi utenti effettivi, il bridge legge il segreto cifrato dell'utente autenticato, lo decifra esclusivamente in memoria e ricifra l'esatto testo per le chiavi pubbliche verificate indicate dalla simulazione. Il segreto in chiaro non attraversa Python o WPF, non entra negli envelope di avanzamento e non viene scritto nel journal. Il journal dedicato sotto `AclReconciliation` contiene origine e fingerprint del server, hash dell'identità, tipo e ID dell'oggetto, digest, contatori e ACL desiderata normalizzata. Gli ID User/Group sono una prova tecnica necessaria al recupero riavviato; lo schema rifiuta password, segreti, chiavi, passphrase, MFA, cookie, autorizzazioni, ID di sessione, materiale OpenPGP e campi sconosciuti.
 
 Il recupero ACL acquisisce un lease esclusivo e accetta soltanto uno stato remoto uguale al digest finale atteso oppure uguale allo snapshot originale. Nel primo caso chiude il journal senza ripetere la scrittura; nel secondo ricostruisce e ripete soltanto lo stesso piano additivo. Stati intermedi, oggetti mancanti o ambigui, variazioni della directory e digest differenti bloccano l'automatismo. La catena SHA-256 del journal rileva corruzione e troncamento ma non costituisce una firma: server, fingerprint, hash dell'utente, oggetto e stato remoto vengono sempre verificati nuovamente tramite la sessione autenticata. Riduzioni e revoche restano non applicabili.
+
+La versione 0.17.0 estende il percorso di scrittura a `downgrade` e `revoke` senza permettere modifiche implicite. Il bridge calcola l'accesso effettivo di ciascun utente dopo l'espansione completa dei gruppi, include le variazioni nel digest del piano e limita a 2.000 gli utenti coinvolti. L'utente autenticato deve comparire nella ACL corrente e desiderata come permesso diretto `Owner`; il risultato deve conservare almeno un Owner. Queste proprietà vengono ricontrollate durante dry-run, applicazione e recupero, dopo una nuova lettura autenticata dello stato remoto.
+
+Ogni revoca usa esclusivamente l'ID del record corrente con `delete: true`; ogni downgrade conserva l'ID e cambia il livello. La simulazione Passbolt deve restituire esattamente gli utenti effettivi aggiunti e rimossi previsti dal piano: destinatari duplicati, sovrapposti, mancanti o inattesi bloccano la `PUT`. La GUI richiede una frase che incorpora conteggio delle operazioni restrittive, utenti che perderanno accesso e digest, quindi un secondo avviso. Il journal registra modalità e conteggi restrittivi senza segreti; il recupero può ripetere una riduzione soltanto se snapshot, desiderato, directory, piano e conteggi sono ancora identici. I journal additivi 0.16.0 restano leggibili.

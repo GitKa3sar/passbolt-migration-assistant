@@ -10,7 +10,19 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.16.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.17.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Riduzioni e revoche ACL protette 0.17.0
+
+`session-acl-plan` classifica ora ogni piano applicabile come `additive`, `mixed` o `restrictive`. Un piano additivo conserva la conferma `APPLICA ACL N XXXXXXXX`; la presenza di almeno un `downgrade` o `revoke` richiede `CONFERMO RIDUZIONE ACL R L XXXXXXXX`, dove `R` è il numero di operazioni restrittive, `L` il numero di utenti effettivi che perderanno completamente l'accesso e il suffisso deriva dal digest del piano. La GUI mostra anche gli utenti effettivi con accesso ottenuto, perso, aumentato o ridotto dopo l'espansione dei gruppi e presenta un secondo avviso prima della scrittura.
+
+Il calcolo dell'impatto aggrega per utente il livello massimo ottenuto da permessi diretti e gruppi. Un soggetto rimosso dal desiderato non viene quindi considerato una perdita effettiva se lo stesso utente conserva accesso attraverso un'altra sorgente. L'impatto entra in `plan_digest` ed è limitato a 2.000 utenti modificati. Il piano viene bloccato se l'utente autenticato non rimane un permesso diretto `Owner` (`15`) o se il risultato non contiene alcun proprietario.
+
+Per una modifica di livello, il bridge invia l'ID del record di permesso corrente e il nuovo `type`; per una revoca invia lo stesso ID con `delete: true`; per una nuova voce continua a usare `is_new: true`. Prima della `PUT`, `POST /share/simulate/{folder|resource}/{id}.json` deve restituire insiemi `changes.added` e `changes.removed` esattamente uguali alla differenza degli utenti effettivi fra ACL corrente e desiderata. Elementi mancanti, duplicati, sovrapposti o inattesi producono `ACL_APPLY_SIMULATION_MISMATCH` e nessuna scrittura finale.
+
+Le risorse vengono decifrate e ricifrate soltanto quando la simulazione conferma nuovi utenti effettivi. Una riduzione o revoca priva di aggiunte non legge il segreto. Il journal ACL registra ora, oltre ai dati 0.16.0, `downgrade_count`, `revoke_count`, `apply_mode`, utenti effettivi rimossi e indicatore delle azioni restrittive. I campi sono opzionali in lettura per mantenere recuperabili i journal additivi creati dalla 0.16.0, ma sono obbligatori e coerenti per i nuovi journal 0.17.0.
+
+Il recupero continua ad accettare soltanto `remote_success` oppure `not_applied`. Nel secondo caso, un journal restrittivo deve ricostruire gli stessi conteggi e lo stesso `plan_digest`, richiede `RECUPERA RIDUZIONE ACL R XXXXXXXX` e un secondo avviso. Un risultato intermedio o una variazione di ACL, directory, chiavi, gruppi, proprietario o impatto effettivo blocca il retry.
 
 ### Applicazione ACL additiva e recupero 0.16.0
 
@@ -330,7 +342,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 
 L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.16.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.17.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
 
 Per eseguire soltanto il controllo da riga di comando:
 
@@ -394,4 +406,4 @@ Node rilegge cartelle, risorse e permessi e classifica ogni intenzione storica. 
 
 La ripresa puo creare contenuti mancanti e completare condivisioni non applicate, riestraendo il segreto soltanto per le risorse che devono essere create o ricifrate per i destinatari. Non pianifica mai cancellazioni, spostamenti o sovrascritture. Duplicati multipli, oggetti in una destinazione diversa, variazioni della ACL, identita o sorgenti non corrispondenti, journal corrotti o code troncate bloccano il piano e richiedono una verifica manuale.
 
-I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.16.0 aggiunge il comando locale `--acl-reconciliation-list`, le scritture ACL additive legate al piano e il recupero idempotente descritto sopra. Riduzioni e revoche restano separate e richiederanno conferma rafforzata, protezione dell'ultimo proprietario e controlli aggiuntivi contro la perdita di accesso. La gestione operativa dei journal ACL verrà ampliata dopo questo percorso. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.
+I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.16.0 ha aggiunto `--acl-reconciliation-list` e il journal ACL; la 0.17.0 estende lo stesso protocollo a piani misti e restrittivi mantenendo il recupero idempotente. La prossima fase amplierà la gestione operativa dei journal ACL con descrizione e archiviazione non distruttiva dalla GUI. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.

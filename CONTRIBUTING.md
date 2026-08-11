@@ -9,6 +9,7 @@ Grazie per l'interesse nel progetto. Le modifiche devono preservare il principio
 - non includere mai segreti, documenti reali, URL privati, fingerprint operative o dati identificativi;
 - mantieni separate le fasi di inventario, revisione, dry-run e scrittura;
 - non indebolire i controlli fail-closed per aggirare un errore di compatibilità.
+- per modifiche ACL restrittive, conserva sempre il proprietario autenticato, riconcilia gli utenti effettivi `added`/`removed` della simulazione e aggiungi test per downgrade, revoca e recupero idempotente.
 
 ## Ambiente di sviluppo
 

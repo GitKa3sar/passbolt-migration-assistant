@@ -269,6 +269,8 @@ async function main() {
   let folderShareSimulationRequestCount = 0;
   let sharedFolderApplyPayload = null;
   let resourceAclMode = 'none';
+  let existingAclSimulationMode = 'normal';
+  let existingResourceSecretReadCount = 0;
   let authenticatedMutationCount = 0;
 
   const mockServer = createServer(async (request, response) => {
@@ -574,6 +576,7 @@ async function main() {
         return;
       }
       if (request.method === 'GET' && url.pathname === '/secrets/resource/existing-resource-id.json') {
+        existingResourceSecretReadCount += 1;
         send(response, 200, apiSuccess({
           id: 'existing-resource-secret-id',
           user_id: 'user-id',
@@ -629,14 +632,14 @@ async function main() {
               aro: 'User',
               aro_foreign_key: 'direct-recipient-id',
               type: sharedFolderPermissionMode === 'changed' ? 7 : 1,
-            }, {
+            }, ...(sharedFolderPermissionMode === 'restricted' ? [] : [{
               id: 'folder-group-permission-id',
               aco: 'Folder',
               aco_foreign_key: 'folder-shared-id',
               aro: 'Group',
               aro_foreign_key: 'shared-group-id',
               type: 7,
-            }],
+            }])],
           }];
           if (includePersonalChildInSharedContainer) {
             sharedFolders.push({
@@ -786,9 +789,19 @@ async function main() {
       if (request.method === 'POST' && url.pathname.startsWith('/share/simulate/resource/')) {
         sharedSimulationPayload = await requestJson(request);
         if (url.pathname === '/share/simulate/resource/existing-resource-id.json') {
+          const permission = sharedSimulationPayload.permissions[0];
           assert.equal(sharedSimulationPayload.permissions.length, 1);
-          assert.equal(sharedSimulationPayload.permissions[0].aro_foreign_key, 'direct-recipient-id');
-          assert.equal(sharedSimulationPayload.permissions[0].is_new, true);
+          assert.equal(permission.aro_foreign_key, 'direct-recipient-id');
+          if (existingAclSimulationMode === 'mismatch') {
+            send(response, 200, apiSuccess({ changes: { added: [], removed: [{ User: { id: 'group-recipient-id' } }] } }));
+            return;
+          }
+          if (permission.delete === true) {
+            assert.equal(permission.id, 'resource-direct-permission-id');
+            send(response, 200, apiSuccess({ changes: { added: [], removed: [{ User: { id: 'direct-recipient-id' } }] } }));
+            return;
+          }
+          assert.equal(permission.is_new, true);
           send(response, 200, apiSuccess({
             changes: { added: [{ User: { id: 'direct-recipient-id' } }], removed: [] },
           }));
@@ -809,11 +822,20 @@ async function main() {
         folderShareSimulationRequestCount += 1;
         if (url.pathname === '/share/simulate/folder/folder-shared-id.json') {
           const payload = await requestJson(request);
-          assert.equal(payload.permissions.length, 1);
-          assert.equal(payload.permissions[0].id, 'folder-direct-permission-id');
-          assert.equal(payload.permissions[0].type, 7);
-          assert.equal(Object.hasOwn(payload.permissions[0], 'delete'), false);
-          send(response, 200, apiSuccess({ changes: { added: [], removed: [] } }));
+          if (payload.permissions.length === 1) {
+            assert.equal(payload.permissions[0].id, 'folder-direct-permission-id');
+            assert.equal(payload.permissions[0].type, 7);
+            assert.equal(Object.hasOwn(payload.permissions[0], 'delete'), false);
+            send(response, 200, apiSuccess({ changes: { added: [], removed: [] } }));
+          } else {
+            assert.equal(payload.permissions.length, 2);
+            const downgrade = payload.permissions.find((permission) => permission.id === 'folder-direct-permission-id');
+            const revoke = payload.permissions.find((permission) => permission.id === 'folder-group-permission-id');
+            assert.equal(downgrade?.type, 1);
+            assert.equal(Object.hasOwn(downgrade, 'delete'), false);
+            assert.equal(revoke?.delete, true);
+            send(response, 200, apiSuccess({ changes: { added: [], removed: [{ User: { id: 'group-recipient-id' } }] } }));
+          }
           return;
         }
         send(response, 404, apiError('Not Found'));
@@ -826,10 +848,15 @@ async function main() {
           return;
         }
         if (url.pathname === '/share/folder/folder-shared-id.json') {
-          assert.equal(sharedFolderApplyPayload.permissions.length, 1);
-          assert.equal(sharedFolderApplyPayload.permissions[0].id, 'folder-direct-permission-id');
-          assert.equal(sharedFolderApplyPayload.permissions[0].type, 7);
-          sharedFolderPermissionMode = 'changed';
+          if (sharedFolderApplyPayload.permissions.length === 1) {
+            assert.equal(sharedFolderApplyPayload.permissions[0].id, 'folder-direct-permission-id');
+            assert.equal(sharedFolderApplyPayload.permissions[0].type, 7);
+            sharedFolderPermissionMode = 'changed';
+          } else {
+            assert.equal(sharedFolderApplyPayload.permissions.length, 2);
+            assert.equal(sharedFolderApplyPayload.permissions.some((permission) => permission.id === 'folder-group-permission-id' && permission.delete === true), true);
+            sharedFolderPermissionMode = 'restricted';
+          }
           send(response, 200, apiSuccess(null));
           return;
         }
@@ -846,6 +873,13 @@ async function main() {
         }
         if (url.pathname === '/share/resource/existing-resource-id.json') {
           assert.equal(sharedApplyPayload.permissions.length, 1);
+          if (sharedApplyPayload.permissions[0].delete === true) {
+            assert.equal(sharedApplyPayload.permissions[0].id, 'resource-direct-permission-id');
+            assert.deepEqual(sharedApplyPayload.secrets, []);
+            resourceAclMode = 'owner';
+            send(response, 200, apiSuccess(null));
+            return;
+          }
           assert.equal(sharedApplyPayload.permissions[0].is_new, true);
           assert.equal(sharedApplyPayload.secrets.length, 1);
           assert.equal(sharedApplyPayload.secrets[0].user_id, 'direct-recipient-id');
@@ -1897,8 +1931,18 @@ async function main() {
     assert.match(changedAclPlan.object_state_digest, /^[0-9a-f]{64}$/);
     assert.match(changedAclPlan.desired_acl_digest, /^[0-9a-f]{64}$/);
     assert.match(changedAclPlan.plan_digest, /^[0-9a-f]{64}$/);
+    assert.equal(changedAclPlan.apply_available, true);
     assert.equal(changedAclPlan.additive_apply_available, false);
-    assert.equal(changedAclPlan.restrictive_changes_blocked, 1);
+    assert.equal(changedAclPlan.restrictive_apply_available, true);
+    assert.equal(changedAclPlan.restrictive_change_count, 1);
+    assert.equal(changedAclPlan.restrictive_changes_blocked, 0);
+    assert.equal(changedAclPlan.apply_mode, 'mixed');
+    assert.equal(changedAclPlan.destructive_actions_planned, true);
+    assert.equal(changedAclPlan.effective_user_counts.downgrade, 1);
+    assert.equal(changedAclPlan.effective_user_counts.loss, 0);
+    assert.equal(changedAclPlan.last_owner_protection.current_user_owner_retained, true);
+    assert.equal(changedAclPlan.last_owner_protection.owner_count_after, 1);
+    assert.match(changedAclPlan.confirmation_required, /^CONFERMO RIDUZIONE ACL 1 0 [0-9A-F]{8}$/);
     await assert.rejects(
       persistentWorker.dispatch({
         command: 'session-acl-apply',
@@ -1911,7 +1955,7 @@ async function main() {
         plan_digest: changedAclPlan.plan_digest,
         confirmation: '',
       }),
-      (error) => error?.code === 'ACL_APPLY_RESTRICTIVE_BLOCKED',
+      (error) => error?.code === 'CONFIRMATION_MISMATCH',
     );
     const repeatedAclPlan = await persistentWorker.dispatch({
       command: 'session-acl-plan',
@@ -2064,6 +2108,41 @@ async function main() {
       persistentProgress.slice(aclRecoveryProgressStart).map((entry) => entry.event_type),
       ['acl_recovery_verified', 'acl_batch_completed'],
     );
+    const restrictiveFolderProgressStart = persistentProgress.length;
+    const restrictiveFolderPlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'folder',
+      object_id: 'folder-shared-id',
+      desired_permissions: [{ aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 1 }],
+    });
+    assert.equal(restrictiveFolderPlan.apply_mode, 'restrictive');
+    assert.equal(restrictiveFolderPlan.counts.downgrade, 1);
+    assert.equal(restrictiveFolderPlan.counts.revoke, 1);
+    assert.equal(restrictiveFolderPlan.effective_user_counts.downgrade, 1);
+    assert.equal(restrictiveFolderPlan.effective_user_counts.loss, 1);
+    assert.match(restrictiveFolderPlan.confirmation_required, /^CONFERMO RIDUZIONE ACL 2 1 [0-9A-F]{8}$/);
+    const appliedRestrictiveFolderAcl = await persistentWorker.dispatch({
+      command: 'session-acl-apply',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '44444444-4444-4444-8444-444444444444',
+      plan_id: restrictiveFolderPlan.plan_id,
+      object_state_digest: restrictiveFolderPlan.object_state_digest,
+      desired_acl_digest: restrictiveFolderPlan.desired_acl_digest,
+      directory_state_digest: restrictiveFolderPlan.directory_state_digest,
+      plan_digest: restrictiveFolderPlan.plan_digest,
+      confirmation: restrictiveFolderPlan.confirmation_required,
+    });
+    assert.equal(appliedRestrictiveFolderAcl.permission_change_count, 2);
+    assert.equal(appliedRestrictiveFolderAcl.removed_user_count, 1);
+    assert.equal(appliedRestrictiveFolderAcl.restrictive_change_count, 2);
+    assert.equal(appliedRestrictiveFolderAcl.destructive_actions_performed, true);
+    assert.equal(sharedFolderPermissionMode, 'restricted');
+    assert.equal(sharedFolderApplyPayload.permissions.some((permission) => permission.id === 'folder-group-permission-id' && permission.delete === true), true);
+    assert.deepEqual(
+      persistentProgress.slice(restrictiveFolderProgressStart).map((entry) => entry.event_type),
+      ['acl_operation_intent', 'acl_operation_applied', 'acl_batch_completed'],
+    );
     resourceAclMode = 'owner';
     const additiveResourcePlan = await persistentWorker.dispatch({
       command: 'session-acl-plan',
@@ -2094,6 +2173,76 @@ async function main() {
       ['acl_operation_intent', 'acl_operation_applied', 'acl_batch_completed'],
     );
     assert.equal(JSON.stringify(persistentProgress).includes('existing-resource-password'), false);
+    const revokeResourcePlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [],
+    });
+    assert.equal(revokeResourcePlan.counts.revoke, 1);
+    assert.equal(revokeResourcePlan.effective_user_counts.loss, 1);
+    assert.equal(revokeResourcePlan.last_owner_protection.owner_count_after, 1);
+    const secretReadsBeforeRestrictiveApply = existingResourceSecretReadCount;
+    existingAclSimulationMode = 'mismatch';
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-apply',
+        session_id: 'persistent-test-session',
+        acl_batch_id: '55555555-5555-4555-8555-555555555555',
+        plan_id: revokeResourcePlan.plan_id,
+        object_state_digest: revokeResourcePlan.object_state_digest,
+        desired_acl_digest: revokeResourcePlan.desired_acl_digest,
+        directory_state_digest: revokeResourcePlan.directory_state_digest,
+        plan_digest: revokeResourcePlan.plan_digest,
+        confirmation: revokeResourcePlan.confirmation_required,
+      }),
+      (error) => error?.code === 'ACL_APPLY_SIMULATION_MISMATCH',
+    );
+    assert.equal(resourceAclMode, 'direct');
+    existingAclSimulationMode = 'normal';
+    const restrictiveRecoveryProgressStart = persistentProgress.length;
+    const restrictiveRecoveryReadiness = await persistentWorker.dispatch({
+      command: 'session-acl-recovery-readiness',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '55555555-5555-4555-8555-555555555555',
+      acl_recovery_state: {
+        batch_id: '55555555-5555-4555-8555-555555555555',
+        object_type: 'resource',
+        object_id: 'existing-resource-id',
+        object_state_digest: revokeResourcePlan.object_state_digest,
+        desired_acl_digest: revokeResourcePlan.desired_acl_digest,
+        plan_digest: revokeResourcePlan.plan_digest,
+        desired_permissions: revokeResourcePlan.desired_permissions,
+        change_count: revokeResourcePlan.change_count,
+        add_count: revokeResourcePlan.counts.add,
+        upgrade_count: revokeResourcePlan.counts.upgrade,
+        downgrade_count: revokeResourcePlan.counts.downgrade,
+        revoke_count: revokeResourcePlan.counts.revoke,
+        apply_mode: revokeResourcePlan.apply_mode,
+      },
+    });
+    assert.equal(restrictiveRecoveryReadiness.resolution, 'not_applied');
+    assert.equal(restrictiveRecoveryReadiness.destructive_actions_planned, true);
+    assert.match(restrictiveRecoveryReadiness.confirmation_required, /^RECUPERA RIDUZIONE ACL 1 [0-9A-F]{8}$/);
+    const recoveredRestrictiveResourceAcl = await persistentWorker.dispatch({
+      command: 'session-acl-recovery-apply',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '55555555-5555-4555-8555-555555555555',
+      recovery_id: restrictiveRecoveryReadiness.recovery_id,
+      recovery_plan_digest: restrictiveRecoveryReadiness.recovery_plan_digest,
+      confirmation: restrictiveRecoveryReadiness.confirmation_required,
+    });
+    assert.equal(recoveredRestrictiveResourceAcl.remote_write_performed, true);
+    assert.equal(recoveredRestrictiveResourceAcl.removed_user_count, 1);
+    assert.equal(recoveredRestrictiveResourceAcl.restrictive_change_count, 1);
+    assert.equal(recoveredRestrictiveResourceAcl.destructive_actions_performed, true);
+    assert.equal(resourceAclMode, 'owner');
+    assert.equal(existingResourceSecretReadCount, secretReadsBeforeRestrictiveApply);
+    assert.deepEqual(
+      persistentProgress.slice(restrictiveRecoveryProgressStart).map((entry) => entry.event_type),
+      ['acl_recovery_verified', 'acl_operation_intent', 'acl_operation_applied', 'acl_batch_completed'],
+    );
     folderMode = 'v4';
     resourceAclMode = 'none';
     existingResourceFolderId = 'folder-alpha-id';
@@ -2390,6 +2539,7 @@ async function main() {
         existing_acl_readonly_viewer: true,
         existing_acl_readonly_dry_run: true,
         existing_acl_additive_apply: true,
+        existing_acl_restrictive_apply: true,
         existing_acl_resource_secret_reencryption: true,
         existing_acl_idempotent_recovery: true,
         custom_permission_editor_plan: true,
