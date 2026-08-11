@@ -2,6 +2,33 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.16.0 - 2026-08-11
+
+### Added
+
+- aggiunto **Applica ACL** per eseguire esclusivamente aggiunte e aumenti di livello su cartelle e risorse Passbolt esistenti;
+- aggiunta la conferma esatta `APPLICA ACL N XXXXXXXX`, legata al numero di operazioni e al digest del piano volatile;
+- aggiunto `passbolt_acl_reconciliation.py`, con journal JSON Lines dedicato, hash-chain SHA-256, `fsync`, schema chiuso e lease esclusivo;
+- aggiunto **Recupera ACL...**, che elenca i journal incompleti e distingue `remote_success` da `not_applied` tramite una nuova verifica autenticata;
+- aggiunti i comandi persistenti `session-acl-apply`, `session-acl-recovery-readiness` e `session-acl-recovery-apply`, oltre al comando locale `--acl-reconciliation-list`;
+- aggiunti test per applicazione su cartelle, ricifratura del segreto di risorse v4/v5-agnostic, risposta remota incerta, recupero senza doppia scrittura, integrità e lock dei journal ACL.
+
+### Changed
+
+- aggiornata l'applicazione e i metadati di progetto alla versione 0.16.0;
+- rinominata la scheda di dettaglio in **Piano e applicazione** e aggiunti i controlli di conferma, applicazione e recupero;
+- estesa la simulazione di condivisione alle modifiche ACL degli oggetti esistenti e imposto il rifiuto di qualsiasi rimozione inattesa;
+- conservato il testo esatto del segreto esistente durante la ricifratura per nuovi destinatari, senza reinterpretare gli schemi v4 o v5;
+- spostata la fase successiva della roadmap su riduzioni e revoche con protezione contro la perdita di accesso, seguita dalla gestione operativa dei journal ACL.
+
+### Security
+
+- ricostruiti e confrontati nuovamente `object_state_digest`, `desired_acl_digest` e `plan_digest` immediatamente prima di ogni scrittura;
+- bloccati fail-closed piani con `downgrade`, `revoke`, soggetti omessi, livelli inferiori, record di permesso incompleti, simulazioni con rimozioni o destinatari non previsti;
+- letto e decifrato il segreto di una risorsa soltanto nel bridge Node e soltanto quando la simulazione richiede nuove copie cifrate; nessun segreto attraversa Python, WPF o journal;
+- legato ogni journal ACL a origine e fingerprint del server, hash dell'utente, oggetto, snapshot, desiderato e piano; rifiutati campi sensibili, materiale OpenPGP, record non canonici, troncamenti e alterazioni della catena;
+- reso il recupero idempotente: nessuna seconda `PUT` quando la ACL attesa è già presente e nessun retry quando lo stato remoto non coincide esattamente con snapshot iniziale o risultato finale.
+
 ## 0.15.1 - 2026-08-11
 
 ### Added

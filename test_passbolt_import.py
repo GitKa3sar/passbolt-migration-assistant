@@ -32,6 +32,7 @@ from passbolt_reconciliation import (
     hash_user_identifier,
     read_journal,
 )
+from passbolt_acl_reconciliation import AclReconciliationJournal
 
 
 def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
@@ -319,6 +320,78 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertNotIn("key-passphrase", serialized)
         self.assertNotIn("123456", serialized)
         self.assertNotIn("APPLICA", serialized)
+
+    def test_persistent_acl_apply_only_forwards_digest_bound_payload(self) -> None:
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-acl-apply",
+                "session_id": "session-id",
+                "plan_id": "plan-id",
+                "object_state_digest": "1" * 64,
+                "desired_acl_digest": "2" * 64,
+                "directory_state_digest": "4" * 64,
+                "plan_digest": "3" * 64,
+                "confirmation": "APPLICA ACL 1 33333333",
+                "desired_permissions": [{"password": "must-not-pass"}],
+                "private_key": "must-not-pass",
+                "mfa_totp": "123456",
+            },
+        )
+        self.assertEqual(
+            bridge_request,
+            {
+                "command": "session-acl-apply",
+                "session_id": "session-id",
+                "plan_id": "plan-id",
+                "object_state_digest": "1" * 64,
+                "desired_acl_digest": "2" * 64,
+                "directory_state_digest": "4" * 64,
+                "plan_digest": "3" * 64,
+                "confirmation": "APPLICA ACL 1 33333333",
+            },
+        )
+        self.assertEqual(resources, [])
+        self.assertNotIn("must-not-pass", json.dumps(bridge_request))
+
+    def test_acl_recovery_bridge_rebuilds_context_from_local_journal(self) -> None:
+        journal_root = self.root / "acl-journals"
+        journal = AclReconciliationJournal.create(
+            app_version="0.16.0",
+            server_origin="https://passbolt.example.test",
+            server_fingerprint="A" * 40,
+            user_id_hash=hash_user_identifier("user-id"),
+            object_type="folder",
+            object_id="folder-id",
+            object_state_digest="1" * 64,
+            desired_acl_digest="2" * 64,
+            plan_digest="3" * 64,
+            desired_permissions=[
+                {"aro": "Group", "aro_foreign_key": "group-id", "type": 7}
+            ],
+            change_count=1,
+            add_count=0,
+            upgrade_count=1,
+            root=journal_root,
+        )
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-acl-recovery-readiness",
+                "session_id": "session-id",
+                "acl_batch_id": journal.batch_id,
+                "desired_permissions": [{"password": "must-not-pass"}],
+            },
+            None,
+            journal_root,
+        )
+        self.assertEqual(bridge_request["acl_batch_id"], journal.batch_id)
+        self.assertEqual(
+            bridge_request["acl_recovery_state"]["desired_permissions"],
+            [{"aro": "Group", "aro_foreign_key": "group-id", "type": 7}],
+        )
+        self.assertEqual(resources, [])
+        self.assertNotIn("must-not-pass", json.dumps(bridge_request))
 
     def test_persistent_session_import_hands_off_secrets_without_auth_data(self) -> None:
         bridge_request, resources = _session_bridge_request(

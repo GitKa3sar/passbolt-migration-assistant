@@ -26,7 +26,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.15.1';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.16.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -1785,6 +1785,23 @@ async function analyzeAclCatalog(session, user, keyMaterial) {
   const existingFolders = await decryptExistingFolders(folderEntries, user, keyMaterial, session.baseUrl, sharedKeyEntries, sharedKeyCache, shareDirectory);
   const existingResources = await decryptExistingResources(resourceEntries, user, keyMaterial, session.baseUrl, sharedKeyEntries, sharedKeyCache);
   const objects = buildAclObjectCatalog(existingFolders, existingResources, shareDirectory, String(user.id ?? ''));
+  const permissionRecordsByObject = new Map();
+  for (const [objectType, entries] of [['folder', folderEntries], ['resource', resourceEntries]]) {
+    const expectedAco = objectType === 'folder' ? 'Folder' : 'Resource';
+    for (const entry of entries) {
+      const objectId = String(entry?.id ?? '').trim();
+      if (!objectId || !Array.isArray(entry?.permissions)) continue;
+      const records = entry.permissions.map((permission) => ({
+        id: String(permission?.id ?? '').trim(),
+        aco: String(permission?.aco ?? expectedAco),
+        aco_foreign_key: String(permission?.aco_foreign_key ?? objectId),
+        aro: String(permission?.aro ?? ''),
+        aro_foreign_key: String(permission?.aro_foreign_key ?? '').trim(),
+        type: normalizePermissionType(permission?.type),
+      }));
+      permissionRecordsByObject.set(`${objectType}:${objectId}`, records);
+    }
+  }
   assert(Buffer.byteLength(JSON.stringify(objects), 'utf8') <= MAX_ACL_CATALOG_BYTES, 'ACL_CATALOG_TOO_LARGE', 'Il catalogo ACL supera il limite sicuro della risposta locale; affinare il supporto a cataloghi di grandi dimensioni prima di procedere.');
   return {
     catalog: {
@@ -1795,7 +1812,7 @@ async function analyzeAclCatalog(session, user, keyMaterial) {
       verified_count: objects.filter((entry) => entry.inspection_status === 'verified').length,
       warning_count: objects.filter((entry) => entry.inspection_status !== 'verified').length,
     },
-    runtime: { shareDirectory },
+    runtime: { shareDirectory, permissionRecordsByObject },
   };
 }
 
@@ -1832,6 +1849,40 @@ function aclOperationLabel(action) {
     case 'revoke': return 'Revoca';
     default: return 'Nessuna modifica';
   }
+}
+
+function aclDirectoryStateDigest(permissions, shareDirectory) {
+  const normalized = normalizeFolderPermissions(permissions);
+  const proof = normalized.map((permission) => {
+    if (permission.aro === 'User') {
+      const user = shareDirectory.users.get(permission.aro_foreign_key);
+      return {
+        aro: 'User',
+        aro_foreign_key: permission.aro_foreign_key,
+        active: Boolean(user?.active),
+        fingerprint: String(user?.fingerprint ?? ''),
+        key_error: String(user?.key_error ?? ''),
+      };
+    }
+    const group = shareDirectory.groups.get(permission.aro_foreign_key);
+    const members = [...shareDirectory.users.values()]
+      .filter((user) => user.memberships.includes(permission.aro_foreign_key))
+      .map((user) => ({
+        user_id: user.id,
+        active: Boolean(user.active),
+        fingerprint: String(user.fingerprint ?? ''),
+        key_error: String(user.key_error ?? ''),
+      }))
+      .sort((left, right) => left.user_id.localeCompare(right.user_id));
+    return {
+      aro: 'Group',
+      aro_foreign_key: permission.aro_foreign_key,
+      deleted: Boolean(group?.deleted),
+      user_count: group?.user_count ?? null,
+      members,
+    };
+  });
+  return digestPlan(proof);
 }
 
 function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, currentUserId) {
@@ -1922,9 +1973,14 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
     object_id: target.object_id,
     permissions: desiredPermissions,
   });
+  const directoryStateDigest = aclDirectoryStateDigest(
+    normalizeFolderPermissions([...currentPermissions, ...desiredPermissions]),
+    shareDirectory,
+  );
   const planDigest = digestPlan({
     object_state_digest: objectStateDigest,
     desired_acl_digest: desiredAclDigest,
+    directory_state_digest: directoryStateDigest,
     operations: operations.map((operation) => ({
       action: operation.action,
       subject_kind: operation.subject_kind,
@@ -1944,6 +2000,7 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
     },
     object_state_digest: objectStateDigest,
     desired_acl_digest: desiredAclDigest,
+    directory_state_digest: directoryStateDigest,
     plan_digest: planDigest,
     current_permission_count: currentPermissions.length,
     desired_permission_count: desiredPermissions.length,
@@ -2944,6 +3001,8 @@ function simulatedAddedUserIds(document) {
   const changes = body && typeof body === 'object' ? body.changes : null;
   assert(changes && typeof changes === 'object', 'SHARE_SIMULATION_INVALID', 'La simulazione Passbolt non contiene il riepilogo delle modifiche.');
   const added = Array.isArray(changes.added) ? changes.added : [];
+  const removed = Array.isArray(changes.removed) ? changes.removed : [];
+  assert(removed.length === 0, 'ACL_APPLY_SIMULATION_RESTRICTIVE', 'La simulazione Passbolt contiene rimozioni impreviste; nessuna modifica e stata applicata.');
   const ids = [];
   for (const item of added) {
     const id = String(item?.User?.id ?? '');
@@ -2951,6 +3010,194 @@ function simulatedAddedUserIds(document) {
     if (!ids.includes(id)) ids.push(id);
   }
   return ids.sort();
+}
+
+function buildExistingAdditivePermissionChanges(target, desiredPermissions, permissionRecords) {
+  const objectType = normalizeAclObjectType(target?.object_type);
+  const objectId = normalizeAclObjectId(target?.object_id);
+  const aco = objectType === 'folder' ? 'Folder' : 'Resource';
+  const currentPermissions = aclMaskFromRows(target?.permissions);
+  const currentBySubject = new Map(currentPermissions.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
+  const desired = normalizeFolderPermissions(desiredPermissions);
+  const desiredBySubject = new Map(desired.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
+  assert(desired.length >= currentPermissions.length, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Il piano omette uno o piu permessi correnti; riduzioni e revoche non sono applicabili in questa fase.');
+  for (const [subjectKey, current] of currentBySubject) {
+    const after = desiredBySubject.get(subjectKey);
+    assert(after && after.type >= current.type, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Il piano contiene una riduzione o una revoca; nessuna modifica e stata applicata.');
+  }
+  assert(Array.isArray(permissionRecords) && permissionRecords.length === currentPermissions.length, 'ACL_APPLY_PERMISSION_RECORDS_INCOMPLETE', 'Passbolt non ha restituito gli identificativi completi dei permessi correnti.');
+  const recordBySubject = new Map();
+  for (const record of permissionRecords) {
+    assert(
+      record?.id
+      && record.aco === aco
+      && record.aco_foreign_key === objectId
+      && ['User', 'Group'].includes(record.aro)
+      && record.aro_foreign_key
+      && record.type !== null,
+      'ACL_APPLY_PERMISSION_RECORD_INVALID',
+      'Un permesso corrente non contiene gli identificativi tecnici necessari per un aggiornamento sicuro.',
+    );
+    const key = `${record.aro}:${record.aro_foreign_key}`;
+    assert(!recordBySubject.has(key), 'ACL_APPLY_PERMISSION_RECORD_INVALID', 'Passbolt ha restituito due record per lo stesso soggetto ACL.');
+    recordBySubject.set(key, record);
+  }
+  const changes = [];
+  for (const after of desired) {
+    const key = `${after.aro}:${after.aro_foreign_key}`;
+    const before = currentBySubject.get(key);
+    if (before?.type === after.type) continue;
+    const base = {
+      aco,
+      aco_foreign_key: objectId,
+      aro: after.aro,
+      aro_foreign_key: after.aro_foreign_key,
+      type: after.type,
+    };
+    if (before) {
+      const record = recordBySubject.get(key);
+      assert(record?.id, 'ACL_APPLY_PERMISSION_RECORD_INVALID', 'L’aumento di livello non dispone dell’identificativo del permesso corrente.');
+      changes.push({ ...base, id: record.id });
+    } else {
+      changes.push({ ...base, is_new: true });
+    }
+  }
+  assert(changes.length > 0, 'ACL_APPLY_NOTHING_TO_DO', 'La ACL remota corrisponde gia alla ACL desiderata. Aggiornare il catalogo.');
+  return changes;
+}
+
+async function encryptClearSecret(cleartext, keyMaterial, encryptionPublicKey) {
+  assert(typeof cleartext === 'string' && Buffer.byteLength(cleartext, 'utf8') <= 1024 * 1024, 'ACL_RESOURCE_SECRET_TOO_LARGE', 'Il segreto della risorsa supera il limite sicuro di 1 MiB.');
+  return openpgp.encrypt({
+    message: await openpgp.createMessage({ text: cleartext }),
+    encryptionKeys: encryptionPublicKey,
+    signingKeys: keyMaterial.privateKey,
+    format: 'armored',
+  });
+}
+
+async function readExistingResourceSecret(session, resourceId, keyMaterial, currentUserId) {
+  const response = await session.request(`/secrets/resource/${resourceId}.json?api-version=v2`, { allowError: true });
+  if (response.status < 200 || response.status >= 300) {
+    throw new SafeError(
+      'ACL_RESOURCE_SECRET_READ_FAILED',
+      apiMessage(response.document, `Lettura del segreto esistente non riuscita (HTTP ${response.status}).`),
+      { http_status: response.status },
+    );
+  }
+  const body = apiBody(response.document);
+  const secret = Array.isArray(body)
+    ? body.find((entry) => String(entry?.resource_id ?? '') === resourceId && String(entry?.user_id ?? '') === currentUserId)
+    : body;
+  assert(
+    secret
+    && typeof secret === 'object'
+    && String(secret.resource_id ?? resourceId) === resourceId
+    && String(secret.user_id ?? '') === currentUserId,
+    'ACL_RESOURCE_SECRET_INVALID',
+    'Passbolt non ha restituito il segreto della risorsa per l’utente autenticato.',
+  );
+  const armored = String(secret.data ?? '');
+  assert(armored.includes('-----BEGIN PGP MESSAGE-----'), 'ACL_RESOURCE_SECRET_INVALID', 'Il segreto restituito da Passbolt non e un messaggio OpenPGP valido.');
+  const cleartext = await decryptMessageText(
+    armored,
+    keyMaterial.privateKey,
+    undefined,
+    false,
+    'ACL_RESOURCE_SECRET_DECRYPT_FAILED',
+    'Il segreto esistente non puo essere decifrato con la chiave della sessione.',
+  );
+  assert(Buffer.byteLength(cleartext, 'utf8') <= 1024 * 1024, 'ACL_RESOURCE_SECRET_TOO_LARGE', 'Il segreto della risorsa supera il limite sicuro di 1 MiB.');
+  return cleartext;
+}
+
+async function simulateExistingAclChange(session, objectType, objectId, permissionChanges) {
+  const simulation = await session.request(`/share/simulate/${objectType}/${objectId}.json?api-version=v2`, {
+    method: 'POST',
+    body: { permissions: permissionChanges },
+    allowError: true,
+  });
+  if (simulation.status < 200 || simulation.status >= 300) {
+    throw new SafeError(
+      'ACL_APPLY_SIMULATION_FAILED',
+      apiMessage(simulation.document, `La simulazione ACL ha restituito HTTP ${simulation.status}.`),
+      { http_status: simulation.status },
+    );
+  }
+  return simulatedAddedUserIds(simulation.document);
+}
+
+async function applyExistingAdditiveAcl(session, target, desiredPermissions, runtime, keyMaterial, currentUserId, progress) {
+  const objectType = normalizeAclObjectType(target.object_type);
+  const objectId = normalizeAclObjectId(target.object_id);
+  const permissionRecords = runtime.permissionRecordsByObject.get(`${objectType}:${objectId}`);
+  const permissionChanges = buildExistingAdditivePermissionChanges(target, desiredPermissions, permissionRecords);
+  const addedUserIds = await simulateExistingAclChange(session, objectType, objectId, permissionChanges);
+  const sharePlan = buildFolderSharePlan(desiredPermissions, runtime.shareDirectory, String(currentUserId ?? ''));
+  assert(sharePlan.ready, 'ACL_APPLY_RECIPIENTS_UNAVAILABLE', sharePlan.failure || 'I destinatari della ACL non sono verificabili.');
+  const plannedRecipientIds = new Set(sharePlan.recipients.map((entry) => String(entry.user_id)));
+  const secrets = [];
+  let cleartext = null;
+  try {
+    if (objectType === 'resource' && addedUserIds.length) {
+      cleartext = await readExistingResourceSecret(session, objectId, keyMaterial, String(currentUserId));
+      for (const userId of addedUserIds) {
+        assert(plannedRecipientIds.has(userId), 'ACL_APPLY_SIMULATION_MISMATCH', 'La simulazione richiede il segreto per un destinatario esterno al piano confermato.');
+        const recipient = runtime.shareDirectory.users.get(userId);
+        assert(recipient?.active && recipient.publicKey && !recipient.key_error, 'ACL_APPLY_RECIPIENT_KEY_UNAVAILABLE', `La chiave pubblica del destinatario ${recipient?.username || userId} non e disponibile.`);
+        secrets.push({ user_id: userId, data: await encryptClearSecret(cleartext, keyMaterial, recipient.publicKey) });
+      }
+    }
+    assert(objectType === 'resource' || addedUserIds.length === 0 || addedUserIds.every((id) => plannedRecipientIds.has(id)), 'ACL_APPLY_SIMULATION_MISMATCH', 'La simulazione della cartella contiene destinatari esterni al piano confermato.');
+    const operationId = randomUUID();
+    await progress('acl_operation_intent', {
+      operation_id: operationId,
+      object_type: objectType,
+      object_id: objectId,
+      permission_change_count: permissionChanges.length,
+      added_user_count: addedUserIds.length,
+    });
+    const endpoint = `/share/${objectType}/${objectId}.json?api-version=v2`;
+    let response;
+    try {
+      response = await session.request(endpoint, {
+        method: 'PUT',
+        body: objectType === 'resource' ? { permissions: permissionChanges, secrets } : { permissions: permissionChanges },
+        allowError: true,
+      });
+    } catch (error) {
+      await progress('acl_operation_failed', {
+        operation_id: operationId,
+        object_type: objectType,
+        object_id: objectId,
+        error_code: error instanceof SafeError ? error.code : 'ACL_APPLY_FAILED',
+        outcome: 'unknown',
+      });
+      throw error;
+    }
+    if (response.status < 200 || response.status >= 300) {
+      await progress('acl_operation_failed', {
+        operation_id: operationId,
+        object_type: objectType,
+        object_id: objectId,
+        error_code: 'ACL_APPLY_FAILED',
+        outcome: 'unknown',
+        http_status: response.status,
+      });
+      throw new SafeError('ACL_APPLY_FAILED', apiMessage(response.document, `Applicazione ACL non riuscita (HTTP ${response.status}).`), { http_status: response.status });
+    }
+    await progress('acl_operation_applied', {
+      operation_id: operationId,
+      object_type: objectType,
+      object_id: objectId,
+      permission_change_count: permissionChanges.length,
+      added_user_count: addedUserIds.length,
+    });
+    return { permissionChangeCount: permissionChanges.length, addedUserCount: addedUserIds.length };
+  } finally {
+    cleartext = null;
+    secrets.length = 0;
+  }
 }
 
 async function shareCreatedResource(session, resourceId, createdPermission, planned, resource, runtime, keyMaterial) {
@@ -3548,6 +3795,8 @@ class PersistentImportSession {
   async aclCatalog(input) {
     const state = this.requireState(input);
     await verifyPersistentSession(state.session, String(state.user.id));
+    state.aclPlan = null;
+    state.aclRecovery = null;
     const catalog = await readAclCatalog(state.session, state.user, state.key);
     return {
       command: 'acl-catalog',
@@ -3561,6 +3810,7 @@ class PersistentImportSession {
 
   async aclPlan(input) {
     const state = this.requireState(input);
+    state.aclRecovery = null;
     await verifyPersistentSession(state.session, String(state.user.id));
     const objectType = normalizeAclObjectType(input.object_type);
     const objectId = normalizeAclObjectId(input.object_id);
@@ -3568,6 +3818,26 @@ class PersistentImportSession {
     const matches = analysis.catalog.objects.filter((entry) => entry.object_type === objectType && entry.object_id === objectId);
     assert(matches.length === 1, 'ACL_PLAN_OBJECT_NOT_FOUND', 'L’oggetto selezionato non e piu presente in modo univoco su Passbolt. Aggiornare il catalogo ACL.');
     const plan = buildAclChangePlan(matches[0], input.desired_permissions, analysis.runtime.shareDirectory, String(state.user.id));
+    const desiredTemplate = normalizeCustomPermissionEntries(input.desired_permissions, String(state.user.id));
+    const desiredPermissions = normalizeFolderPermissions([
+      ...desiredTemplate,
+      { aro: 'User', aro_foreign_key: String(state.user.id), type: 15 },
+    ]);
+    const additiveOnly = plan.change_count > 0 && plan.counts.downgrade === 0 && plan.counts.revoke === 0;
+    const confirmationRequired = additiveOnly ? `APPLICA ACL ${plan.change_count} ${plan.plan_digest.slice(0, 8).toUpperCase()}` : null;
+    state.aclPlan = {
+      planId: plan.plan_id,
+      objectType,
+      objectId,
+      objectStateDigest: plan.object_state_digest,
+      desiredAclDigest: plan.desired_acl_digest,
+      directoryStateDigest: plan.directory_state_digest,
+      planDigest: plan.plan_digest,
+      desiredTemplate,
+      desiredPermissions,
+      changeCount: plan.change_count,
+      confirmationRequired,
+    };
     return {
       command: 'acl-plan',
       session_id: state.sessionId,
@@ -3576,8 +3846,247 @@ class PersistentImportSession {
       remote_writes_planned: 0,
       complete: true,
       generated_from_fresh_remote_state: true,
+      additive_apply_available: additiveOnly,
+      restrictive_changes_blocked: plan.counts.downgrade + plan.counts.revoke,
+      confirmation_required: confirmationRequired,
+      desired_permissions: desiredTemplate,
       owner: safeUser(state.user),
       ...plan,
+    };
+  }
+
+  async aclApply(input) {
+    const state = this.requireState(input);
+    const saved = state.aclPlan;
+    assert(saved, 'ACL_APPLY_PLAN_REQUIRED', 'Calcolare nuovamente il piano ACL prima dell’applicazione.');
+    const batchId = normalizeReconciliationBatchId(input.acl_batch_id);
+    assert(batchId, 'ACL_APPLY_BATCH_REQUIRED', 'Il journal ACL locale non e stato inizializzato.');
+    assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole ACL non e disponibile.');
+    assert(String(input.plan_id ?? '') === saved.planId, 'ACL_APPLY_PLAN_MISMATCH', 'Il piano selezionato non corrisponde all’ultimo dry-run.');
+    assert(String(input.object_state_digest ?? '') === saved.objectStateDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest dello snapshot non corrisponde all’ultimo dry-run.');
+    assert(String(input.desired_acl_digest ?? '') === saved.desiredAclDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest della ACL desiderata non corrisponde all’ultimo dry-run.');
+    assert(String(input.directory_state_digest ?? '') === saved.directoryStateDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest della directory non corrisponde all’ultimo dry-run.');
+    assert(String(input.plan_digest ?? '') === saved.planDigest, 'ACL_APPLY_PLAN_MISMATCH', 'Il digest del piano non corrisponde all’ultimo dry-run.');
+    assert(saved.changeCount > 0 && saved.confirmationRequired, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Il piano non contiene esclusivamente aggiunte o aumenti applicabili.');
+    assert(String(input.confirmation ?? '') === saved.confirmationRequired, 'CONFIRMATION_MISMATCH', `Conferma richiesta: ${saved.confirmationRequired}`);
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const matches = analysis.catalog.objects.filter((entry) => entry.object_type === saved.objectType && entry.object_id === saved.objectId);
+    assert(matches.length === 1, 'ACL_APPLY_OBJECT_NOT_FOUND', 'L’oggetto del piano non e piu presente in modo univoco su Passbolt.');
+    const freshPlan = buildAclChangePlan(matches[0], saved.desiredTemplate, analysis.runtime.shareDirectory, String(state.user.id));
+    assert(
+      freshPlan.object_state_digest === saved.objectStateDigest
+      && freshPlan.desired_acl_digest === saved.desiredAclDigest
+      && freshPlan.directory_state_digest === saved.directoryStateDigest
+      && freshPlan.plan_digest === saved.planDigest,
+      'ACL_APPLY_STALE_PLAN',
+      'La ACL remota e cambiata dopo il dry-run. Aggiornare il catalogo e preparare un nuovo piano.',
+    );
+    assert(freshPlan.counts.downgrade === 0 && freshPlan.counts.revoke === 0, 'ACL_APPLY_RESTRICTIVE_BLOCKED', 'Riduzioni e revoche non sono applicabili in questa fase.');
+    const progress = async (eventType, payload) => this.emitProgress(batchId, eventType, payload);
+    const applied = await applyExistingAdditiveAcl(
+      state.session,
+      matches[0],
+      saved.desiredPermissions,
+      analysis.runtime,
+      state.key,
+      String(state.user.id),
+      progress,
+    );
+    await progress('acl_batch_completed', {
+      object_type: saved.objectType,
+      object_id: saved.objectId,
+      resulting_acl_digest: saved.desiredAclDigest,
+      applied_change_count: saved.changeCount,
+      permission_change_count: applied.permissionChangeCount,
+      added_user_count: applied.addedUserCount,
+      recovered: false,
+    });
+    state.aclPlan = null;
+    return {
+      command: 'acl-apply',
+      session_id: state.sessionId,
+      acl_batch_id: batchId,
+      object_type: saved.objectType,
+      object_id: saved.objectId,
+      resulting_acl_digest: saved.desiredAclDigest,
+      applied_change_count: saved.changeCount,
+      permission_change_count: applied.permissionChangeCount,
+      added_user_count: applied.addedUserCount,
+      destructive_actions_performed: false,
+      complete: true,
+    };
+  }
+
+  async aclRecoveryReadiness(input) {
+    const state = this.requireState(input);
+    const recovery = input.acl_recovery_state;
+    assert(recovery && typeof recovery === 'object' && !Array.isArray(recovery), 'ACL_RECOVERY_STATE_REQUIRED', 'Il journal ACL non contiene uno stato di recupero valido.');
+    const batchId = normalizeReconciliationBatchId(input.acl_batch_id);
+    assert(batchId && batchId === normalizeReconciliationBatchId(recovery.batch_id), 'ACL_RECOVERY_BATCH_MISMATCH', 'Il journal ACL non corrisponde al lotto richiesto.');
+    assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole ACL non e disponibile.');
+    const objectType = normalizeAclObjectType(recovery.object_type);
+    const objectId = normalizeAclObjectId(recovery.object_id);
+    for (const [value, code] of [
+      [recovery.object_state_digest, 'ACL_RECOVERY_STATE_DIGEST_INVALID'],
+      [recovery.desired_acl_digest, 'ACL_RECOVERY_DESIRED_DIGEST_INVALID'],
+      [recovery.plan_digest, 'ACL_RECOVERY_PLAN_DIGEST_INVALID'],
+    ]) {
+      assert(/^[0-9a-f]{64}$/.test(String(value ?? '')), code, 'Il journal ACL contiene un digest non valido.');
+    }
+    const desiredTemplate = normalizeCustomPermissionEntries(recovery.desired_permissions, String(state.user.id));
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const matches = analysis.catalog.objects.filter((entry) => entry.object_type === objectType && entry.object_id === objectId);
+    assert(matches.length === 1, 'ACL_RECOVERY_OBJECT_NOT_FOUND', 'L’oggetto del journal ACL non e piu presente in modo univoco su Passbolt.');
+    const freshPlan = buildAclChangePlan(matches[0], desiredTemplate, analysis.runtime.shareDirectory, String(state.user.id));
+    assert(freshPlan.desired_acl_digest === String(recovery.desired_acl_digest), 'ACL_RECOVERY_DESIRED_CHANGED', 'La ACL desiderata ricostruita non corrisponde al journal locale.');
+    let resolution;
+    if (freshPlan.object_state_digest === String(recovery.desired_acl_digest)) {
+      resolution = 'remote_success';
+    } else if (freshPlan.object_state_digest === String(recovery.object_state_digest)) {
+      assert(
+        freshPlan.plan_digest === String(recovery.plan_digest)
+        && freshPlan.change_count === Number(recovery.change_count)
+        && freshPlan.counts.add === Number(recovery.add_count)
+        && freshPlan.counts.upgrade === Number(recovery.upgrade_count)
+        && freshPlan.counts.downgrade === 0
+        && freshPlan.counts.revoke === 0,
+        'ACL_RECOVERY_PLAN_CHANGED',
+        'Il piano ACL ricostruito non corrisponde al journal locale.',
+      );
+      resolution = 'not_applied';
+    } else {
+      throw new SafeError(
+        'ACL_RECOVERY_CONFLICT',
+        'La ACL remota non coincide ne con lo snapshot originale ne con il risultato atteso. E richiesta una verifica manuale.',
+        { destructive_actions_planned: false },
+      );
+    }
+    const recoveryId = randomUUID();
+    const recoveryPlanDigest = digestPlan({
+      batch_id: batchId,
+      object_type: objectType,
+      object_id: objectId,
+      remote_acl_digest: freshPlan.object_state_digest,
+      desired_acl_digest: recovery.desired_acl_digest,
+      resolution,
+    });
+    await this.emitProgress(batchId, 'acl_recovery_verified', {
+      recovery_id: recoveryId,
+      resolution,
+      remote_acl_digest: freshPlan.object_state_digest,
+      recovery_plan_digest: recoveryPlanDigest,
+    });
+    const confirmationRequired = resolution === 'remote_success'
+      ? `CHIUDI ACL ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`
+      : `RECUPERA ACL ${freshPlan.change_count} ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`;
+    state.aclRecovery = {
+      batchId,
+      recoveryId,
+      recoveryPlanDigest,
+      resolution,
+      confirmationRequired,
+      objectType,
+      objectId,
+      desiredTemplate,
+      desiredPermissions: normalizeFolderPermissions([
+        ...desiredTemplate,
+        { aro: 'User', aro_foreign_key: String(state.user.id), type: 15 },
+      ]),
+      recovery: {
+        objectStateDigest: String(recovery.object_state_digest),
+        desiredAclDigest: String(recovery.desired_acl_digest),
+        planDigest: String(recovery.plan_digest),
+      },
+      changeCount: freshPlan.change_count,
+    };
+    return {
+      command: 'acl-recovery-readiness',
+      session_id: state.sessionId,
+      acl_batch_id: batchId,
+      recovery_id: recoveryId,
+      recovery_plan_digest: recoveryPlanDigest,
+      resolution,
+      can_recover: true,
+      retry_write_required: resolution === 'not_applied',
+      change_count: freshPlan.change_count,
+      confirmation_required: confirmationRequired,
+      destructive_actions_planned: false,
+    };
+  }
+
+  async aclRecoveryApply(input) {
+    const state = this.requireState(input);
+    const saved = state.aclRecovery;
+    assert(saved, 'ACL_RECOVERY_READINESS_REQUIRED', 'Verificare prima il journal ACL nella sessione autenticata.');
+    const batchId = normalizeReconciliationBatchId(input.acl_batch_id);
+    assert(batchId === saved.batchId, 'ACL_RECOVERY_BATCH_MISMATCH', 'Il lotto non corrisponde all’ultima verifica ACL.');
+    assert(String(input.recovery_id ?? '') === saved.recoveryId, 'ACL_RECOVERY_ID_MISMATCH', 'La verifica ACL selezionata non corrisponde.');
+    assert(String(input.recovery_plan_digest ?? '') === saved.recoveryPlanDigest, 'ACL_RECOVERY_PLAN_CHANGED', 'Il digest del recupero ACL non corrisponde.');
+    assert(String(input.confirmation ?? '') === saved.confirmationRequired, 'CONFIRMATION_MISMATCH', `Conferma richiesta: ${saved.confirmationRequired}`);
+    assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole ACL non e disponibile.');
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const matches = analysis.catalog.objects.filter((entry) => entry.object_type === saved.objectType && entry.object_id === saved.objectId);
+    assert(matches.length === 1, 'ACL_RECOVERY_OBJECT_NOT_FOUND', 'L’oggetto del journal ACL non e piu presente in modo univoco su Passbolt.');
+    const freshPlan = buildAclChangePlan(matches[0], saved.desiredTemplate, analysis.runtime.shareDirectory, String(state.user.id));
+    const resolutionNow = freshPlan.object_state_digest === saved.recovery.desiredAclDigest
+      ? 'remote_success'
+      : (freshPlan.object_state_digest === saved.recovery.objectStateDigest ? 'not_applied' : 'conflict');
+    const digestNow = digestPlan({
+      batch_id: batchId,
+      object_type: saved.objectType,
+      object_id: saved.objectId,
+      remote_acl_digest: freshPlan.object_state_digest,
+      desired_acl_digest: saved.recovery.desiredAclDigest,
+      resolution: resolutionNow,
+    });
+    assert(resolutionNow === saved.resolution && digestNow === saved.recoveryPlanDigest, 'ACL_RECOVERY_PLAN_CHANGED', 'La ACL remota e cambiata dopo la verifica di recupero. Ripetere il controllo.');
+    let permissionChangeCount = 0;
+    let addedUserCount = 0;
+    if (resolutionNow === 'not_applied') {
+      assert(
+        freshPlan.plan_digest === saved.recovery.planDigest
+        && freshPlan.counts.downgrade === 0
+        && freshPlan.counts.revoke === 0,
+        'ACL_RECOVERY_PLAN_CHANGED',
+        'Il piano di recupero non e piu applicabile in modo additivo.',
+      );
+      const progress = async (eventType, payload) => this.emitProgress(batchId, eventType, payload);
+      const applied = await applyExistingAdditiveAcl(
+        state.session,
+        matches[0],
+        saved.desiredPermissions,
+        analysis.runtime,
+        state.key,
+        String(state.user.id),
+        progress,
+      );
+      permissionChangeCount = applied.permissionChangeCount;
+      addedUserCount = applied.addedUserCount;
+    }
+    await this.emitProgress(batchId, 'acl_batch_completed', {
+      object_type: saved.objectType,
+      object_id: saved.objectId,
+      resulting_acl_digest: saved.recovery.desiredAclDigest,
+      applied_change_count: resolutionNow === 'not_applied' ? saved.changeCount : 0,
+      permission_change_count: permissionChangeCount,
+      added_user_count: addedUserCount,
+      recovered: true,
+    });
+    state.aclRecovery = null;
+    return {
+      command: 'acl-recovery-apply',
+      session_id: state.sessionId,
+      acl_batch_id: batchId,
+      recovery_id: saved.recoveryId,
+      resolution: resolutionNow,
+      remote_write_performed: resolutionNow === 'not_applied',
+      permission_change_count: permissionChangeCount,
+      added_user_count: addedUserCount,
+      destructive_actions_performed: false,
+      complete: true,
     };
   }
 
@@ -3871,6 +4380,12 @@ class PersistentImportSession {
         return this.aclCatalog(input);
       case 'session-acl-plan':
         return this.aclPlan(input);
+      case 'session-acl-apply':
+        return this.aclApply(input);
+      case 'session-acl-recovery-readiness':
+        return this.aclRecoveryReadiness(input);
+      case 'session-acl-recovery-apply':
+        return this.aclRecoveryApply(input);
       case 'session-import':
         return this.import(input);
       case 'session-recovery-readiness':
@@ -3978,6 +4493,8 @@ async function selfTest() {
     permission_editor_protocol: true,
     existing_acl_viewer_protocol: true,
     existing_acl_dry_run_protocol: true,
+    existing_acl_additive_apply_protocol: true,
+    existing_acl_recovery_protocol: true,
     secrets_serialized: false,
   };
 }

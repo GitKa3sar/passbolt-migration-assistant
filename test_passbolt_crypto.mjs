@@ -228,6 +228,16 @@ async function main() {
   const groupRecipientPublicKey = await openpgp.readKey({ armoredKey: groupRecipientGenerated.publicKey });
   const metadataPrivateKey = await openpgp.readPrivateKey({ armoredKey: metadataGenerated.privateKey });
   const metadataPublicKey = await openpgp.readKey({ armoredKey: metadataGenerated.publicKey });
+  const existingResourceClearSecret = JSON.stringify({
+    password: 'existing-resource-password',
+    description: 'existing resource description',
+  });
+  const existingResourceSecret = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: existingResourceClearSecret }),
+    encryptionKeys: userPublicKey,
+    signingKeys: userPrivateKey,
+    format: 'armored',
+  });
   const serverFingerprint = serverPublicKey.getFingerprint().toUpperCase();
   const userFingerprint = userPublicKey.getFingerprint().toUpperCase();
   const directRecipientFingerprint = directRecipientPublicKey.getFingerprint().toUpperCase();
@@ -454,11 +464,12 @@ async function main() {
         return;
       }
       if (request.method === 'GET' && url.pathname === '/share/search-aros.json') {
+        const rotatedGroupRecipientKey = shareDirectoryMode === 'rotated-group-key';
         const groupRecipientGpgKey = shareDirectoryMode === 'missing-key' ? null : {
           id: 'group-recipient-gpg-key-id',
           user_id: 'group-recipient-id',
-          armored_key: groupRecipientGenerated.publicKey,
-          fingerprint: groupRecipientFingerprint,
+          armored_key: rotatedGroupRecipientKey ? directRecipientGenerated.publicKey : groupRecipientGenerated.publicKey,
+          fingerprint: rotatedGroupRecipientKey ? directRecipientFingerprint : groupRecipientFingerprint,
           deleted: false,
           expires: null,
         };
@@ -541,23 +552,34 @@ async function main() {
               aro: 'User',
               aro_foreign_key: 'user-id',
               type: 15,
-            }, ...(resourceAclMode === 'shared' ? [{
+            }, ...(['shared', 'direct'].includes(resourceAclMode) ? [{
               id: 'resource-direct-permission-id',
               aco: 'Resource',
               aco_foreign_key: 'existing-resource-id',
               aro: 'User',
               aro_foreign_key: 'direct-recipient-id',
               type: 1,
-            }, {
+            }, ...(resourceAclMode === 'shared' ? [{
               id: 'resource-group-permission-id',
               aco: 'Resource',
               aco_foreign_key: 'existing-resource-id',
               aro: 'Group',
               aro_foreign_key: 'shared-group-id',
               type: 7,
-            }] : [])],
+            }] : []),
+            ] : []),
+            ],
           }),
         }]));
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/secrets/resource/existing-resource-id.json') {
+        send(response, 200, apiSuccess({
+          id: 'existing-resource-secret-id',
+          user_id: 'user-id',
+          resource_id: 'existing-resource-id',
+          data: existingResourceSecret,
+        }));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/folders.json') {
@@ -763,6 +785,15 @@ async function main() {
       }
       if (request.method === 'POST' && url.pathname.startsWith('/share/simulate/resource/')) {
         sharedSimulationPayload = await requestJson(request);
+        if (url.pathname === '/share/simulate/resource/existing-resource-id.json') {
+          assert.equal(sharedSimulationPayload.permissions.length, 1);
+          assert.equal(sharedSimulationPayload.permissions[0].aro_foreign_key, 'direct-recipient-id');
+          assert.equal(sharedSimulationPayload.permissions[0].is_new, true);
+          send(response, 200, apiSuccess({
+            changes: { added: [{ User: { id: 'direct-recipient-id' } }], removed: [] },
+          }));
+          return;
+        }
         assertNewPermissionMarkers(sharedSimulationPayload);
         assert.equal(sharedSimulationPayload.permissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === 'direct-recipient-id'), true);
         assert.equal(sharedSimulationPayload.permissions.some((permission) => permission.aro === 'Group' && permission.aro_foreign_key === 'shared-group-id'), true);
@@ -776,6 +807,15 @@ async function main() {
       }
       if (request.method === 'POST' && url.pathname.startsWith('/share/simulate/folder/')) {
         folderShareSimulationRequestCount += 1;
+        if (url.pathname === '/share/simulate/folder/folder-shared-id.json') {
+          const payload = await requestJson(request);
+          assert.equal(payload.permissions.length, 1);
+          assert.equal(payload.permissions[0].id, 'folder-direct-permission-id');
+          assert.equal(payload.permissions[0].type, 7);
+          assert.equal(Object.hasOwn(payload.permissions[0], 'delete'), false);
+          send(response, 200, apiSuccess({ changes: { added: [], removed: [] } }));
+          return;
+        }
         send(response, 404, apiError('Not Found'));
         return;
       }
@@ -783,6 +823,14 @@ async function main() {
         sharedFolderApplyPayload = await requestJson(request);
         if (folderShareApplyMode === 'failure') {
           send(response, 400, apiError('Mock folder sharing failure.'));
+          return;
+        }
+        if (url.pathname === '/share/folder/folder-shared-id.json') {
+          assert.equal(sharedFolderApplyPayload.permissions.length, 1);
+          assert.equal(sharedFolderApplyPayload.permissions[0].id, 'folder-direct-permission-id');
+          assert.equal(sharedFolderApplyPayload.permissions[0].type, 7);
+          sharedFolderPermissionMode = 'changed';
+          send(response, 200, apiSuccess(null));
           return;
         }
         assertNewPermissionMarkers(sharedFolderApplyPayload);
@@ -794,6 +842,23 @@ async function main() {
         sharedApplyPayload = await requestJson(request);
         if (shareApplyMode === 'failure') {
           send(response, 400, apiError('Mock sharing failure.'));
+          return;
+        }
+        if (url.pathname === '/share/resource/existing-resource-id.json') {
+          assert.equal(sharedApplyPayload.permissions.length, 1);
+          assert.equal(sharedApplyPayload.permissions[0].is_new, true);
+          assert.equal(sharedApplyPayload.secrets.length, 1);
+          assert.equal(sharedApplyPayload.secrets[0].user_id, 'direct-recipient-id');
+          const decrypted = await openpgp.decrypt({
+            message: await openpgp.readMessage({ armoredMessage: sharedApplyPayload.secrets[0].data }),
+            decryptionKeys: directRecipientPrivateKey,
+            verificationKeys: userPublicKey,
+            format: 'utf8',
+          });
+          await Promise.all(decrypted.signatures.map((signature) => signature.verified));
+          assert.equal(decrypted.data, existingResourceClearSecret);
+          resourceAclMode = 'direct';
+          send(response, 200, apiSuccess(null));
           return;
         }
         assert.equal(sharedApplyPayload.secrets.length, 2);
@@ -1832,6 +1897,22 @@ async function main() {
     assert.match(changedAclPlan.object_state_digest, /^[0-9a-f]{64}$/);
     assert.match(changedAclPlan.desired_acl_digest, /^[0-9a-f]{64}$/);
     assert.match(changedAclPlan.plan_digest, /^[0-9a-f]{64}$/);
+    assert.equal(changedAclPlan.additive_apply_available, false);
+    assert.equal(changedAclPlan.restrictive_changes_blocked, 1);
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-apply',
+        session_id: 'persistent-test-session',
+        acl_batch_id: '11111111-1111-4111-8111-111111111111',
+        plan_id: changedAclPlan.plan_id,
+        object_state_digest: changedAclPlan.object_state_digest,
+        desired_acl_digest: changedAclPlan.desired_acl_digest,
+        directory_state_digest: changedAclPlan.directory_state_digest,
+        plan_digest: changedAclPlan.plan_digest,
+        confirmation: '',
+      }),
+      (error) => error?.code === 'ACL_APPLY_RESTRICTIVE_BLOCKED',
+    );
     const repeatedAclPlan = await persistentWorker.dispatch({
       command: 'session-acl-plan',
       session_id: 'persistent-test-session',
@@ -1894,16 +1975,136 @@ async function main() {
     assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
     assert.equal(JSON.stringify(changedAclPlan).includes('BEGIN PGP'), false);
     assert.equal(JSON.stringify(changedAclPlan).includes('fingerprint'), false);
+    const additiveProgressStart = persistentProgress.length;
+    const additiveFolderPlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'folder',
+      object_id: 'folder-shared-id',
+      desired_permissions: [
+        { aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 7 },
+        { aro: 'Group', aro_foreign_key: 'shared-group-id', type: 7 },
+      ],
+    });
+    assert.equal(additiveFolderPlan.additive_apply_available, true);
+    assert.equal(additiveFolderPlan.counts.upgrade, 1);
+    assert.match(additiveFolderPlan.confirmation_required, /^APPLICA ACL 1 [0-9A-F]{8}$/);
+    assert.match(additiveFolderPlan.directory_state_digest, /^[0-9a-f]{64}$/);
+    const mutationCountBeforeDirectoryChange = authenticatedMutationCount;
+    shareDirectoryMode = 'rotated-group-key';
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-apply',
+        session_id: 'persistent-test-session',
+        acl_batch_id: '22222222-2222-4222-8222-222222222222',
+        plan_id: additiveFolderPlan.plan_id,
+        object_state_digest: additiveFolderPlan.object_state_digest,
+        desired_acl_digest: additiveFolderPlan.desired_acl_digest,
+        directory_state_digest: additiveFolderPlan.directory_state_digest,
+        plan_digest: additiveFolderPlan.plan_digest,
+        confirmation: additiveFolderPlan.confirmation_required,
+      }),
+      (error) => error?.code === 'ACL_APPLY_STALE_PLAN',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeDirectoryChange);
+    shareDirectoryMode = 'valid';
+    const appliedFolderAcl = await persistentWorker.dispatch({
+      command: 'session-acl-apply',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '22222222-2222-4222-8222-222222222222',
+      plan_id: additiveFolderPlan.plan_id,
+      object_state_digest: additiveFolderPlan.object_state_digest,
+      desired_acl_digest: additiveFolderPlan.desired_acl_digest,
+      directory_state_digest: additiveFolderPlan.directory_state_digest,
+      plan_digest: additiveFolderPlan.plan_digest,
+      confirmation: additiveFolderPlan.confirmation_required,
+    });
+    assert.equal(appliedFolderAcl.complete, true);
+    assert.equal(appliedFolderAcl.permission_change_count, 1);
+    assert.equal(appliedFolderAcl.added_user_count, 0);
+    assert.equal(appliedFolderAcl.destructive_actions_performed, false);
+    assert.deepEqual(
+      persistentProgress.slice(additiveProgressStart).map((entry) => entry.event_type),
+      ['acl_operation_intent', 'acl_operation_applied', 'acl_batch_completed'],
+    );
+    const mutationCountBeforeAclRecovery = authenticatedMutationCount;
+    const aclRecoveryProgressStart = persistentProgress.length;
+    const aclRecoveryReadiness = await persistentWorker.dispatch({
+      command: 'session-acl-recovery-readiness',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '22222222-2222-4222-8222-222222222222',
+      acl_recovery_state: {
+        batch_id: '22222222-2222-4222-8222-222222222222',
+        object_type: 'folder',
+        object_id: 'folder-shared-id',
+        object_state_digest: additiveFolderPlan.object_state_digest,
+        desired_acl_digest: additiveFolderPlan.desired_acl_digest,
+        plan_digest: additiveFolderPlan.plan_digest,
+        desired_permissions: additiveFolderPlan.desired_permissions,
+        change_count: additiveFolderPlan.change_count,
+        add_count: additiveFolderPlan.counts.add,
+        upgrade_count: additiveFolderPlan.counts.upgrade,
+      },
+    });
+    assert.equal(aclRecoveryReadiness.resolution, 'remote_success');
+    assert.equal(aclRecoveryReadiness.retry_write_required, false);
+    assert.match(aclRecoveryReadiness.confirmation_required, /^CHIUDI ACL [0-9A-F]{8}$/);
+    const recoveredFolderAcl = await persistentWorker.dispatch({
+      command: 'session-acl-recovery-apply',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '22222222-2222-4222-8222-222222222222',
+      recovery_id: aclRecoveryReadiness.recovery_id,
+      recovery_plan_digest: aclRecoveryReadiness.recovery_plan_digest,
+      confirmation: aclRecoveryReadiness.confirmation_required,
+    });
+    assert.equal(recoveredFolderAcl.remote_write_performed, false);
+    assert.equal(recoveredFolderAcl.complete, true);
+    assert.equal(authenticatedMutationCount, mutationCountBeforeAclRecovery);
+    assert.deepEqual(
+      persistentProgress.slice(aclRecoveryProgressStart).map((entry) => entry.event_type),
+      ['acl_recovery_verified', 'acl_batch_completed'],
+    );
+    resourceAclMode = 'owner';
+    const additiveResourcePlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [
+        { aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 1 },
+      ],
+    });
+    const resourceAclProgressStart = persistentProgress.length;
+    const appliedResourceAcl = await persistentWorker.dispatch({
+      command: 'session-acl-apply',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '33333333-3333-4333-8333-333333333333',
+      plan_id: additiveResourcePlan.plan_id,
+      object_state_digest: additiveResourcePlan.object_state_digest,
+      desired_acl_digest: additiveResourcePlan.desired_acl_digest,
+      directory_state_digest: additiveResourcePlan.directory_state_digest,
+      plan_digest: additiveResourcePlan.plan_digest,
+      confirmation: additiveResourcePlan.confirmation_required,
+    });
+    assert.equal(appliedResourceAcl.permission_change_count, 1);
+    assert.equal(appliedResourceAcl.added_user_count, 1);
+    assert.equal(resourceAclMode, 'direct');
+    assert.deepEqual(
+      persistentProgress.slice(resourceAclProgressStart).map((entry) => entry.event_type),
+      ['acl_operation_intent', 'acl_operation_applied', 'acl_batch_completed'],
+    );
+    assert.equal(JSON.stringify(persistentProgress).includes('existing-resource-password'), false);
     folderMode = 'v4';
     resourceAclMode = 'none';
     existingResourceFolderId = 'folder-alpha-id';
+    const mutationCountBeforeIncompleteAclCatalog = authenticatedMutationCount;
     const incompleteAclCatalog = await persistentWorker.dispatch({
       command: 'session-acl-catalog',
       session_id: 'persistent-test-session',
     });
     assert.equal(incompleteAclCatalog.warning_count, 2);
     assert.equal(incompleteAclCatalog.objects.every((entry) => entry.inspection_status === 'incomplete' && entry.warnings.length > 0), true);
-    assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
+    assert.equal(authenticatedMutationCount, mutationCountBeforeIncompleteAclCatalog);
     await assert.rejects(
       persistentWorker.dispatch({
         command: 'session-acl-plan',
@@ -2050,6 +2251,7 @@ async function main() {
     assert.equal(secondPersistentReadiness.authentication, 'GPGAuth + TOTP');
     assert.equal(completedLoginCount, loginCountBeforePersistentRequests);
     const persistentBatchId = 'd688ad13-eef7-4ee4-89ce-13f574fbcfaa';
+    const persistentImportProgressStart = persistentProgress.length;
     const persistentImport = await persistentWorker.import({
       command: 'session-import',
       session_id: 'persistent-test-session',
@@ -2068,11 +2270,11 @@ async function main() {
     });
     assert.equal(persistentImport.complete, true);
     assert.deepEqual(
-      persistentProgress.map((envelope) => envelope.event_type),
+      persistentProgress.slice(persistentImportProgressStart).map((envelope) => envelope.event_type),
       ['operation_intent', 'resource_created', 'batch_completed'],
     );
     assert.equal(persistentProgress.every((envelope) => envelope.type === 'progress'), true);
-    assert.equal(persistentProgress.every((envelope) => envelope.batch_id === persistentBatchId), true);
+    assert.equal(persistentProgress.slice(persistentImportProgressStart).every((envelope) => envelope.batch_id === persistentBatchId), true);
     assert.equal(JSON.stringify(persistentProgress).includes('mock-resource-password'), false);
     const verifiedRecoveryBatchId = 'e7553061-fc00-4a2e-a84f-fabef14ac16e';
     const verifiedRecoveryState = {
@@ -2187,6 +2389,9 @@ async function main() {
         authenticated_permission_catalog: true,
         existing_acl_readonly_viewer: true,
         existing_acl_readonly_dry_run: true,
+        existing_acl_additive_apply: true,
+        existing_acl_resource_secret_reencryption: true,
+        existing_acl_idempotent_recovery: true,
         custom_permission_editor_plan: true,
         custom_permissions_bound_to_new_objects: true,
         current_owner_permission_immutable: true,

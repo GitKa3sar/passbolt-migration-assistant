@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.15.1"
+        Title="Passbolt Migration Assistant - v0.16.0"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -523,8 +523,8 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="150" /><ColumnDefinition Width="240" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="Visualizzatore e dry-run ACL in sola lettura" FontWeight="SemiBold" Foreground="#1F2933" />
-                                        <TextBlock Text="Consulta i permessi esistenti e simula una ACL desiderata. Il piano confronta prima/dopo ma non invia richieste di modifica a Passbolt." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                                        <TextBlock Text="Permessi degli oggetti esistenti" FontWeight="SemiBold" Foreground="#1F2933" />
+                                        <TextBlock Text="Consulta e simula una ACL desiderata. Sono applicabili soltanto aggiunte e aumenti di livello; riduzioni e revoche restano bloccate." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <ComboBox x:Name="AclTypeFilter" Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0" ToolTip="Filtra per tipo di oggetto">
                                         <ComboBoxItem Content="Tutti gli oggetti" Tag="all" />
@@ -566,7 +566,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                                     </DataGrid.Columns>
                                                 </DataGrid>
                                             </TabItem>
-                                            <TabItem Header="Piano read-only">
+                                            <TabItem Header="Piano e applicazione">
                                                 <Grid Margin="8">
                                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                                     <TextBlock x:Name="AclPlanSummary" Text="Nessun piano calcolato. Seleziona un oggetto verificato di cui sei Proprietario." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,8" />
@@ -586,10 +586,13 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                 </Grid>
                             </Grid>
                             <Grid Grid.Row="2" Margin="0,12,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="225" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Button x:Name="AclBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
                                 <TextBlock x:Name="AclViewerStatus" Grid.Column="1" Text="Avvia la sessione sicura, quindi leggi i permessi esistenti." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
-                                <Button x:Name="AclPlanButton" Grid.Column="2" Content="Simula modifica..." Style="{StaticResource PrimaryButton}" IsEnabled="False" />
+                                <TextBox x:Name="AclConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase di conferma mostrata nel piano" Margin="6,0" />
+                                <Button x:Name="AclPlanButton" Grid.Column="3" Content="Simula modifica..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
+                                <Button x:Name="ApplyAclButton" Grid.Column="4" Content="Applica ACL" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
+                                <Button x:Name="RecoverAclButton" Grid.Column="5" Content="Recupera ACL..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
                             </Grid>
                         </Grid>
                     </TabItem>
@@ -720,6 +723,9 @@ $AclPlanSummary = Get-Control "AclPlanSummary"
 $AclPlanGrid = Get-Control "AclPlanGrid"
 $AclViewerStatus = Get-Control "AclViewerStatus"
 $AclPlanButton = Get-Control "AclPlanButton"
+$AclConfirmation = Get-Control "AclConfirmation"
+$ApplyAclButton = Get-Control "ApplyAclButton"
+$RecoverAclButton = Get-Control "RecoverAclButton"
 $AclBackButton = Get-Control "AclBackButton"
 
 $script:ConnectionVerified = $false
@@ -1850,6 +1856,29 @@ function Reset-AclPlan([string]$Message = "Nessun piano calcolato. Seleziona un 
     $AclPlanSummary.Text = $Message
     $AclPlanSummary.ToolTip = $null
     $AclDetailTabs.SelectedIndex = 0
+    $AclConfirmation.Text = ""
+    $AclConfirmation.IsEnabled = $false
+    $ApplyAclButton.IsEnabled = $false
+    $ApplyAclButton.ToolTip = "Calcolare prima un piano ACL additivo."
+}
+
+function Update-AclApplyActionState {
+    $Active = Test-ImportSessionActive
+    $RecoverAclButton.IsEnabled = $Active
+    $Eligible = $Active -and $null -ne $script:AclPlan -and [bool]$script:AclPlan.additive_apply_available
+    $AclConfirmation.IsEnabled = $Eligible
+    if (-not $Eligible) {
+        $ApplyAclButton.IsEnabled = $false
+        if ($null -ne $script:AclPlan -and [int]$script:AclPlan.restrictive_changes_blocked -gt 0) {
+            $ApplyAclButton.ToolTip = "Il piano contiene riduzioni o revoche, escluse da questa fase."
+        } else {
+            $ApplyAclButton.ToolTip = "Il piano non contiene modifiche additive applicabili."
+        }
+        return
+    }
+    $Required = [string]$script:AclPlan.confirmation_required
+    $ApplyAclButton.IsEnabled = ([string]$AclConfirmation.Text -ceq $Required)
+    $ApplyAclButton.ToolTip = "Conferma richiesta: $Required"
 }
 
 function Update-AclPlanActionState {
@@ -1975,6 +2004,7 @@ function Update-AclViewerState {
         $AclViewerStatus.Text = "Sessione attiva. Seleziona Leggi permessi per caricare il catalogo read-only."
     }
     Update-AclPlanActionState
+    Update-AclApplyActionState
 }
 
 function Set-AclPlanResult($Result) {
@@ -2005,8 +2035,15 @@ function Set-AclPlanResult($Result) {
     $Counts = $Result.counts
     $NoChanges = if ([int]$Result.change_count -eq 0) { " Nessuna modifica rilevata." } else { "" }
     $AclPlanSummary.Text = "Piano read-only: $([int]$Result.change_count) modifiche; aggiunte $([int]$Counts.add), aumenti $([int]$Counts.upgrade), riduzioni $([int]$Counts.downgrade), revoche $([int]$Counts.revoke), invariate $([int]$Counts.unchanged). Azioni sensibili: $([int]$Result.sensitive_action_count).$NoChanges`nDigest snapshot: $([string]$Result.object_state_digest)`nDigest piano: $([string]$Result.plan_digest)"
-    $AclPlanSummary.ToolTip = "Digest ACL desiderata: $([string]$Result.desired_acl_digest)`nID piano volatile: $([string]$Result.plan_id)"
+    if ([bool]$Result.additive_apply_available) {
+        $AclPlanSummary.Text += "`nOperazione applicabile. Conferma richiesta: $([string]$Result.confirmation_required)"
+    } elseif ([int]$Result.restrictive_changes_blocked -gt 0) {
+        $AclPlanSummary.Text += "`nApplicazione bloccata: il piano contiene riduzioni o revoche."
+    }
+    $AclPlanSummary.ToolTip = "Digest ACL desiderata: $([string]$Result.desired_acl_digest)`nDigest directory verificata: $([string]$Result.directory_state_digest)`nID piano volatile: $([string]$Result.plan_id)"
+    $AclConfirmation.Text = ""
     $AclDetailTabs.SelectedIndex = 1
+    Update-AclApplyActionState
 }
 
 function Invoke-AclDryRun {
@@ -2057,6 +2094,202 @@ function Invoke-AclDryRun {
         [System.Windows.MessageBox]::Show($_.Exception.Message, "Piano ACL non disponibile", "OK", "Error") | Out-Null
     } finally {
         Update-AclPlanActionState
+    }
+}
+
+function Invoke-ConfirmedAclApply {
+    Update-AclApplyActionState
+    if (-not $ApplyAclButton.IsEnabled -or $null -eq $script:AclPlan) {
+        [System.Windows.MessageBox]::Show([string]$ApplyAclButton.ToolTip, "Applicazione ACL non disponibile", "OK", "Warning") | Out-Null
+        return
+    }
+    $Plan = $script:AclPlan
+    $ApplyAclButton.IsEnabled = $false
+    $AclPlanButton.IsEnabled = $false
+    $AclConfirmation.IsEnabled = $false
+    $AclViewerStatus.Text = "Rilettura dello stato remoto e applicazione ACL additiva in corso..."
+    Add-Activity "Avvio applicazione ACL additiva vincolata al piano $([string]$Plan.plan_digest)."
+    Update-Ui
+    $CloseSessionForError = $false
+    $Envelope = $null
+    try {
+        $Envelope = Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+            command = "session-acl-apply"
+            session_id = $script:ImportSessionId
+            plan_id = [string]$Plan.plan_id
+            object_state_digest = [string]$Plan.object_state_digest
+            desired_acl_digest = [string]$Plan.desired_acl_digest
+            directory_state_digest = [string]$Plan.directory_state_digest
+            plan_digest = [string]$Plan.plan_digest
+            confirmation = [string]$AclConfirmation.Text
+        }) 180000
+        if (-not [bool]$Envelope.ok) {
+            $CloseSessionForError = Test-TerminalImportSessionError $Envelope
+            throw (Get-SecureErrorMessage $Envelope)
+        }
+        $Result = $Envelope.result
+        Add-Activity "ACL applicata: $([int]$Result.permission_change_count) modifiche di permesso, $([int]$Result.added_user_count) nuove copie cifrate. Journal $([string]$Result.acl_batch_id) completato."
+        [System.Windows.MessageBox]::Show(
+            "ACL applicata correttamente.`n`nModifiche inviate: $([int]$Result.permission_change_count)`nNuovi destinatari del segreto: $([int]$Result.added_user_count)`nJournal: $([string]$Result.acl_batch_id)",
+            "ACL applicata",
+            "OK",
+            "Information"
+        ) | Out-Null
+        Refresh-ExistingAclCatalog
+    } catch {
+        $BatchId = if ($null -ne $Envelope -and $null -ne $Envelope.error -and $null -ne $Envelope.error.details) { [string]$Envelope.error.details.acl_batch_id } else { "" }
+        Reset-AclPlan "Applicazione ACL non completata. Non ripetere il dry-run: usare Recupera ACL per verificare lo stato remoto."
+        $AclViewerStatus.Text = "Applicazione ACL non completata: $($_.Exception.Message)"
+        Add-Activity "Applicazione ACL non completata. Journal da verificare: $BatchId. $($_.Exception.Message)"
+        if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
+            Stop-ImportSession "" $false
+        }
+        $JournalText = if ($BatchId) { "`n`nJournal ACL: $BatchId`nUsare Recupera ACL prima di qualsiasi nuovo tentativo." } else { "" }
+        [System.Windows.MessageBox]::Show("$($_.Exception.Message)$JournalText", "Applicazione ACL non completata", "OK", "Error") | Out-Null
+    } finally {
+        Update-AclPlanActionState
+        Update-AclApplyActionState
+    }
+}
+
+function Select-AclRecoveryBatch($Batches) {
+    $Rows = @($Batches)
+    if ($Rows.Count -eq 0) { return $null }
+    if ($Rows.Count -eq 1) { return $Rows[0] }
+    $Dialog = New-Object System.Windows.Forms.Form
+    $Dialog.Text = "Seleziona journal ACL"
+    $Dialog.StartPosition = "CenterParent"
+    $Dialog.Width = 760
+    $Dialog.Height = 390
+    $Dialog.MinimizeBox = $false
+    $Dialog.MaximizeBox = $false
+    $Dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $Label = New-Object System.Windows.Forms.Label
+    $Label.Text = "Seleziona il journal da verificare. Data, tipo, ID oggetto e numero modifiche sono dati tecnici locali."
+    $Label.AutoSize = $false
+    $Label.Left = 12; $Label.Top = 12; $Label.Width = 720; $Label.Height = 38
+    $List = New-Object System.Windows.Forms.ListBox
+    $List.Left = 12; $List.Top = 54; $List.Width = 720; $List.Height = 235
+    foreach ($Batch in $Rows) {
+        $When = if ($Batch.recorded_at) { [string]$Batch.recorded_at } else { "data non disponibile" }
+        $Display = "$When | $([string]$Batch.object_type) | $([string]$Batch.object_id) | $([int]$Batch.change_count) modifiche | $([string]$Batch.batch_id)"
+        [void]$List.Items.Add([pscustomobject]@{ Display = $Display; Raw = $Batch })
+    }
+    $List.DisplayMember = "Display"
+    $List.SelectedIndex = 0
+    $Ok = New-Object System.Windows.Forms.Button
+    $Ok.Text = "Verifica"; $Ok.Left = 552; $Ok.Top = 305; $Ok.Width = 85
+    $Ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $Cancel = New-Object System.Windows.Forms.Button
+    $Cancel.Text = "Annulla"; $Cancel.Left = 647; $Cancel.Top = 305; $Cancel.Width = 85
+    $Cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $Dialog.Controls.AddRange(@($Label, $List, $Ok, $Cancel))
+    $Dialog.AcceptButton = $Ok; $Dialog.CancelButton = $Cancel
+    try {
+        if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK -or $null -eq $List.SelectedItem) { return $null }
+        return $List.SelectedItem.Raw
+    } finally {
+        $Dialog.Dispose()
+    }
+}
+
+function Read-AclRecoveryConfirmation([string]$Message, [string]$Required) {
+    $Dialog = New-Object System.Windows.Forms.Form
+    $Dialog.Text = "Conferma recupero ACL"
+    $Dialog.StartPosition = "CenterParent"
+    $Dialog.Width = 640; $Dialog.Height = 245
+    $Dialog.MinimizeBox = $false; $Dialog.MaximizeBox = $false
+    $Dialog.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+    $Label = New-Object System.Windows.Forms.Label
+    $Label.Text = "$Message`r`n`r`nDigitare esattamente: $Required"
+    $Label.Left = 12; $Label.Top = 12; $Label.Width = 600; $Label.Height = 105
+    $Input = New-Object System.Windows.Forms.TextBox
+    $Input.Left = 12; $Input.Top = 122; $Input.Width = 600
+    $Ok = New-Object System.Windows.Forms.Button
+    $Ok.Text = "Continua"; $Ok.Left = 432; $Ok.Top = 158; $Ok.Width = 85
+    $Ok.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $Cancel = New-Object System.Windows.Forms.Button
+    $Cancel.Text = "Annulla"; $Cancel.Left = 527; $Cancel.Top = 158; $Cancel.Width = 85
+    $Cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $Dialog.Controls.AddRange(@($Label, $Input, $Ok, $Cancel))
+    $Dialog.AcceptButton = $Ok; $Dialog.CancelButton = $Cancel
+    try {
+        if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+        return [string]$Input.Text
+    } finally {
+        $Dialog.Dispose()
+    }
+}
+
+function Invoke-AclRecovery {
+    if (-not (Test-ImportSessionActive)) {
+        [System.Windows.MessageBox]::Show("Avviare prima la sessione sicura Passbolt.", "Sessione non attiva", "OK", "Warning") | Out-Null
+        return
+    }
+    try {
+        $ListEnvelope = Invoke-PythonJson $ImportScript @("--acl-reconciliation-list")
+        if (-not [bool]$ListEnvelope.ok) { throw (Get-SecureErrorMessage $ListEnvelope) }
+    } catch {
+        Add-Activity "Elenco journal ACL non disponibile: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Journal ACL non disponibili", "OK", "Error") | Out-Null
+        return
+    }
+    $Pending = @($ListEnvelope.result.batches | Where-Object { [string]$_.status -eq "recovery_required" })
+    if ($Pending.Count -eq 0) {
+        [System.Windows.MessageBox]::Show("Non risultano journal ACL recuperabili. I journal completi, troncati o corrotti non vengono applicati automaticamente.", "Nessun recupero ACL", "OK", "Information") | Out-Null
+        return
+    }
+    $Selected = Select-AclRecoveryBatch $Pending
+    if ($null -eq $Selected) { return }
+    $BatchId = [string]$Selected.batch_id
+    $RecoverAclButton.IsEnabled = $false
+    $AclViewerStatus.Text = "Verifica autenticata del journal ACL $BatchId in corso..."
+    Add-Activity "Avvio verifica idempotente del journal ACL $BatchId."
+    Update-Ui
+    $Readiness = $null
+    try {
+        $ReadinessEnvelope = Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+            command = "session-acl-recovery-readiness"
+            session_id = $script:ImportSessionId
+            acl_batch_id = $BatchId
+        }) 180000
+        if (-not [bool]$ReadinessEnvelope.ok) { throw (Get-SecureErrorMessage $ReadinessEnvelope) }
+        $Readiness = $ReadinessEnvelope.result
+        $ResolutionText = if ([string]$Readiness.resolution -eq "remote_success") {
+            "Passbolt contiene già la ACL attesa. Non verrà inviata alcuna scrittura; il journal sarà soltanto chiuso."
+        } else {
+            "Passbolt contiene ancora esattamente lo snapshot originale. Verranno ripetute soltanto le modifiche additive verificate."
+        }
+        $Confirmation = Read-AclRecoveryConfirmation $ResolutionText ([string]$Readiness.confirmation_required)
+        if ($null -eq $Confirmation) {
+            [void](Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+                command = "session-acl-recovery-cancel"
+                session_id = $script:ImportSessionId
+                acl_batch_id = $BatchId
+            }) 30000)
+            $AclViewerStatus.Text = "Recupero ACL annullato dopo la verifica; nessuna scrittura applicata."
+            return
+        }
+        $ApplyEnvelope = Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+            command = "session-acl-recovery-apply"
+            session_id = $script:ImportSessionId
+            acl_batch_id = $BatchId
+            recovery_id = [string]$Readiness.recovery_id
+            recovery_plan_digest = [string]$Readiness.recovery_plan_digest
+            confirmation = $Confirmation
+        }) 180000
+        if (-not [bool]$ApplyEnvelope.ok) { throw (Get-SecureErrorMessage $ApplyEnvelope) }
+        $Result = $ApplyEnvelope.result
+        $WriteText = if ([bool]$Result.remote_write_performed) { "La modifica additiva è stata applicata." } else { "La modifica risultava già applicata; non è stata inviata alcuna scrittura." }
+        Add-Activity "Journal ACL $BatchId riconciliato: $([string]$Result.resolution)."
+        [System.Windows.MessageBox]::Show("$WriteText`n`nJournal chiuso: $BatchId", "Recupero ACL completato", "OK", "Information") | Out-Null
+        Refresh-ExistingAclCatalog
+    } catch {
+        $AclViewerStatus.Text = "Recupero ACL non riuscito: $($_.Exception.Message)"
+        Add-Activity "Recupero ACL $BatchId non riuscito: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Recupero ACL non completato", "OK", "Error") | Out-Null
+    } finally {
+        Update-AclApplyActionState
     }
 }
 
@@ -3185,7 +3418,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.15.1", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.16.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4104,6 +4337,9 @@ $VerifyRecoveryButton.Add_Click({ Invoke-RecoveryReadiness })
 $ExecuteRecoveryButton.Add_Click({ Invoke-ConfirmedRecovery })
 $RefreshAclButton.Add_Click({ Refresh-ExistingAclCatalog })
 $AclPlanButton.Add_Click({ Invoke-AclDryRun })
+$AclConfirmation.Add_TextChanged({ Update-AclApplyActionState })
+$ApplyAclButton.Add_Click({ Invoke-ConfirmedAclApply })
+$RecoverAclButton.Add_Click({ Invoke-AclRecovery })
 $AclTypeFilter.Add_SelectionChanged({ Update-AclObjectFilter })
 $AclSearchBox.Add_TextChanged({ Update-AclObjectFilter })
 $AclObjectsGrid.Add_SelectionChanged({ Update-AclPermissionDetail })
@@ -4401,9 +4637,13 @@ for line in sys.stdin:
         plan_id = "acl-plan-probe"
         object_state_digest = ("a" * 64)
         desired_acl_digest = ("b" * 64)
+        directory_state_digest = ("d" * 64)
         plan_digest = ("c" * 64)
         change_count = 1
         sensitive_action_count = 1
+        additive_apply_available = $false
+        restrictive_changes_blocked = 1
+        confirmation_required = $null
         counts = [pscustomobject]@{ add = 0; upgrade = 0; downgrade = 1; revoke = 0; unchanged = 1 }
         object = [pscustomobject]@{ object_type = "folder"; object_id = "acl-folder-probe"; path = "Clienti / Cliente ACL" }
         operations = @([pscustomobject]@{
@@ -4423,6 +4663,9 @@ for line in sys.stdin:
     })
     if ($AclPlanGrid.Items.Count -ne 1 -or $AclDetailTabs.SelectedIndex -ne 1 -or [string]$AclPlanSummary.Text -notmatch "riduzioni 1" -or $null -eq $script:AclPlan) {
         throw "La vista UI del piano ACL read-only non espone il confronto nello stato previsto."
+    }
+    if ($ApplyAclButton.IsEnabled -or $AclConfirmation.IsEnabled -or $null -eq $RecoverAclButton) {
+        throw "I controlli UI di applicazione e recupero ACL non rispettano il blocco delle operazioni restrittive."
     }
     if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
@@ -4463,10 +4706,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.15.1"
+        version = "0.16.0"
         ui = "WPF"
         phases = 4
-        controls = 105
+        controls = 108
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -4477,6 +4720,8 @@ for line in sys.stdin:
         permission_editor_ui = "OK"
         existing_acl_viewer_ui = "OK"
         existing_acl_dry_run_ui = "OK"
+        existing_acl_additive_apply_ui = "OK"
+        existing_acl_recovery_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
         protected_excel_password_prompt = "OK"

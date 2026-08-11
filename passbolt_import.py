@@ -38,6 +38,13 @@ from passbolt_reconciliation import (
     hash_user_identifier,
     read_batch,
 )
+from passbolt_acl_reconciliation import (
+    AclReconciliationJournal,
+    acquire_acl_journal_lease,
+    build_acl_recovery_state,
+    list_acl_batches,
+    read_acl_batch,
+)
 
 from passbolt_review import (
     MAX_FILE_BYTES,
@@ -55,7 +62,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.15.1"
+APP_VERSION = "0.16.0"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -758,6 +765,7 @@ def _session_bridge_request(
     root: str | Path,
     request: dict[str, Any],
     journal_root: str | Path | None = None,
+    acl_journal_root: str | Path | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     command = str(request.get("command", ""))
     if command == "session-open":
@@ -843,6 +851,61 @@ def _session_bridge_request(
                 "object_type": request.get("object_type"),
                 "object_id": request.get("object_id"),
                 "desired_permissions": desired_permissions,
+            },
+            [],
+        )
+    if command == "session-acl-apply":
+        return (
+            {
+                "command": "session-acl-apply",
+                "session_id": request.get("session_id"),
+                "plan_id": request.get("plan_id"),
+                "object_state_digest": request.get("object_state_digest"),
+                "desired_acl_digest": request.get("desired_acl_digest"),
+                "directory_state_digest": request.get("directory_state_digest"),
+                "plan_digest": request.get("plan_digest"),
+                "confirmation": request.get("confirmation"),
+            },
+            [],
+        )
+    if command in {
+        "session-acl-recovery-readiness",
+        "session-acl-recovery-apply",
+    }:
+        try:
+            recovery_state = build_acl_recovery_state(
+                request.get("acl_batch_id"), acl_journal_root
+            )
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "Il journal ACL selezionato non è recuperabile automaticamente."
+            ) from exc
+        return (
+            {
+                "command": command,
+                "session_id": request.get("session_id"),
+                "acl_batch_id": recovery_state["batch_id"],
+                "acl_recovery_state": recovery_state,
+                **(
+                    {
+                        "recovery_id": request.get("recovery_id"),
+                        "recovery_plan_digest": request.get(
+                            "recovery_plan_digest"
+                        ),
+                        "confirmation": request.get("confirmation"),
+                    }
+                    if command == "session-acl-recovery-apply"
+                    else {}
+                ),
+            },
+            [],
+        )
+    if command == "session-acl-recovery-cancel":
+        return (
+            {
+                "command": command,
+                "session_id": request.get("session_id"),
+                "acl_batch_id": request.get("acl_batch_id"),
             },
             [],
         )
@@ -1298,6 +1361,323 @@ class _SessionReconciliationCoordinator:
         return batch_id
 
 
+class _SessionAclCoordinator:
+    """Bind a volatile additive ACL plan to a dedicated durable journal."""
+
+    def __init__(self, journal_root: str | Path | None = None) -> None:
+        self._journal_root = journal_root
+        self._session: dict[str, Any] | None = None
+        self._plan: dict[str, Any] | None = None
+        self._recovery_readiness: dict[str, Any] | None = None
+        self._journal: AclReconciliationJournal | None = None
+        self._lease: ReconciliationJournalLease | None = None
+
+    @property
+    def active_batch_id(self) -> str | None:
+        return self._journal.batch_id if self._journal is not None else None
+
+    @staticmethod
+    def _successful_payload(envelope: Mapping[str, Any]) -> dict[str, Any] | None:
+        payload = envelope.get("result")
+        return payload if envelope.get("ok") is True and isinstance(payload, dict) else None
+
+    def _release_lease(self) -> None:
+        if self._lease is not None:
+            self._lease.close()
+            self._lease = None
+
+    def observe(self, command: str, envelope: Mapping[str, Any]) -> None:
+        payload = self._successful_payload(envelope)
+        if command == "session-open":
+            self._session = dict(payload) if payload is not None else None
+            self._plan = None
+            self._recovery_readiness = None
+        elif command == "session-acl-plan":
+            self._plan = dict(payload) if payload is not None else None
+        elif command == "session-acl-catalog":
+            self._plan = None
+        elif command == "session-close":
+            self._session = None
+            self._plan = None
+            self._recovery_readiness = None
+            self._journal = None
+            self._release_lease()
+
+    def start_apply(
+        self,
+        request: Mapping[str, Any],
+        bridge_request: dict[str, Any],
+    ) -> str:
+        if self._journal is not None or self._lease is not None:
+            raise ImportPreparationError(
+                "Un journal ACL è già attivo; completarlo oppure chiudere la sessione."
+            )
+        if self._session is None or self._plan is None:
+            raise ImportPreparationError(
+                "Calcolare nuovamente il dry-run ACL prima dell’applicazione."
+            )
+        if (
+            str(request.get("session_id", ""))
+            != str(self._session.get("session_id", ""))
+            or str(request.get("session_id", ""))
+            != str(self._plan.get("session_id", ""))
+        ):
+            raise ImportPreparationError("La sessione del piano ACL non corrisponde.")
+        for field in (
+            "plan_id", "object_state_digest", "desired_acl_digest",
+            "directory_state_digest", "plan_digest"
+        ):
+            if str(request.get(field, "")) != str(self._plan.get(field, "")):
+                raise ImportPreparationError(
+                    "La richiesta ACL non corrisponde all’ultimo dry-run."
+                )
+        if self._plan.get("additive_apply_available") is not True:
+            raise ImportPreparationError(
+                "Il piano contiene riduzioni, revoche o nessuna modifica applicabile."
+            )
+        expected_confirmation = str(self._plan.get("confirmation_required", ""))
+        if not expected_confirmation or str(request.get("confirmation", "")) != expected_confirmation:
+            raise ImportPreparationError(
+                f"Conferma richiesta: {expected_confirmation or 'ricalcolare il piano ACL'}"
+            )
+        user = self._session.get("user")
+        target = self._plan.get("object")
+        counts = self._plan.get("counts")
+        desired_permissions = self._plan.get("desired_permissions")
+        if (
+            not isinstance(user, Mapping)
+            or not isinstance(target, Mapping)
+            or not isinstance(counts, Mapping)
+            or not isinstance(desired_permissions, list)
+        ):
+            raise ImportPreparationError("Il piano ACL non contiene le prove necessarie.")
+        try:
+            journal = AclReconciliationJournal.create(
+                app_version=APP_VERSION,
+                server_origin=str(self._session.get("base_url", "")),
+                server_fingerprint=str(self._session.get("server_fingerprint", "")),
+                user_id_hash=hash_user_identifier(str(user.get("id", ""))),
+                object_type=str(target.get("object_type", "")),
+                object_id=str(target.get("object_id", "")),
+                object_state_digest=str(self._plan.get("object_state_digest", "")),
+                desired_acl_digest=str(self._plan.get("desired_acl_digest", "")),
+                plan_digest=str(self._plan.get("plan_digest", "")),
+                desired_permissions=desired_permissions,
+                change_count=int(self._plan.get("change_count", 0)),
+                add_count=int(counts.get("add", 0)),
+                upgrade_count=int(counts.get("upgrade", 0)),
+                root=self._journal_root,
+            )
+            lease = acquire_acl_journal_lease(journal)
+        except (ReconciliationJournalError, TypeError, ValueError) as exc:
+            raise ImportPreparationError(
+                "Impossibile inizializzare il journal locale della modifica ACL."
+            ) from exc
+        self._journal = journal
+        self._lease = lease
+        bridge_request["acl_batch_id"] = journal.batch_id
+        return journal.batch_id
+
+    def persist_progress(self, envelope: Mapping[str, Any]) -> None:
+        if set(envelope) != {"type", "batch_id", "event_type", "payload"}:
+            raise ReconciliationJournalError("Struttura dell’evento ACL non valida.")
+        if envelope.get("type") != "progress" or self._journal is None:
+            raise ReconciliationJournalError("Evento ACL fuori da un’applicazione attiva.")
+        if str(envelope.get("batch_id", "")).strip().lower() != self._journal.batch_id:
+            raise ReconciliationJournalError("L’evento appartiene a un altro journal ACL.")
+        event_type = str(envelope.get("event_type", "")).strip()
+        payload = envelope.get("payload")
+        if not event_type or not isinstance(payload, Mapping):
+            raise ReconciliationJournalError("Contenuto dell’evento ACL non valido.")
+        self._journal.append(event_type, **dict(payload))
+
+    def _validate_recovery_identity(
+        self, request: Mapping[str, Any], bridge_request: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        if self._session is None:
+            raise ImportPreparationError(
+                "Avviare prima una sessione Passbolt autenticata."
+            )
+        if str(request.get("session_id", "")) != str(
+            self._session.get("session_id", "")
+        ):
+            raise ImportPreparationError(
+                "La sessione Passbolt non corrisponde al recupero ACL."
+            )
+        state = bridge_request.get("acl_recovery_state")
+        user = self._session.get("user")
+        if not isinstance(state, Mapping) or not isinstance(user, Mapping):
+            raise ImportPreparationError(
+                "Il contesto autenticato del recupero ACL non è disponibile."
+            )
+        try:
+            user_hash = hash_user_identifier(str(user.get("id", "")))
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError("L’identità Passbolt non è valida.") from exc
+        if (
+            str(state.get("server_origin", "")).rstrip("/").casefold()
+            != str(self._session.get("base_url", "")).rstrip("/").casefold()
+            or str(state.get("server_fingerprint", "")).upper()
+            != str(self._session.get("server_fingerprint", "")).upper()
+            or str(state.get("user_id_hash", "")) != user_hash
+        ):
+            raise ImportPreparationError(
+                "Server, fingerprint o utente non corrispondono al journal ACL."
+            )
+        return state
+
+    def start_recovery_readiness(
+        self, request: Mapping[str, Any], bridge_request: dict[str, Any]
+    ) -> str:
+        if self._journal is not None or self._lease is not None:
+            raise ImportPreparationError(
+                "Un journal ACL è già attivo in questa sessione."
+            )
+        state = self._validate_recovery_identity(request, bridge_request)
+        batch_id = str(state.get("batch_id", ""))
+        try:
+            snapshot = read_acl_batch(batch_id, self._journal_root)
+            if snapshot.complete or snapshot.truncated_tail:
+                raise ReconciliationJournalError(
+                    "Il lotto ACL non è recuperabile automaticamente."
+                )
+            journal = AclReconciliationJournal.open(snapshot.path)
+            lease = acquire_acl_journal_lease(journal)
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "Il journal ACL non può essere aperto per la verifica."
+            ) from exc
+        self._journal = journal
+        self._lease = lease
+        self._recovery_readiness = None
+        bridge_request["acl_batch_id"] = journal.batch_id
+        return journal.batch_id
+
+    def finish_recovery_readiness(
+        self, envelope: dict[str, Any]
+    ) -> dict[str, Any]:
+        journal = self._journal
+        if journal is None:
+            raise ImportPreparationError(
+                "Il journal del recupero ACL non è disponibile."
+            )
+        if envelope.get("ok") is not True:
+            self._journal = None
+            self._recovery_readiness = None
+            self._release_lease()
+            return envelope
+        payload = self._successful_payload(envelope)
+        try:
+            snapshot = journal.read()
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "La verifica ACL non è stata salvata integralmente."
+            ) from exc
+        last_event = snapshot.events[-1] if snapshot.events else None
+        if (
+            payload is None
+            or snapshot.complete
+            or not isinstance(last_event, Mapping)
+            or last_event.get("event_type") != "acl_recovery_verified"
+            or str(last_event["payload"].get("recovery_id", ""))
+            != str(payload.get("recovery_id", ""))
+            or str(last_event["payload"].get("recovery_plan_digest", ""))
+            != str(payload.get("recovery_plan_digest", ""))
+            or str(payload.get("acl_batch_id", "")) != journal.batch_id
+            or payload.get("resolution") not in {"remote_success", "not_applied"}
+        ):
+            raise ImportPreparationError(
+                "La verifica autenticata ACL non è coerente con il journal."
+            )
+        self._recovery_readiness = dict(payload)
+        return envelope
+
+    def start_recovery_apply(
+        self, request: Mapping[str, Any], bridge_request: Mapping[str, Any]
+    ) -> None:
+        self._validate_recovery_identity(request, bridge_request)
+        if self._journal is None or self._recovery_readiness is None:
+            raise ImportPreparationError(
+                "Eseguire prima la verifica autenticata del journal ACL."
+            )
+        expected = self._recovery_readiness
+        if (
+            str(request.get("acl_batch_id", "")) != self._journal.batch_id
+            or str(request.get("recovery_id", ""))
+            != str(expected.get("recovery_id", ""))
+            or str(request.get("recovery_plan_digest", ""))
+            != str(expected.get("recovery_plan_digest", ""))
+            or str(request.get("confirmation", ""))
+            != str(expected.get("confirmation_required", ""))
+        ):
+            raise ImportPreparationError(
+                "La richiesta non corrisponde all’ultima verifica del journal ACL."
+            )
+
+    def cancel_recovery(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        if self._session is None or str(request.get("session_id", "")) != str(
+            self._session.get("session_id", "")
+        ):
+            raise ImportPreparationError(
+                "La sessione Passbolt non corrisponde al recupero ACL."
+            )
+        batch_id = self.active_batch_id
+        if batch_id is None or str(request.get("acl_batch_id", "")) != batch_id:
+            raise ImportPreparationError("Non esiste un recupero ACL attivo da annullare.")
+        self.abandon()
+        return {
+            "command": "acl-recovery-cancel",
+            "session_id": str(self._session.get("session_id", "")),
+            "acl_batch_id": batch_id,
+            "cancelled": True,
+            "remote_write_performed": False,
+        }
+
+    def finish_apply(self, envelope: dict[str, Any]) -> dict[str, Any]:
+        journal = self._journal
+        if journal is None:
+            raise ImportPreparationError("Il journal ACL attivo non è disponibile.")
+        batch_id = journal.batch_id
+        if envelope.get("ok") is True:
+            try:
+                snapshot = journal.read()
+            except ReconciliationJournalError as exc:
+                raise ImportPreparationError(
+                    "Impossibile verificare la chiusura del journal ACL."
+                ) from exc
+            if not snapshot.complete:
+                raise ImportPreparationError(
+                    "La modifica ACL non ha chiuso il journal; verificare il lotto prima di riprovare."
+                )
+            result = envelope.get("result")
+            if not isinstance(result, dict):
+                raise ImportPreparationError("La risposta finale ACL non è valida.")
+            result["acl_batch_id"] = batch_id
+            result["acl_reconciliation_status"] = "complete"
+            self._plan = None
+            self._recovery_readiness = None
+        else:
+            error = envelope.get("error")
+            if not isinstance(error, dict):
+                error = {"code": "ACL_APPLY_FAILED", "message": "La modifica ACL non è stata completata."}
+                envelope["error"] = error
+            details = error.get("details")
+            safe_details = dict(details) if isinstance(details, Mapping) else {}
+            safe_details["acl_batch_id"] = batch_id
+            safe_details["acl_reconciliation_status"] = "verification_required"
+            error["details"] = safe_details
+        self._journal = None
+        self._release_lease()
+        return envelope
+
+    def abandon(self) -> str | None:
+        batch_id = self.active_batch_id
+        self._journal = None
+        self._recovery_readiness = None
+        self._release_lease()
+        return batch_id
+
+
 def _bridge_line_exchange(
     process: subprocess.Popen[bytes],
     request: dict[str, Any],
@@ -1368,6 +1748,7 @@ def run_import_session(
     node_path: str,
     crypto_script: str,
     journal_root: str | Path | None = None,
+    acl_journal_root: str | Path | None = None,
 ) -> int:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
@@ -1390,6 +1771,7 @@ def run_import_session(
 
     opened = False
     reconciliation = _SessionReconciliationCoordinator(journal_root)
+    acl_reconciliation = _SessionAclCoordinator(acl_journal_root)
     try:
         while True:
             raw = sys.stdin.buffer.readline(MAX_STDIN_BYTES + 1)
@@ -1420,33 +1802,66 @@ def run_import_session(
                 request = document
                 command = str(request.get("command", ""))
                 bridge_request, resources = _session_bridge_request(
-                    root_path, request, journal_root
+                    root_path, request, journal_root, acl_journal_root
                 )
                 if command == "session-import":
                     reconciliation.start_import(request, bridge_request)
+                elif command == "session-acl-apply":
+                    acl_reconciliation.start_apply(request, bridge_request)
+                elif command == "session-acl-recovery-readiness":
+                    acl_reconciliation.start_recovery_readiness(
+                        request, bridge_request
+                    )
+                elif command == "session-acl-recovery-apply":
+                    acl_reconciliation.start_recovery_apply(
+                        request, bridge_request
+                    )
                 elif command == "session-recovery-readiness":
                     reconciliation.start_recovery_readiness(request, bridge_request)
                 elif command == "session-recovery-import":
                     reconciliation.start_recovery_import(request, bridge_request)
-                result = _bridge_line_exchange(
-                    process,
-                    bridge_request,
-                    progress_handler=(
-                        reconciliation.persist_progress
-                        if command
-                        in {
-                            "session-import",
-                            "session-recovery-readiness",
-                            "session-recovery-import",
-                        }
-                        else None
-                    ),
-                )
-                if command == "session-recovery-readiness":
+                if command == "session-acl-recovery-cancel":
+                    result = {
+                        "ok": True,
+                        "result": acl_reconciliation.cancel_recovery(request),
+                    }
+                else:
+                    result = _bridge_line_exchange(
+                        process,
+                        bridge_request,
+                        progress_handler=(
+                            reconciliation.persist_progress
+                            if command
+                            in {
+                                "session-import",
+                                "session-recovery-readiness",
+                                "session-recovery-import",
+                            }
+                            else (
+                                acl_reconciliation.persist_progress
+                                if command
+                                in {
+                                    "session-acl-apply",
+                                    "session-acl-recovery-readiness",
+                                    "session-acl-recovery-apply",
+                                }
+                                else None
+                            )
+                        ),
+                    )
+                if command == "session-acl-recovery-readiness":
+                    result = acl_reconciliation.finish_recovery_readiness(result)
+                elif command in {
+                    "session-acl-apply",
+                    "session-acl-recovery-apply",
+                }:
+                    result = acl_reconciliation.finish_apply(result)
+                elif command == "session-recovery-readiness":
                     result = reconciliation.finish_recovery_readiness(result)
                 elif command in {"session-import", "session-recovery-import"}:
                     result = reconciliation.finish_import(result)
                 reconciliation.observe(command, result)
+                acl_reconciliation.observe(command, result)
                 if command == "session-open" and result.get("ok") is True:
                     opened = True
                 if command == "session-close" and result.get("ok") is True:
@@ -1465,6 +1880,7 @@ def run_import_session(
                 )
             except ImportPreparationError as exc:
                 batch_id = reconciliation.abandon_import()
+                acl_batch_id = acl_reconciliation.abandon()
                 error: dict[str, Any] = {
                     "code": "IMPORT_PREPARATION_FAILED",
                     "message": str(exc),
@@ -1474,6 +1890,15 @@ def run_import_session(
                         "reconciliation_batch_id": batch_id,
                         "reconciliation_status": "verification_required",
                     }
+                if acl_batch_id is not None:
+                    details = dict(error.get("details", {}))
+                    details.update(
+                        {
+                            "acl_batch_id": acl_batch_id,
+                            "acl_reconciliation_status": "verification_required",
+                        }
+                    )
+                    error["details"] = details
                 _write_json(
                     {
                         "ok": False,
@@ -1503,6 +1928,7 @@ def run_import_session(
                 break
     finally:
         reconciliation.abandon_import()
+        acl_reconciliation.abandon()
         if opened and process.poll() is None:
             try:
                 _bridge_line_exchange(process, {"command": "session-close"})
@@ -1603,6 +2029,32 @@ def _reconciliation_archive_result(
     }
 
 
+def _acl_reconciliation_list_result(
+    journal_root: str | Path | None = None,
+) -> dict[str, Any]:
+    try:
+        summaries = list_acl_batches(journal_root, incomplete_only=False)
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "L’elenco dei journal ACL locali non è disponibile."
+        ) from exc
+    return {
+        "batches": [
+            {
+                "batch_id": item.batch_id,
+                "recorded_at": item.recorded_at,
+                "status": item.status,
+                "object_type": item.object_type,
+                "object_id": item.object_id,
+                "change_count": item.change_count,
+                "event_count": item.event_count,
+                "truncated_tail": item.truncated_tail,
+            }
+            for item in summaries
+        ]
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Controllo integrità e handoff in memoria per l’importazione Passbolt."
@@ -1615,9 +2067,11 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--reconciliation-list", action="store_true")
     mode.add_argument("--reconciliation-describe", action="store_true")
     mode.add_argument("--reconciliation-archive", action="store_true")
+    mode.add_argument("--acl-reconciliation-list", action="store_true")
     mode.add_argument("--self-test", action="store_true")
     parser.add_argument("--root")
     parser.add_argument("--journal-root")
+    parser.add_argument("--acl-journal-root")
     parser.add_argument("--node")
     parser.add_argument("--crypto-script")
     return parser.parse_args()
@@ -1643,6 +2097,9 @@ def main() -> int:
                     "permission_editor_protocol": True,
                     "existing_acl_viewer_protocol": True,
                     "existing_acl_dry_run_protocol": True,
+                    "existing_acl_additive_apply_protocol": True,
+                    "existing_acl_recovery_protocol": True,
+                    "dedicated_acl_journal_protocol": True,
                     "secrets_serialized": False,
                 },
             }
@@ -1657,6 +2114,16 @@ def main() -> int:
                 {
                     "ok": True,
                     "result": _reconciliation_list_result(args.journal_root),
+                }
+            )
+            return 0
+        if args.acl_reconciliation_list:
+            _write_json(
+                {
+                    "ok": True,
+                    "result": _acl_reconciliation_list_result(
+                        args.acl_journal_root
+                    ),
                 }
             )
             return 0
@@ -1686,6 +2153,7 @@ def main() -> int:
                 node_path=args.node,
                 crypto_script=args.crypto_script,
                 journal_root=args.journal_root,
+                acl_journal_root=args.acl_journal_root,
             )
         request = _read_stdin_json()
         if args.integrity:
