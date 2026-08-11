@@ -258,6 +258,8 @@ async function main() {
   let sharedApplyPayload = null;
   let folderShareSimulationRequestCount = 0;
   let sharedFolderApplyPayload = null;
+  let resourceAclMode = 'none';
+  let authenticatedMutationCount = 0;
 
   const mockServer = createServer(async (request, response) => {
     try {
@@ -326,6 +328,7 @@ async function main() {
         send(response, 401, apiError('Authentication required.'));
         return;
       }
+      if (!['GET', 'HEAD'].includes(String(request.method))) authenticatedMutationCount += 1;
       if (request.method === 'GET' && url.pathname === '/users/me.json') {
         if (identityMode === 'mfa' && !cookie.includes('passbolt_mfa=mock-mfa')) {
           redirect(response, '/mfa/verify/error.json');
@@ -522,6 +525,38 @@ async function main() {
           username: 'existing-user',
           uri: 'https://existing.example.test',
           folder_parent_id: existingResourceFolderId,
+          ...(resourceAclMode === 'none' ? {} : {
+            permission: {
+              id: 'resource-current-permission-id',
+              aco: 'Resource',
+              aco_foreign_key: 'existing-resource-id',
+              aro: 'User',
+              aro_foreign_key: 'user-id',
+              type: 15,
+            },
+            permissions: [{
+              id: 'resource-current-permission-id',
+              aco: 'Resource',
+              aco_foreign_key: 'existing-resource-id',
+              aro: 'User',
+              aro_foreign_key: 'user-id',
+              type: 15,
+            }, ...(resourceAclMode === 'shared' ? [{
+              id: 'resource-direct-permission-id',
+              aco: 'Resource',
+              aco_foreign_key: 'existing-resource-id',
+              aro: 'User',
+              aro_foreign_key: 'direct-recipient-id',
+              type: 1,
+            }, {
+              id: 'resource-group-permission-id',
+              aco: 'Resource',
+              aco_foreign_key: 'existing-resource-id',
+              aro: 'Group',
+              aro_foreign_key: 'shared-group-id',
+              type: 7,
+            }] : [])],
+          }),
         }]));
         return;
       }
@@ -1677,7 +1712,27 @@ async function main() {
     });
     await Promise.all(sharedV5FolderMetadata.signatures.map((signature) => signature.verified));
     assert.equal(JSON.parse(sharedV5FolderMetadata.data).name, 'Cliente Nuovo v5');
+    folderMode = 'v5';
+    existingResourceFolderId = 'folder-alpha-v5-id';
+    const v5AclWorker = new PersistentImportSession();
+    v5AclWorker.state = {
+      sessionId: 'v5-acl-session',
+      baseUrl,
+      expectedFingerprint: serverFingerprint,
+      session: v5Session,
+      key: keyMaterial,
+      user: v5Authentication.user,
+      mfaProvider: null,
+    };
+    const v5AclCatalog = await v5AclWorker.dispatch({
+      command: 'session-acl-catalog',
+      session_id: 'v5-acl-session',
+    });
+    assert.equal(v5AclCatalog.objects.some((entry) => entry.object_type === 'folder' && entry.path === 'Cliente Alfa'), true);
+    assert.equal(v5AclCatalog.objects.some((entry) => entry.object_type === 'resource' && entry.path === 'Cliente Alfa / Portale v5 esistente'), true);
+    assert.equal(JSON.stringify(v5AclCatalog).includes('BEGIN PGP'), false);
     folderMode = 'empty';
+    existingResourceFolderId = null;
     personalMetadataMode = false;
     await v5Session.request('/auth/logout.json?api-version=v2', { method: 'POST' });
     assert.equal(authenticated, false);
@@ -1723,6 +1778,46 @@ async function main() {
     assert.equal(persistentPermissionCatalog.entries.some((entry) => entry.aro === 'User' && entry.aro_foreign_key === 'direct-recipient-id' && entry.available), true);
     assert.equal(persistentPermissionCatalog.entries.some((entry) => entry.aro === 'Group' && entry.aro_foreign_key === 'shared-group-id' && entry.available), true);
     assert.equal(persistentPermissionCatalog.entries.some((entry) => entry.aro_foreign_key === 'user-id'), false);
+    folderMode = 'shared-v4';
+    resourceAclMode = 'shared';
+    existingResourceFolderId = 'folder-shared-id';
+    const mutationCountBeforeAclCatalog = authenticatedMutationCount;
+    const persistentAclCatalog = await persistentWorker.dispatch({
+      command: 'session-acl-catalog',
+      session_id: 'persistent-test-session',
+    });
+    assert.equal(persistentAclCatalog.command, 'acl-catalog');
+    assert.equal(persistentAclCatalog.read_only, true);
+    assert.equal(persistentAclCatalog.write_requests, 0);
+    assert.equal(persistentAclCatalog.folder_count, 1);
+    assert.equal(persistentAclCatalog.resource_count, 1);
+    assert.equal(persistentAclCatalog.shared_count, 2);
+    assert.equal(persistentAclCatalog.verified_count, 2);
+    assert.equal(persistentAclCatalog.warning_count, 0);
+    const aclFolder = persistentAclCatalog.objects.find((entry) => entry.object_type === 'folder');
+    const aclResource = persistentAclCatalog.objects.find((entry) => entry.object_type === 'resource');
+    assert.equal(aclFolder.path, 'Cartella condivisa');
+    assert.equal(aclFolder.acl_complete, true);
+    assert.equal(aclResource.path, 'Cartella condivisa / Portale esistente');
+    assert.equal(aclResource.permissions.some((entry) => entry.subject_kind === 'User' && entry.subject_id === 'direct-recipient-id' && entry.permission_label === 'Lettura' && entry.verified), true);
+    assert.equal(aclResource.permissions.some((entry) => entry.subject_kind === 'Group' && entry.subject_id === 'shared-group-id' && entry.permission_label === 'Aggiornamento' && entry.recipient_count === 2 && entry.verified), true);
+    assert.equal(aclResource.permissions.some((entry) => entry.current_user && entry.permission_label === 'Proprietario'), true);
+    assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
+    assert.equal(JSON.stringify(persistentAclCatalog).includes('BEGIN PGP'), false);
+    assert.equal(JSON.stringify(persistentAclCatalog).includes('mock-resource-password'), false);
+    folderMode = 'v4';
+    resourceAclMode = 'none';
+    existingResourceFolderId = 'folder-alpha-id';
+    const incompleteAclCatalog = await persistentWorker.dispatch({
+      command: 'session-acl-catalog',
+      session_id: 'persistent-test-session',
+    });
+    assert.equal(incompleteAclCatalog.warning_count, 2);
+    assert.equal(incompleteAclCatalog.objects.every((entry) => entry.inspection_status === 'incomplete' && entry.warnings.length > 0), true);
+    assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
+    folderMode = 'empty';
+    resourceAclMode = 'none';
+    existingResourceFolderId = null;
     const persistentCandidates = [{
       candidate_id: 'persistent-session-candidate',
       source_sha256: '7'.repeat(64),
@@ -1991,6 +2086,7 @@ async function main() {
         readonly_destination_filtered: true,
         shared_destination_permission_mask: true,
         authenticated_permission_catalog: true,
+        existing_acl_readonly_viewer: true,
         custom_permission_editor_plan: true,
         custom_permissions_bound_to_new_objects: true,
         current_owner_permission_immutable: true,

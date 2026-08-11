@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.14.0"
+        Title="Passbolt Migration Assistant - v0.15.0"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -516,6 +516,63 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                             </Grid>
                         </Grid>
                     </TabItem>
+                    <TabItem Header="Permessi esistenti">
+                        <Grid Margin="8,10,8,8">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Border Grid.Row="0" Background="#EAF4FE" BorderBrush="#A8C9EA" BorderThickness="1" CornerRadius="5" Padding="12,9">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="150" /><ColumnDefinition Width="240" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Visualizzatore ACL in sola lettura" FontWeight="SemiBold" Foreground="#1F2933" />
+                                        <TextBlock Text="Consulta i permessi di cartelle e risorse esistenti. Questa fase non invia richieste di modifica a Passbolt." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <ComboBox x:Name="AclTypeFilter" Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0" ToolTip="Filtra per tipo di oggetto">
+                                        <ComboBoxItem Content="Tutti gli oggetti" Tag="all" />
+                                        <ComboBoxItem Content="Solo cartelle" Tag="folder" />
+                                        <ComboBoxItem Content="Solo risorse" Tag="resource" />
+                                    </ComboBox>
+                                    <TextBox x:Name="AclSearchBox" Grid.Column="2" Margin="8,0,0,0" ToolTip="Cerca per nome, percorso o ID" />
+                                    <Button x:Name="RefreshAclButton" Grid.Column="3" Content="Leggi permessi" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" />
+                                </Grid>
+                            </Border>
+                            <Grid Grid.Row="1" Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*" /><ColumnDefinition Width="0.95*" /></Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,0" Padding="0">
+                                    <DataGrid x:Name="AclObjectsGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Tipo" Binding="{Binding ObjectTypeLabel}" Width="80" />
+                                            <DataGridTextColumn Header="Percorso" Binding="{Binding Path}" Width="*" />
+                                            <DataGridTextColumn Header="Accesso" Binding="{Binding CurrentAccessLabel}" Width="105" />
+                                            <DataGridTextColumn Header="Condivisione" Binding="{Binding SharingLabel}" Width="100" />
+                                            <DataGridTextColumn Header="ACL" Binding="{Binding StatusLabel}" Width="115" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                                <Grid Grid.Column="1" Margin="5,0,0,0">
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="12,9">
+                                        <TextBlock x:Name="AclObjectSummary" Text="Seleziona un oggetto per visualizzare la relativa ACL." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
+                                    </Border>
+                                    <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="0">
+                                        <DataGrid x:Name="AclPermissionsGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Origine" Binding="{Binding SubjectType}" Width="105" />
+                                                <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" />
+                                                <DataGridTextColumn Header="Livello" Binding="{Binding PermissionLabel}" Width="105" />
+                                                <DataGridTextColumn Header="Verifica" Binding="{Binding VerificationLabel}" Width="125" />
+                                                <DataGridTextColumn Header="Dest." Binding="{Binding RecipientCount}" Width="55" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </Border>
+                                </Grid>
+                            </Grid>
+                            <Grid Grid.Row="2" Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Button x:Name="AclBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
+                                <TextBlock x:Name="AclViewerStatus" Grid.Column="1" Text="Avvia la sessione sicura, quindi leggi i permessi esistenti." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
+                            </Grid>
+                        </Grid>
+                    </TabItem>
                 </TabControl>
             </Grid>
         </Grid>
@@ -632,6 +689,14 @@ $RecoveryConfirmationHint = Get-Control "RecoveryConfirmationHint"
 $RecoveryConfirmation = Get-Control "RecoveryConfirmation"
 $VerifyRecoveryButton = Get-Control "VerifyRecoveryButton"
 $ExecuteRecoveryButton = Get-Control "ExecuteRecoveryButton"
+$RefreshAclButton = Get-Control "RefreshAclButton"
+$AclTypeFilter = Get-Control "AclTypeFilter"
+$AclSearchBox = Get-Control "AclSearchBox"
+$AclObjectsGrid = Get-Control "AclObjectsGrid"
+$AclObjectSummary = Get-Control "AclObjectSummary"
+$AclPermissionsGrid = Get-Control "AclPermissionsGrid"
+$AclViewerStatus = Get-Control "AclViewerStatus"
+$AclBackButton = Get-Control "AclBackButton"
 
 $script:ConnectionVerified = $false
 $script:VerifiedUrl = ""
@@ -674,6 +739,9 @@ $script:PermissionMode = "inherited"
 $script:PermissionTemplate = @()
 $script:PermissionCatalog = @()
 $script:PermissionCatalogSessionId = ""
+$script:AclCatalogSessionId = ""
+$script:AllAclObjectRows = @()
+$script:UpdatingAclSelection = $false
 $script:CurrentPage = "Configuration"
 
 function Get-Brush([string]$Color) {
@@ -933,6 +1001,7 @@ function Update-ImportSessionState {
     Update-ExecuteImportState
     Update-RecoveryActionState
     Update-PermissionEditorState
+    Update-AclViewerState
 }
 
 function Stop-ImportSession(
@@ -968,6 +1037,11 @@ function Stop-ImportSession(
     $script:ImportSessionKeyPath = ""
     $script:PermissionCatalog = @()
     $script:PermissionCatalogSessionId = ""
+    $script:AclCatalogSessionId = ""
+    $script:AllAclObjectRows = @()
+    $AclObjectsGrid.ItemsSource = $null
+    $AclPermissionsGrid.ItemsSource = $null
+    $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
     $KeyPassphrase.Clear()
     $MfaTotpCode.Clear()
     if ($ResetPlan) {
@@ -1047,6 +1121,11 @@ function Open-ImportSession {
         $script:ImportSessionLastActivityUtc = [DateTime]::UtcNow
         $script:PermissionCatalog = @()
         $script:PermissionCatalogSessionId = ""
+        $script:AclCatalogSessionId = ""
+        $script:AllAclObjectRows = @()
+        $AclObjectsGrid.ItemsSource = $null
+        $AclPermissionsGrid.ItemsSource = $null
+        $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
         Reset-ImportPlan "Sessione autenticata attiva. Configurare la destinazione ed eseguire il dry-run."
         if ($null -ne $script:RecoveryBatchDetails) {
             Reset-RecoveryPlan "Sessione autenticata attiva. Il lotto e' associato ai sorgenti: eseguire la verifica remota."
@@ -1697,6 +1776,140 @@ function Show-PermissionEditor([switch]$BuildOnly) {
     }
     Update-PermissionEditorState
     Add-Activity "Configurazione permessi aggiornata: $($script:PermissionMode), $(@($script:PermissionTemplate).Count) destinatari espliciti."
+}
+
+function Get-AclInspectionStatusLabel([string]$Status) {
+    switch ($Status) {
+        "verified" { return "Verificata" }
+        "warning" { return "Con avvisi" }
+        "incomplete" { return "Incompleta" }
+        default { return "Non disponibile" }
+    }
+}
+
+function Update-AclPermissionDetail {
+    if ($script:UpdatingAclSelection) { return }
+    $Selected = $AclObjectsGrid.SelectedItem
+    if ($null -eq $Selected) {
+        $AclPermissionsGrid.ItemsSource = $null
+        $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
+        return
+    }
+    $Raw = $Selected.Raw
+    $Rows = New-Object System.Collections.Generic.List[object]
+    foreach ($Permission in @($Raw.permissions)) {
+        $Rows.Add([pscustomobject]@{
+            SubjectType = [string]$Permission.subject_type
+            DisplayName = [string]$Permission.display_name
+            Detail = [string]$Permission.detail
+            PermissionLabel = [string]$Permission.permission_label
+            VerificationLabel = if ([bool]$Permission.verified) { "Verificata" } else { "Attenzione" }
+            VerificationStatus = [string]$Permission.verification_status
+            RecipientCount = [int]$Permission.recipient_count
+            CurrentUser = [bool]$Permission.current_user
+            SubjectId = [string]$Permission.subject_id
+        })
+    }
+    $AclPermissionsGrid.ItemsSource = $Rows.ToArray()
+    $WarningText = @($Raw.warnings) -join " "
+    $StatusText = Get-AclInspectionStatusLabel ([string]$Raw.inspection_status)
+    $Completeness = if ([bool]$Raw.acl_complete) { "maschera completa" } else { "maschera incompleta" }
+    $Verification = if ([bool]$Raw.subjects_verified) { "soggetti verificati" } else { "uno o piu' soggetti richiedono attenzione" }
+    $WarningSuffix = if ([string]::IsNullOrWhiteSpace($WarningText)) { "" } else { " $WarningText" }
+    $AclObjectSummary.Text = "$([string]$Raw.object_type_label): $([string]$Raw.path)`nID: $([string]$Raw.object_id)`nAccesso corrente: $([string]$Raw.current_access_label) | $([string]$Raw.sharing_label) | ACL $StatusText ($Completeness, $Verification).$WarningSuffix"
+}
+
+function Update-AclObjectFilter {
+    $PreviousId = if ($null -ne $AclObjectsGrid.SelectedItem) { [string]$AclObjectsGrid.SelectedItem.ObjectId } else { "" }
+    $Type = if ($null -ne $AclTypeFilter.SelectedItem) { [string]$AclTypeFilter.SelectedItem.Tag } else { "all" }
+    $Search = ([string]$AclSearchBox.Text).Trim().ToLowerInvariant()
+    $Filtered = @($script:AllAclObjectRows | Where-Object {
+        $TypeMatches = ($Type -eq "all" -or [string]$_.ObjectType -eq $Type)
+        $Haystack = "$([string]$_.Path) $([string]$_.ObjectId) $([string]$_.Name)".ToLowerInvariant()
+        $TypeMatches -and (-not $Search -or $Haystack.Contains($Search))
+    })
+    $script:UpdatingAclSelection = $true
+    try {
+        $AclObjectsGrid.ItemsSource = $Filtered
+        $Selection = if ($PreviousId) { @($Filtered | Where-Object { [string]$_.ObjectId -eq $PreviousId }) | Select-Object -First 1 } else { $null }
+        if ($null -eq $Selection -and $Filtered.Count -gt 0) { $Selection = $Filtered[0] }
+        $AclObjectsGrid.SelectedItem = $Selection
+    } finally {
+        $script:UpdatingAclSelection = $false
+    }
+    Update-AclPermissionDetail
+}
+
+function Set-AclCatalogResult($Result) {
+    if ($null -eq $Result -or [string]$Result.command -ne "acl-catalog" -or -not [bool]$Result.read_only -or [int]$Result.write_requests -ne 0) {
+        throw "Passbolt non ha restituito un catalogo ACL read-only valido."
+    }
+    $Rows = New-Object System.Collections.Generic.List[object]
+    foreach ($Entry in @($Result.objects)) {
+        $Rows.Add([pscustomobject]@{
+            ObjectType = [string]$Entry.object_type
+            ObjectTypeLabel = [string]$Entry.object_type_label
+            ObjectId = [string]$Entry.object_id
+            Name = [string]$Entry.name
+            Path = [string]$Entry.path
+            CurrentAccessLabel = [string]$Entry.current_access_label
+            SharingLabel = [string]$Entry.sharing_label
+            StatusLabel = Get-AclInspectionStatusLabel ([string]$Entry.inspection_status)
+            Raw = $Entry
+        })
+    }
+    $script:AllAclObjectRows = $Rows.ToArray()
+    $script:AclCatalogSessionId = $script:ImportSessionId
+    Update-AclObjectFilter
+    $AclViewerStatus.Text = "Sola lettura: $([int]$Result.folder_count) cartelle, $([int]$Result.resource_count) risorse, $([int]$Result.shared_count) oggetti condivisi. ACL verificate: $([int]$Result.verified_count); con avvisi o incomplete: $([int]$Result.warning_count)."
+}
+
+function Update-AclViewerState {
+    $Active = Test-ImportSessionActive
+    $RefreshAclButton.IsEnabled = $Active
+    if (-not $Active) {
+        $AclViewerStatus.Text = "Avvia la sessione sicura, quindi leggi i permessi esistenti."
+    } elseif ($script:AclCatalogSessionId -ne $script:ImportSessionId) {
+        $AclViewerStatus.Text = "Sessione attiva. Seleziona Leggi permessi per caricare il catalogo read-only."
+    }
+}
+
+function Refresh-ExistingAclCatalog {
+    if (-not (Test-ImportSessionActive)) {
+        [System.Windows.MessageBox]::Show("Avviare prima la sessione sicura Passbolt.", "Sessione non attiva", "OK", "Warning") | Out-Null
+        return
+    }
+    $RefreshAclButton.IsEnabled = $false
+    $AclViewerStatus.Text = "Lettura autenticata di cartelle, risorse e permessi in corso..."
+    Add-Activity "Avvio lettura read-only delle ACL degli oggetti Passbolt esistenti."
+    Update-Ui
+    $CloseSessionForError = $false
+    try {
+        $Envelope = Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+            command = "session-acl-catalog"
+            session_id = $script:ImportSessionId
+        }) 120000
+        if (-not [bool]$Envelope.ok) {
+            $CloseSessionForError = Test-TerminalImportSessionError $Envelope
+            throw (Get-SecureErrorMessage $Envelope)
+        }
+        Set-AclCatalogResult $Envelope.result
+        Add-Activity "Catalogo ACL read-only caricato: $(@($script:AllAclObjectRows).Count) oggetti; nessuna richiesta di scrittura inviata."
+    } catch {
+        $script:AclCatalogSessionId = ""
+        $script:AllAclObjectRows = @()
+        $AclObjectsGrid.ItemsSource = $null
+        $AclPermissionsGrid.ItemsSource = $null
+        $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
+        $AclViewerStatus.Text = "Lettura ACL non riuscita: $($_.Exception.Message)"
+        Add-Activity "Lettura ACL non riuscita: $($_.Exception.Message)"
+        if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
+            Stop-ImportSession "" $false
+        }
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Permessi non disponibili", "OK", "Error") | Out-Null
+    } finally {
+        Update-AclViewerState
+    }
 }
 
 function Get-RequiredImportClients {
@@ -2784,7 +2997,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.14.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.15.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -3694,18 +3907,24 @@ $EditReviewCandidateButton.Add_Click({ Show-ReviewCandidateEditor })
 $PrepareImportButton.Add_Click({ Open-ImportPreparation })
 $ImportBackButton.Add_Click({ Show-Page "Review"; Apply-ReviewFilters })
 $RecoveryBackButton.Add_Click({ Show-Page "Review"; Apply-ReviewFilters })
+$AclBackButton.Add_Click({ Show-Page "Review"; Apply-ReviewFilters })
 $RecoveryBatchesGrid.Add_SelectionChanged({ Set-RecoveryBatchSelection })
 $RefreshRecoveryButton.Add_Click({ Refresh-RecoveryBatches })
 $ArchiveRecoveryButton.Add_Click({ Invoke-ArchiveRecoveryBatch })
 $RecoveryConfirmation.Add_TextChanged({ Update-RecoveryActionState })
 $VerifyRecoveryButton.Add_Click({ Invoke-RecoveryReadiness })
 $ExecuteRecoveryButton.Add_Click({ Invoke-ConfirmedRecovery })
+$RefreshAclButton.Add_Click({ Refresh-ExistingAclCatalog })
+$AclTypeFilter.Add_SelectionChanged({ Update-AclObjectFilter })
+$AclSearchBox.Add_TextChanged({ Update-AclObjectFilter })
+$AclObjectsGrid.Add_SelectionChanged({ Update-AclPermissionDetail })
 $ImportModeTabs.Add_SelectionChanged({
     param($Sender, $EventArgs)
     if ($EventArgs.OriginalSource -ne $ImportModeTabs) { return }
     if ($ImportModeTabs.SelectedIndex -eq 1 -and $script:RecoveryBatches.Count -eq 0 -and $null -eq $script:RecoveryPlan) {
         Refresh-RecoveryBatches -Quiet
     }
+    if ($ImportModeTabs.SelectedIndex -eq 2) { Update-AclViewerState }
 })
 
 $BrowseKeyButton.Add_Click({
@@ -3889,17 +4108,17 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
     }
-    if ($ImportModeTabs.Items.Count -ne 2 -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
+    if ($ImportModeTabs.Items.Count -ne 3 -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
         throw "I controlli UI del recupero guidato non sono nello stato fail-closed previsto."
     }
     if ($null -ne $Window.FindName("ServerFingerprint") -or [string]$DetectedFingerprint.Text -ne "Non ancora rilevata") {
@@ -3947,6 +4166,36 @@ for line in sys.stdin:
         throw "L'editor UI dei permessi non puo essere costruito nello stato previsto."
     }
     $PermissionEditorProbe.Window.Close()
+    Set-AclCatalogResult ([pscustomobject]@{
+        command = "acl-catalog"
+        read_only = $true
+        write_requests = 0
+        folder_count = 1
+        resource_count = 0
+        shared_count = 1
+        verified_count = 1
+        warning_count = 0
+        objects = @([pscustomobject]@{
+            object_type = "folder"
+            object_type_label = "Cartella"
+            object_id = "acl-folder-probe"
+            name = "Cliente ACL"
+            path = "Clienti / Cliente ACL"
+            current_access_label = "Proprietario"
+            sharing_label = "Condiviso"
+            inspection_status = "verified"
+            acl_complete = $true
+            subjects_verified = $true
+            warnings = @()
+            permissions = @(
+                [pscustomobject]@{ subject_type = "Utente diretto"; subject_id = "owner-probe"; display_name = "Proprietario test"; detail = "owner@example.invalid"; permission_label = "Proprietario"; current_user = $true; verified = $true; verification_status = "Chiave verificata"; recipient_count = 1 },
+                [pscustomobject]@{ subject_type = "Gruppo"; subject_id = "group-probe"; display_name = "Team test"; detail = "2 destinatari effettivi verificati"; permission_label = "Lettura"; current_user = $false; verified = $true; verification_status = "Composizione e chiavi verificate"; recipient_count = 2 }
+            )
+        })
+    })
+    if ($AclObjectsGrid.Items.Count -ne 1 -or $AclPermissionsGrid.Items.Count -ne 2 -or [string]$AclObjectSummary.Text -notmatch "Cliente ACL") {
+        throw "Il visualizzatore UI delle ACL esistenti non espone oggetti e permessi nello stato previsto."
+    }
     if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
     }
@@ -3986,10 +4235,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.14.0"
+        version = "0.15.0"
         ui = "WPF"
         phases = 4
-        controls = 93
+        controls = 101
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -3998,6 +4247,7 @@ for line in sys.stdin:
         persistent_process_transport = "OK"
         client_mapping_ui = "OK"
         permission_editor_ui = "OK"
+        existing_acl_viewer_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
         protected_excel_password_prompt = "OK"

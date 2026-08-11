@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.14.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.15.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Visualizzatore ACL read-only 0.15.0
+
+La fase 04 contiene la scheda **Permessi esistenti**. Dopo l'apertura della sessione GPGAuth, **Leggi permessi** invia il comando locale `session-acl-catalog`; Python inoltra al bridge esclusivamente comando e UUID della sessione, senza candidati, percorsi sorgente, passphrase, MFA o segreti. Node riverifica `/users/me.json`, quindi usa soltanto richieste `GET` verso `/resources.json`, `/folders.json` e `/share/search-aros.json`; `/metadata/keys.json` viene letto soltanto se occorre decifrare nomi v5.
+
+Il bridge ricostruisce i percorsi gerarchici, normalizza le maschere User/Group e associa ogni soggetto alla directory autenticata. La GUI mostra tipo, percorso, accesso corrente, stato personale/condiviso e stato della ACL. Per la voce selezionata distingue utenti diretti e gruppi, visualizza Read (`1`), Update (`7`) o Owner (`15`), stato della verifica e numero di destinatari effettivi. Un gruppo viene considerato verificato soltanto se Passbolt ne restituisce integralmente la composizione e le chiavi dei membri risultano valide.
+
+La risposta non contiene chiavi, fingerprint, password, segreti o materiale OpenPGP e resta soltanto in memoria. Una maschera assente, parzialmente malformata o riferita a soggetti non verificabili viene marcata **Incompleta** o **Con avvisi**, non affidabile. Il protocollo impone al massimo 2.000 oggetti, 20.000 righe di permesso e 3 MiB di catalogo serializzato. Il risultato dichiara `read_only: true` e `write_requests: 0`; la GUI rifiuta risposte che non rispettano entrambi i valori. La versione 0.15.0 non espone alcun controllo di modifica degli oggetti esistenti e non crea journal per questa consultazione.
 
 ### Editor autenticato dei permessi 0.14.0
 
@@ -24,7 +32,7 @@ Il journal salva soltanto `permission_mode` e `permission_configuration_hash`, n
 
 ### Recupero guidato degli import interrotti 0.13.0
 
-La fase 04 contiene due schede: **Nuova importazione** e **Recupero import interrotto**. La seconda elenca i journal locali attivi distinguendo gli stati Recuperabile, Completato, Troncato e Corrotto. Un lotto recuperabile viene associato soltanto se tutti i suoi `candidate_id` sono stati riletti dalla cartella sorgente corrente e risultano pronti; eventuali modifiche effettuate nella revisione originale devono essere riapplicate prima della verifica.
+La fase 04 contiene tre schede: **Nuova importazione**, **Recupero import interrotto** e **Permessi esistenti**. La seconda elenca i journal locali attivi distinguendo gli stati Recuperabile, Completato, Troncato e Corrotto. Un lotto recuperabile viene associato soltanto se tutti i suoi `candidate_id` sono stati riletti dalla cartella sorgente corrente e risultano pronti; eventuali modifiche effettuate nella revisione originale devono essere riapplicate prima della verifica.
 
 La verifica richiede una sessione GPGAuth attiva e controlla nuovamente server, fingerprint, utente, sorgenti, destinazioni, formati, oggetti remoti e permessi. La GUI mostra operazioni gia riuscite, operazioni dimostrate come non applicate e conflitti. Soltanto un piano senza conflitti e senza azioni distruttive abilita la conferma esatta `RECUPERA N`. Dopo la ripresa, il journal viene chiuso con `batch_completed` e puo essere spostato nell'archivio locale. Anche un lotto troncato o corrotto puo essere archiviato esplicitamente come abbandonato, ma non puo essere verificato o ripreso automaticamente.
 
@@ -302,7 +310,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 
 L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.14.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.15.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
 
 Per eseguire soltanto il controllo da riga di comando:
 
@@ -366,4 +374,4 @@ Node rilegge cartelle, risorse e permessi e classifica ogni intenzione storica. 
 
 La ripresa puo creare contenuti mancanti e completare condivisioni non applicate, riestraendo il segreto soltanto per le risorse che devono essere create o ricifrate per i destinatari. Non pianifica mai cancellazioni, spostamenti o sovrascritture. Duplicati multipli, oggetti in una destinazione diversa, variazioni della ACL, identita o sorgenti non corrispondenti, journal corrotti o code troncate bloccano il piano e richiedono una verifica manuale.
 
-I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. Le fasi successive potranno progettare operazioni controllate sugli oggetti esistenti e migliorare la gestione operativa dei lotti. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.
+I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.15 completa la consultazione read-only delle ACL esistenti; il blocco successivo potra costruire un dry-run prima/dopo con digest dello stato remoto, senza applicare modifiche. Soltanto una fase ulteriore potra introdurre scritture additive e un journal dedicato, seguite separatamente dalle eventuali riduzioni o revoche. La gestione operativa dei lotti verra migliorata dopo questo percorso. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.

@@ -55,7 +55,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.14.0"
+APP_VERSION = "0.15.0"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -808,6 +808,14 @@ def _session_bridge_request(
         return (
             {
                 "command": "session-permissions",
+                "session_id": request.get("session_id"),
+            },
+            [],
+        )
+    if command == "session-acl-catalog":
+        return (
+            {
+                "command": "session-acl-catalog",
                 "session_id": request.get("session_id"),
             },
             [],
@@ -1607,6 +1615,7 @@ def main() -> int:
                     "explicit_reveal_supported": True,
                     "protected_excel_integrity_supported": True,
                     "permission_editor_protocol": True,
+                    "existing_acl_viewer_protocol": True,
                     "secrets_serialized": False,
                 },
             }

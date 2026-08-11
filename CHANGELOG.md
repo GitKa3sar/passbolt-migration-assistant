@@ -2,6 +2,30 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.0 - 2026-08-11
+
+### Added
+
+- aggiunta nella fase 04 la scheda **Permessi esistenti**, dedicata alla consultazione read-only delle ACL di cartelle e risorse Passbolt;
+- aggiunto il comando persistente `session-acl-catalog`, che riusa la sessione GPGAuth e accetta soltanto identificativo di sessione, senza candidati, sorgenti o segreti;
+- aggiunti filtri per cartelle/risorse e ricerca per nome, percorso o ID, con dettaglio di soggetti diretti, gruppi, livello di accesso, verifica e destinatari effettivi;
+- supportata la decifratura locale dei nomi v5 e la ricostruzione dei percorsi gerarchici senza inoltrare chiavi OpenPGP alla GUI;
+- aggiunti test end-to-end per lettura ACL, risoluzione User/Group, espansione dei gruppi e assenza di richieste mutative.
+
+### Changed
+
+- aggiornata l'applicazione e i metadati di progetto alla versione 0.15.0;
+- separata visivamente la consultazione degli oggetti esistenti dall'editor che configura i permessi dei soli oggetti nuovi;
+- spostato il prossimo blocco della roadmap sul dry-run prima/dopo delle future modifiche ACL, mantenendo disabilitate tutte le scritture sugli oggetti esistenti.
+
+### Security
+
+- verificata nuovamente la sessione e l'identita Passbolt prima di ogni caricamento del catalogo ACL;
+- usate esclusivamente richieste HTTP `GET`; la risposta dichiara e la GUI verifica `read_only=true` e `write_requests=0`;
+- marcate come incomplete o con avvisi le maschere mancanti, malformate o contenenti soggetti non verificabili, senza presentarle come affidabili;
+- limitato il catalogo a 2.000 oggetti, 20.000 righe ACL e 3 MiB serializzati prima della consegna al backend Python;
+- esclusi dalla risposta password, segreti, chiavi pubbliche, fingerprint e materiale OpenPGP; nomi, percorsi e ID restano soltanto nella sessione volatile della GUI.
+
 ## 0.14.0 - 2026-08-11
 
 ### Added

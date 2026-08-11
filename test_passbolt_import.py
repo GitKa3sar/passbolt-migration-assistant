@@ -251,6 +251,27 @@ class ImportPreparationTests(unittest.TestCase):
         )
         self.assertEqual(resources, [])
 
+    def test_persistent_acl_catalog_is_source_free_and_read_only(self) -> None:
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-acl-catalog",
+                "session_id": "session-id",
+                "candidates": [self.request],
+                "passphrase": "must-not-pass",
+                "mfa_totp": "123456",
+            },
+        )
+        self.assertEqual(
+            bridge_request,
+            {"command": "session-acl-catalog", "session_id": "session-id"},
+        )
+        self.assertEqual(resources, [])
+        serialized = json.dumps(bridge_request)
+        self.assertNotIn(self.secret, serialized)
+        self.assertNotIn("must-not-pass", serialized)
+        self.assertNotIn("123456", serialized)
+
     def test_persistent_session_import_hands_off_secrets_without_auth_data(self) -> None:
         bridge_request, resources = _session_bridge_request(
             self.root,

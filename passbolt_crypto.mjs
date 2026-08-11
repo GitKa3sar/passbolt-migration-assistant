@@ -22,7 +22,10 @@ const RESPONSE_LIMIT = 12 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_REDIRECTS = 5;
 const MAX_IMPORT_RESOURCES = 25;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.13.0';
+const MAX_ACL_OBJECTS = 2_000;
+const MAX_ACL_PERMISSION_ROWS = 20_000;
+const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.15.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -1609,6 +1612,187 @@ function canonicalJson(value) {
 
 function digestPlan(plan) {
   return createHash('sha256').update(canonicalJson(plan), 'utf8').digest('hex');
+}
+
+function permissionTypeLabel(type) {
+  switch (Number(type)) {
+    case 1:
+      return 'Lettura';
+    case 7:
+      return 'Aggiornamento';
+    case 15:
+      return 'Proprietario';
+    default:
+      return 'Non disponibile';
+  }
+}
+
+function aclPermissionRows(permissions, shareDirectory, currentUserId) {
+  return permissions.map((permission) => {
+    if (permission.aro === 'User') {
+      const user = shareDirectory.users.get(permission.aro_foreign_key);
+      const displayName = user
+        ? (`${user.first_name} ${user.last_name}`.trim() || user.username || user.id)
+        : permission.aro_foreign_key;
+      const verified = Boolean(user?.active && user.publicKey && user.fingerprint && !user.key_error);
+      return {
+        subject_kind: 'User',
+        subject_type: 'Utente diretto',
+        subject_id: permission.aro_foreign_key,
+        display_name: displayName,
+        detail: user?.username || permission.aro_foreign_key,
+        permission_type: permission.type,
+        permission_label: permissionTypeLabel(permission.type),
+        current_user: permission.aro_foreign_key === currentUserId,
+        verified,
+        verification_status: verified ? 'Chiave verificata' : (user?.key_error || (user ? 'Utente non attivo o chiave non verificabile.' : 'Utente non presente nella directory autenticata.')),
+        recipient_count: user?.active ? 1 : 0,
+      };
+    }
+
+    const group = shareDirectory.groups.get(permission.aro_foreign_key);
+    const plan = group && !group.deleted
+      ? buildFolderSharePlan(normalizeFolderPermissions([
+        { aro: 'User', aro_foreign_key: currentUserId, type: 15 },
+        permission,
+      ]), shareDirectory, currentUserId)
+      : { ready: false, failure: 'Gruppo non presente nella directory autenticata.', recipients: [] };
+    const externalRecipientCount = plan.recipients.filter((recipient) => recipient.user_id !== currentUserId).length;
+    const verified = Boolean(group && !group.deleted && plan.ready);
+    return {
+      subject_kind: 'Group',
+      subject_type: 'Gruppo',
+      subject_id: permission.aro_foreign_key,
+      display_name: group?.name || permission.aro_foreign_key,
+      detail: `${externalRecipientCount} destinatari effettivi verificati`,
+      permission_type: permission.type,
+      permission_label: permissionTypeLabel(permission.type),
+      current_user: false,
+      verified,
+      verification_status: verified ? 'Composizione e chiavi verificate' : (group?.deleted ? 'Gruppo eliminato.' : plan.failure),
+      recipient_count: externalRecipientCount,
+    };
+  });
+}
+
+function buildAclObjectCatalog(existingFolders, existingResources, shareDirectory, currentUserId) {
+  const folderCatalog = buildFolderCatalog(existingFolders);
+  const foldersById = new Map(folderCatalog.map((folder) => [folder.id, folder]));
+  const objects = [];
+  let totalPermissionRows = 0;
+
+  const addObject = ({ objectType, id, name, path, parentPath, permission, permissions, rawPermissionCount }) => {
+    totalPermissionRows += permissions.length;
+    assert(totalPermissionRows <= MAX_ACL_PERMISSION_ROWS, 'ACL_CATALOG_TOO_LARGE', `Il catalogo contiene piu di ${MAX_ACL_PERMISSION_ROWS} righe di permesso e non puo essere mostrato in un'unica operazione.`);
+    const rows = aclPermissionRows(permissions, shareDirectory, currentUserId);
+    const structurallyComplete = rawPermissionCount > 0 && rawPermissionCount === permissions.length;
+    const verifiedSubjects = rows.every((row) => row.verified);
+    const warnings = [];
+    if (rawPermissionCount === 0) {
+      warnings.push('Passbolt non ha restituito la maschera completa dei permessi per questo oggetto.');
+    } else if (rawPermissionCount !== permissions.length) {
+      warnings.push('Una o piu voci della maschera non hanno una struttura User/Group valida.');
+    }
+    const unavailableCount = rows.filter((row) => !row.verified).length;
+    if (unavailableCount > 0) {
+      warnings.push(`${unavailableCount} soggetti non risultano completamente verificabili nella directory autenticata.`);
+    }
+    const shared = permissions.some((entry) => entry.aro === 'Group' || entry.aro_foreign_key !== currentUserId);
+    const inspectionStatus = structurallyComplete && verifiedSubjects
+      ? 'verified'
+      : (structurallyComplete ? 'warning' : 'incomplete');
+    objects.push({
+      object_type: objectType,
+      object_type_label: objectType === 'folder' ? 'Cartella' : 'Risorsa',
+      object_id: id,
+      name: String(name).slice(0, 300),
+      path: String(path).slice(0, 4_096),
+      parent_path: parentPath ? String(parentPath).slice(0, 4_096) : null,
+      shared,
+      sharing_label: shared ? 'Condiviso' : 'Personale',
+      current_access_type: normalizePermissionType(permission?.type),
+      current_access_label: permissionTypeLabel(permission?.type),
+      permission_count: permissions.length,
+      raw_permission_count: rawPermissionCount,
+      acl_complete: structurallyComplete,
+      subjects_verified: verifiedSubjects,
+      inspection_status: inspectionStatus,
+      warnings,
+      permissions: rows,
+    });
+  };
+
+  for (const folder of folderCatalog) {
+    const parent = folder.folder_parent_id ? foldersById.get(folder.folder_parent_id) : null;
+    addObject({
+      objectType: 'folder',
+      id: folder.id,
+      name: folder.name,
+      path: folder.path,
+      parentPath: parent?.path ?? null,
+      permission: folder.permission_type === null ? null : { type: folder.permission_type },
+      permissions: folder.share_permissions,
+      rawPermissionCount: folder.raw_permission_count,
+    });
+  }
+
+  for (const resource of existingResources) {
+    const parent = resource.folder_parent_id ? foldersById.get(resource.folder_parent_id) : null;
+    const parentPath = parent?.path ?? (resource.folder_parent_id ? 'Cartella non disponibile' : 'Radice Passbolt');
+    addObject({
+      objectType: 'resource',
+      id: resource.id,
+      name: resource.name,
+      path: `${parentPath} / ${resource.name}`,
+      parentPath,
+      permission: resource.permission,
+      permissions: resource.permissions,
+      rawPermissionCount: resource.raw_permission_count,
+    });
+  }
+
+  return objects.sort((left, right) => (
+    left.path.localeCompare(right.path, 'it-IT', { sensitivity: 'base' })
+    || left.object_type.localeCompare(right.object_type)
+    || left.object_id.localeCompare(right.object_id)
+  ));
+}
+
+async function readAclCatalog(session, user, keyMaterial) {
+  const [resourcesResponse, foldersResponse, shareDirectoryResponse] = await Promise.all([
+    session.request('/resources.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
+    session.request('/folders.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
+    session.request('/share/search-aros.json?api-version=v2&contain[gpgkey]=1&contain[groups_users]=1', { allowError: true }),
+  ]);
+  assert(resourcesResponse.status >= 200 && resourcesResponse.status < 300, 'ACL_RESOURCES_READ_FAILED', apiMessage(resourcesResponse.document, 'Impossibile leggere le risorse Passbolt per il visualizzatore dei permessi.'));
+  assert(foldersResponse.status >= 200 && foldersResponse.status < 300, 'ACL_FOLDERS_READ_FAILED', apiMessage(foldersResponse.document, 'Impossibile leggere le cartelle Passbolt per il visualizzatore dei permessi.'));
+  assert(shareDirectoryResponse.status >= 200 && shareDirectoryResponse.status < 300, 'ACL_DIRECTORY_READ_FAILED', apiMessage(shareDirectoryResponse.document, 'Impossibile leggere la directory autenticata dei soggetti Passbolt.'));
+
+  const resourceEntries = rawExistingResources(resourcesResponse.document);
+  const folderEntries = rawExistingFolders(foldersResponse.document);
+  assert(resourceEntries.length + folderEntries.length <= MAX_ACL_OBJECTS, 'ACL_CATALOG_TOO_LARGE', `Il visualizzatore supporta al massimo ${MAX_ACL_OBJECTS} cartelle e risorse per sessione.`);
+  const needsMetadataKeys = resourceEntries.some(isEncryptedMetadataResource) || folderEntries.some(isEncryptedMetadataFolder);
+  let metadataKeyList = [];
+  if (needsMetadataKeys) {
+    const keysResponse = await session.request('/metadata/keys.json?api-version=v2&contain[metadata_private_keys]=1', { allowError: true });
+    assert(keysResponse.status >= 200 && keysResponse.status < 300, 'ACL_METADATA_KEYS_READ_FAILED', apiMessage(keysResponse.document, 'Le chiavi metadati necessarie per leggere gli oggetti v5 non sono disponibili.'));
+    metadataKeyList = metadataKeyEntries(keysResponse.document);
+  }
+  const sharedKeyEntries = new Map(metadataKeyList.map((entry) => [String(entry.id), entry]));
+  const sharedKeyCache = new Map();
+  const shareDirectory = await buildShareDirectory(shareDirectoryResponse.document, user, keyMaterial);
+  const existingFolders = await decryptExistingFolders(folderEntries, user, keyMaterial, session.baseUrl, sharedKeyEntries, sharedKeyCache, shareDirectory);
+  const existingResources = await decryptExistingResources(resourceEntries, user, keyMaterial, session.baseUrl, sharedKeyEntries, sharedKeyCache);
+  const objects = buildAclObjectCatalog(existingFolders, existingResources, shareDirectory, String(user.id ?? ''));
+  assert(Buffer.byteLength(JSON.stringify(objects), 'utf8') <= MAX_ACL_CATALOG_BYTES, 'ACL_CATALOG_TOO_LARGE', 'Il catalogo ACL supera il limite sicuro della risposta locale; affinare il supporto a cataloghi di grandi dimensioni prima di procedere.');
+  return {
+    objects,
+    folder_count: objects.filter((entry) => entry.object_type === 'folder').length,
+    resource_count: objects.filter((entry) => entry.object_type === 'resource').length,
+    shared_count: objects.filter((entry) => entry.shared).length,
+    verified_count: objects.filter((entry) => entry.inspection_status === 'verified').length,
+    warning_count: objects.filter((entry) => entry.inspection_status !== 'verified').length,
+  };
 }
 
 function customSharingFields(permissionConfiguration) {
@@ -3202,6 +3386,20 @@ class PersistentImportSession {
     };
   }
 
+  async aclCatalog(input) {
+    const state = this.requireState(input);
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const catalog = await readAclCatalog(state.session, state.user, state.key);
+    return {
+      command: 'acl-catalog',
+      session_id: state.sessionId,
+      read_only: true,
+      write_requests: 0,
+      owner: safeUser(state.user),
+      ...catalog,
+    };
+  }
+
   async recoveryReadiness(input) {
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
@@ -3488,6 +3686,8 @@ class PersistentImportSession {
         return this.readiness(input);
       case 'session-permissions':
         return this.permissions(input);
+      case 'session-acl-catalog':
+        return this.aclCatalog(input);
       case 'session-import':
         return this.import(input);
       case 'session-recovery-readiness':
@@ -3593,6 +3793,7 @@ async function selfTest() {
     reconciliation_progress_protocol: true,
     authenticated_recovery_protocol: true,
     permission_editor_protocol: true,
+    existing_acl_viewer_protocol: true,
     secrets_serialized: false,
   };
 }
@@ -3709,6 +3910,7 @@ export {
   classifyRecovery,
   createPlannedContent,
   encryptSecret,
+  buildAclObjectCatalog,
   permissionMaskDigest,
   readCapabilities,
 };

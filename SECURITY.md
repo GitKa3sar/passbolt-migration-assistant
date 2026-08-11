@@ -6,8 +6,8 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.12.x | Sì |
-| < 0.12 | No |
+| 0.15.x | Sì |
+| < 0.15 | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultima versione pubblicata.
 
@@ -42,3 +42,5 @@ Il componente di riconciliazione introdotto nella versione 0.13 scrive soltanto 
 Lo schema usa una lista chiusa di campi: identificativi UUID, hash SHA-256, fingerprint, stati, contatori e codici di errore. Rifiuta campi sconosciuti e qualsiasi nome o valore riconducibile a password, passphrase, segreti, chiavi private, MFA, cookie, autorizzazioni o sessioni. Non registra percorsi dei documenti, titolo, username o URL delle credenziali. Dalla versione 0.14 registra modalità e hash della configurazione ACL, ma non gli ID degli utenti o gruppi selezionati. I record sono concatenati tramite SHA-256; troncamento e corruzione bloccano la continuazione automatica e richiedono una verifica manuale. La catena rileva incoerenze accidentali ma non autentica da sola il file contro un utente locale che possa riscriverlo interamente: il recupero ricontrolla quindi origine e fingerprint, hash dell'identita, sorgenti, destinazione, configurazione ACL, oggetti remoti e maschere di permesso tramite una nuova sessione Passbolt. Soltanto stati univoci possono essere ripresi; non sono consentiti delete, move o sovrascritture implicite. Un lease esclusivo resta attivo fra verifica e applicazione per impedire che due processi riprendano lo stesso lotto in parallelo. L'archiviazione richiede UUID canonico, stato corrente e conferma esatta, acquisisce lo stesso lease e sposta il journal sotto la directory `Archive` senza cancellarne l'evidenza.
 
 L'editor dei permessi della versione 0.14 opera soltanto nella sessione autenticata. Il bridge valida directory, stato degli utenti, appartenenze ai gruppi, chiavi pubbliche e fingerprint, aggiunge sempre il proprietario corrente come Owner e lega la ACL al digest del piano. I permessi personalizzati vengono applicati soltanto a oggetti nuovi; una cartella esistente con ACL diversa blocca il dry-run invece di essere modificata implicitamente.
+
+Il visualizzatore ACL della versione 0.15 resta separato dall'editor e non offre azioni di modifica. Ogni caricamento riverifica sessione e identita, usa soltanto endpoint Passbolt in `GET` e restituisce alla GUI esclusivamente nomi, percorsi, ID, livelli e stati operativi bounded. Chiavi pubbliche, fingerprint e materiale OpenPGP vengono usati soltanto nel bridge per verificare utenti e gruppi e non attraversano il protocollo verso WPF. La GUI accetta il risultato soltanto se dichiara `read_only=true` e `write_requests=0`; maschere mancanti o non normalizzabili e directory incomplete restano visibili come avvisi e non vengono promosse a stato verificato. Il catalogo è volatile, non viene scritto nei journal e viene eliminato alla chiusura della sessione.
