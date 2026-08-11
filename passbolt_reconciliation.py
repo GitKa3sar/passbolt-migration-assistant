@@ -72,7 +72,13 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "candidates",
             }
         ),
-        frozenset({"destination_mapping_hash"}),
+        frozenset(
+            {
+                "destination_mapping_hash",
+                "permission_mode",
+                "permission_configuration_hash",
+            }
+        ),
     ),
     "operation_intent": (
         frozenset({"operation_id", "object_type", "action"}),
@@ -166,6 +172,7 @@ _VERIFICATION_RESOLUTIONS = {"remote_success", "not_applied"}
 _DUPLICATE_KINDS = {"batch", "server_destination"}
 _DESTINATION_MODES = {"client_folders", "client_mapping", "direct_folder", "root"}
 _FORMATS = {"auto", "v4", "v5", "none"}
+_PERMISSION_MODES = {"inherited", "custom"}
 
 
 class ReconciliationJournalError(RuntimeError):
@@ -231,6 +238,7 @@ class ReconciliationBatchDetails:
     event_count: int
     truncated_tail: bool
     candidate_ids: tuple[str, ...]
+    permission_mode: str
 
 
 @dataclass(frozen=True)
@@ -330,6 +338,65 @@ def hash_client_destination_mapping(value: object) -> str:
     else:
         raise ReconciliationJournalError("Mappatura delle destinazioni non valida.")
     return hashlib.sha256(_canonical_json(entries)).hexdigest()
+
+
+def hash_permission_configuration(mode_value: object, value: object) -> str:
+    """Hash a normalized ACL template without persisting Passbolt subject IDs."""
+
+    mode = str(mode_value if mode_value is not None else "inherited").strip().lower()
+    if mode not in _PERMISSION_MODES:
+        raise ReconciliationJournalError("Modalità dei permessi non valida.")
+    if value is None:
+        raw_entries: Sequence[object] = ()
+    elif isinstance(value, (list, tuple)) and len(value) <= 500:
+        raw_entries = value
+    else:
+        raise ReconciliationJournalError("Configurazione dei permessi non valida.")
+    entries: list[dict[str, str | int]] = []
+    seen: set[str] = set()
+    for item in raw_entries:
+        if not isinstance(item, Mapping) or set(item) != {
+            "aro",
+            "aro_foreign_key",
+            "type",
+        }:
+            raise ReconciliationJournalError("Voce dei permessi non valida.")
+        aro = str(item["aro"])
+        aro_foreign_key = str(item["aro_foreign_key"]).strip()
+        permission_type = item["type"]
+        if (
+            aro not in {"User", "Group"}
+            or not aro_foreign_key
+            or len(aro_foreign_key) > 128
+            or any(ord(character) < 32 or ord(character) == 127 for character in aro_foreign_key)
+            or isinstance(permission_type, bool)
+            or not isinstance(permission_type, int)
+            or permission_type not in {1, 7, 15}
+        ):
+            raise ReconciliationJournalError("Voce dei permessi non valida.")
+        identity = f"{aro}:{aro_foreign_key}"
+        if identity in seen:
+            raise ReconciliationJournalError("Destinatario duplicato nei permessi.")
+        seen.add(identity)
+        entries.append(
+            {
+                "aro": aro,
+                "aro_foreign_key": aro_foreign_key,
+                "type": permission_type,
+            }
+        )
+    entries.sort(key=lambda item: (str(item["aro"]), str(item["aro_foreign_key"]), int(item["type"])))
+    if mode == "inherited" and entries:
+        raise ReconciliationJournalError(
+            "La modalità ereditata non accetta permessi personalizzati."
+        )
+    if mode == "custom" and not entries:
+        raise ReconciliationJournalError(
+            "La modalità personalizzata richiede almeno un destinatario."
+        )
+    return hashlib.sha256(
+        _canonical_json({"mode": mode, "permissions": entries})
+    ).hexdigest()
 
 
 def _utc_now() -> str:
@@ -495,6 +562,28 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
         )
         if destination_mode in {"root", "client_mapping"} and destination_folder_id:
             raise ReconciliationJournalError("Cartella di destinazione incoerente.")
+        permission_fields = {
+            "permission_mode",
+            "permission_configuration_hash",
+        }
+        supplied_permission_fields = permission_fields.intersection(data)
+        if supplied_permission_fields and supplied_permission_fields != permission_fields:
+            raise ReconciliationJournalError(
+                "Prova della configurazione permessi incompleta."
+            )
+        permission_payload: dict[str, str] = {}
+        if supplied_permission_fields:
+            permission_mode = str(data["permission_mode"]).strip().lower()
+            if permission_mode not in _PERMISSION_MODES:
+                raise ReconciliationJournalError("Modalità dei permessi non valida.")
+            permission_payload = {
+                "permission_mode": permission_mode,
+                "permission_configuration_hash": _hex(
+                    data["permission_configuration_hash"],
+                    _SHA256,
+                    "Hash configurazione permessi",
+                ),
+            }
         return {
             "app_version": version,
             "server_origin": _server_origin(data["server_origin"]),
@@ -521,6 +610,7 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
                 if "destination_mapping_hash" in data
                 else {}
             ),
+            **permission_payload,
             "candidate_count": candidate_count,
             "candidates": candidates,
         }
@@ -1175,6 +1265,7 @@ def describe_reconciliation_batch(
         event_count=len(snapshot.events),
         truncated_tail=snapshot.truncated_tail,
         candidate_ids=candidate_ids,
+        permission_mode=str(payload.get("permission_mode", "inherited")),
     )
 
 
@@ -1318,6 +1409,16 @@ def build_recovery_state(snapshot: JournalSnapshot) -> dict[str, Any]:
             if "destination_mapping_hash" in header
             else {}
         ),
+        "permission_mode": header.get("permission_mode", "inherited"),
+        **(
+            {
+                "permission_configuration_hash": header[
+                    "permission_configuration_hash"
+                ]
+            }
+            if "permission_configuration_hash" in header
+            else {}
+        ),
         "candidate_count": header["candidate_count"],
         "candidates": list(header["candidates"]),
         "operations": list(operations.values()),
@@ -1347,6 +1448,8 @@ class ReconciliationJournal:
         destination_folder_id: str | None,
         candidates: Sequence[CandidateProof | Mapping[str, str]],
         destination_mapping_hash: str | None = None,
+        permission_mode: str | None = None,
+        permission_configuration_hash: str | None = None,
         root: str | Path | None = None,
     ) -> "ReconciliationJournal":
         journal_root = Path(root) if root is not None else default_journal_root()
@@ -1366,6 +1469,15 @@ class ReconciliationJournal:
             **(
                 {"destination_mapping_hash": destination_mapping_hash}
                 if destination_mapping_hash is not None
+                else {}
+            ),
+            **(
+                {
+                    "permission_mode": permission_mode,
+                    "permission_configuration_hash": permission_configuration_hash,
+                }
+                if permission_mode is not None
+                or permission_configuration_hash is not None
                 else {}
             ),
             "candidate_count": len(candidates),

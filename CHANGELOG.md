@@ -2,6 +2,33 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.14.0 - 2026-08-11
+
+### Added
+
+- aggiunto nella fase 04 il comando **Modifica permessi...**, disponibile dopo l'apertura della sessione Passbolt;
+- aggiunto il comando persistente `session-permissions`, che legge la directory autenticata di utenti e gruppi senza richiedere nuovamente passphrase o MFA;
+- supportati i livelli Passbolt Lettura (`1`), Aggiornamento (`7`) e Proprietario (`15`) per utenti e gruppi già esistenti;
+- aggiunti test per catalogo autenticato, ACL personalizzate, blocco delle destinazioni esistenti, immutabilità del proprietario, hash privacy-preserving e associazione dei permessi al recupero.
+
+### Changed
+
+- applicata la ACL personalizzata soltanto a nuove cartelle e nuove risorse create dall'import;
+- incluso il proprietario autenticato sempre come Owner, senza consentirne rimozione o declassamento;
+- inclusi modalità, voci normalizzate e hash della configurazione nel digest deterministico del piano;
+- legato ogni nuovo journal alla modalità e all'hash dei permessi senza persistere gli ID di utenti o gruppi;
+- richiesto, per il recupero di un lotto con ACL personalizzata, di ricreare nell'editor la stessa configurazione;
+- aggiornata l'applicazione e i metadati di progetto alla versione 0.14.0;
+- saltata intenzionalmente l'estensione ad altri provider MFA, mantenendo TOTP come provider supportato e spostando il focus successivo sulle operazioni controllate relative agli oggetti esistenti.
+
+### Security
+
+- mostrati come selezionabili soltanto destinatari attivi con chiavi pubbliche OpenPGP verificabili e gruppi espandibili integralmente;
+- ripetuta la validazione autenticata di utenti, gruppi, chiavi e ACL immediatamente prima dell'importazione;
+- bloccato il dry-run quando una destinazione già esistente non possiede esattamente la stessa ACL, evitando modifiche implicite dei permessi su oggetti preesistenti;
+- bloccato il recupero prima del bridge remoto quando modalità o hash dei permessi non coincidono con il lotto originale;
+- mantenuta la compatibilità di lettura con i journal precedenti, trattati come importazioni a permessi ereditati.
+
 ## 0.13.0 - 2026-08-11
 
 ### Added

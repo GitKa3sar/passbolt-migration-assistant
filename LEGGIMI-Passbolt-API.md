@@ -10,7 +10,17 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.13.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.14.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Editor autenticato dei permessi 0.14.0
+
+Nella fase 04 il pulsante **Modifica permessi...** usa la sessione GPGAuth gia aperta per interrogare `/share/search-aros.json`. L'editor elenca utenti e gruppi Passbolt esistenti e assegna a ciascuno uno dei livelli Lettura (`1`), Aggiornamento (`7`) o Proprietario (`15`). Il proprietario autenticato non compare fra i soggetti modificabili: il bridge lo aggiunge sempre come `User` Owner e rifiuta qualunque richiesta che tenti di inserirlo o declassarlo esplicitamente.
+
+Il catalogo non inoltra chiavi pubbliche alla GUI. Node verifica localmente stato dell'utente, fingerprint, scadenza e corrispondenza della chiave, espande integralmente i gruppi e restituisce soltanto identificatori, etichette operative, disponibilita e conteggi. Un utente senza chiave valida o un gruppo incompleto resta visibile come non disponibile e non puo essere salvato nella ACL.
+
+La modalita predefinita resta **Eredita dalla destinazione**. In modalita personalizzata, la maschera normalizzata viene applicata a nuove risorse nella radice e a nuove cartelle/risorse create dall'import. Una cartella gia esistente viene riutilizzata soltanto se possiede gia esattamente la stessa ACL; il piano non modifica permessi di oggetti preesistenti. Modalita, voci e livelli entrano nel digest del dry-run, vengono riletti dalla directory e ricontrollati prima della scrittura.
+
+Il journal salva soltanto `permission_mode` e `permission_configuration_hash`, non gli ID dei soggetti. Un recupero con ACL personalizzata richiede quindi di ricreare la stessa configurazione nell'editor; Python confronta l'hash prima di contattare il bridge e Node riconferma il piano e lo stato remoto. I journal precedenti, privi dei nuovi campi opzionali, sono interpretati come importazioni con permessi ereditati.
 
 ### Recupero guidato degli import interrotti 0.13.0
 
@@ -292,7 +302,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 
 L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.13.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.14.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
 
 Per eseguire soltanto il controllo da riga di comando:
 
@@ -346,7 +356,7 @@ python .\passbolt_review.py `
 
 La versione 0.13 introduce `passbolt_reconciliation.py`, il componente di persistenza, e lo collega alle operazioni reali della fase 04: dopo un dry-run valido, Python crea il registro prima di consegnare le risorse al bridge Node e passa al bridge soltanto l'UUID del lotto. Il protocollo persistente esegue verifica autenticata e ripresa idempotente; l'interfaccia espone selezione dei lotti, associazione dei sorgenti, riepilogo del piano, conferma esatta e archiviazione per l'operatore.
 
-Ogni lotto usa un file `batch-<UUID>.jsonl` sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`. Il primo evento lega il registro a versione dell'app, origine e fingerprint del server, hash dell'identita Passbolt, digest del piano, formati, destinazione, eventuale hash della mappatura cliente/cartella e coppie `candidate_id`/SHA-256 del sorgente. Gli eventi successivi possono contenere soltanto intenzioni operative, hash della destinazione e della maschera di permessi prevista, ID remoti, stati di creazione e condivisione, contatori e codici di errore tecnici. Non sono ammessi titolo, username, URL delle credenziali, percorsi dei documenti, password, password Excel, chiavi, passphrase, MFA, cookie o identificatori di sessione.
+Ogni lotto usa un file `batch-<UUID>.jsonl` sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`. Il primo evento lega il registro a versione dell'app, origine e fingerprint del server, hash dell'identita Passbolt, digest del piano, formati, destinazione, eventuale hash della mappatura cliente/cartella, modalità e hash della configurazione permessi e coppie `candidate_id`/SHA-256 del sorgente. Gli eventi successivi possono contenere soltanto intenzioni operative, hash della destinazione e della maschera di permessi prevista, ID remoti, stati di creazione e condivisione, contatori e codici di errore tecnici. Non sono ammessi titolo, username, URL delle credenziali, percorsi dei documenti, password, password Excel, chiavi, passphrase, MFA, cookie o identificatori di sessione.
 
 Ogni riga contiene numero di sequenza, timestamp UTC, hash della riga precedente e hash SHA-256 del record corrente. La scrittura viene sincronizzata prima di confermare l'append. Node emette `operation_intent` subito prima delle richieste irreversibili e un evento di esito dopo la risposta; Python consuma questi envelope internamente, quindi il protocollo WPF continua a ricevere un solo documento `{ok,result|error}` per comando. Soltanto dopo `batch_completed` Python accetta un esito finale riuscito. Una riga finale parziale non viene considerata un evento riuscito, marca il lotto come da verificare e blocca nuove scritture; un errore o un'alterazione in una riga interna rende il registro non fidato. Un lotto concluso diventa immutabile. La catena SHA-256 rileva corruzioni e modifiche non coerenti, ma non e una firma digitale: per questo il recupero non si basa mai sul solo contenuto del file.
 
@@ -356,4 +366,4 @@ Node rilegge cartelle, risorse e permessi e classifica ogni intenzione storica. 
 
 La ripresa puo creare contenuti mancanti e completare condivisioni non applicate, riestraendo il segreto soltanto per le risorse che devono essere create o ricifrate per i destinatari. Non pianifica mai cancellazioni, spostamenti o sovrascritture. Duplicati multipli, oggetti in una destinazione diversa, variazioni della ACL, identita o sorgenti non corrispondenti, journal corrotti o code troncate bloccano il piano e richiedono una verifica manuale.
 
-I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. Le fasi successive potranno aggiungere un editor esplicito dei permessi e dei gruppi, altri provider MFA e le operazioni controllate sulle risorse esistenti.
+I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. Le fasi successive potranno progettare operazioni controllate sugli oggetti esistenti e migliorare la gestione operativa dei lotti. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.

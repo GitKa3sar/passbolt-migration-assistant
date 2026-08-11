@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.13.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.14.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -21,7 +21,8 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
 - creazione di risorse Passbolt v4 e v5 con cifratura OpenPGP locale;
 - destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
-- creazione di sottocartelle personali e condivise con permessi ereditati;
+- creazione di sottocartelle personali e condivise con permessi ereditati oppure con una ACL personalizzata;
+- editor autenticato dei permessi per selezionare utenti e gruppi Passbolt e assegnare Lettura, Aggiornamento o Proprietario ai nuovi oggetti;
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
@@ -62,7 +63,7 @@ Al primo utilizzo:
 2. verificare la connessione pubblica;
 3. leggere e confermare la fingerprint OpenPGP rilevata automaticamente, confrontandola alla prima connessione con il valore comunicato dall'amministratore tramite un canale indipendente;
 4. selezionare la cartella locale contenente i documenti da inventariare;
-5. completare revisione, mappatura delle destinazioni e dry-run prima di autorizzare la scrittura.
+5. completare revisione, mappatura delle destinazioni, eventuale configurazione dei permessi e dry-run prima di autorizzare la scrittura.
 
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
 
@@ -70,7 +71,7 @@ Se un import si interrompe dopo l'avvio delle scritture, non ripetere direttamen
 
 1. selezionare il journal indicato dall'errore;
 2. usare la stessa cartella sorgente e rivedere tutti i documenti del lotto, riapplicando eventuali correzioni fatte nella fase 03;
-3. avviare la sessione autenticata e scegliere **Verifica lotto**;
+3. avviare la sessione autenticata; se il lotto usava una ACL personalizzata, ricreare nell'editor la stessa selezione di utenti, gruppi e livelli, quindi scegliere **Verifica lotto**;
 4. controllare i conteggi **Già riuscite**, **Da applicare** e **Conflitti**, verificando che non siano previste azioni distruttive;
 5. digitare la frase esatta `RECUPERA N` e confermare la ripresa;
 6. al completamento, archiviare il journal dalla stessa scheda.
@@ -119,7 +120,11 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
-La versione 0.13.0 supporta MFA TOTP, ma non altri provider MFA. Il lotto è limitato a 25 candidati e non sono ancora disponibili un editor generale delle ACL, la gestione dei gruppi o operazioni distruttive sulle risorse esistenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+La versione 0.14.0 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto è limitato a 25 candidati. L'editor ACL usa utenti e gruppi già presenti in Passbolt, ma non modifica la composizione dei gruppi e non cambia i permessi di cartelle o risorse esistenti. Le operazioni distruttive sulle risorse esistenti restano escluse. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+
+La versione 0.14 introduce l'editor esplicito dei permessi nella fase 04. La directory di utenti e gruppi viene letta soltanto nella sessione autenticata; ogni chiave pubblica e ogni appartenenza di gruppo vengono verificate prima di rendere il destinatario selezionabile. Il proprietario autenticato viene aggiunto sempre come `Owner` e non può essere rimosso o declassato. La ACL normalizzata entra nel digest del dry-run e viene ricontrollata subito prima della scrittura.
+
+I permessi personalizzati si applicano soltanto alle nuove cartelle e risorse create dall'import. Se il piano punta a una cartella esistente, l'importazione è consentita soltanto quando quella cartella possiede già esattamente la stessa ACL; in caso contrario il dry-run si blocca senza modificare l'oggetto. Il journal conserva soltanto modalità e hash della configurazione, non gli ID dei destinatari. Per questo un recupero riavviato deve ricreare la stessa ACL nell'editor e superare il confronto dell'hash.
 
 La versione 0.13 completa il registro locale di riconciliazione privo di segreti, con identificativo del lotto, hash dei sorgenti, ID remoti e stato di ogni creazione. `passbolt_reconciliation.py` definisce il formato JSON Lines versionato, il concatenamento SHA-256, la scrittura sincronizzata e il comportamento sicuro in caso di troncamento o manomissione; il workflow della fase 04 persiste gli eventi prima e dopo ogni operazione irreversibile; il protocollo di sessione riapre un lotto incompleto, riverifica server, fingerprint, utente, sorgenti e stato remoto e costruisce una ripresa idempotente.
 
@@ -127,7 +132,7 @@ La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella des
 
 I registri attivi sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. L'archiviazione li sposta sotto `Reconciliation\Archive\<stato>` e non elimina l'evidenza. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali.
 
-La prossima fase della roadmap potrà estendere i provider MFA, introdurre un editor esplicito dei permessi e dei gruppi e progettare operazioni controllate sulle risorse esistenti. Tali funzioni non fanno parte della 0.13 e non devono indebolire le garanzie fail-closed del recupero.
+La prossima fase della roadmap si concentra sulle operazioni controllate sugli oggetti esistenti, mantenendole separate dall'import non distruttivo, e sul miglioramento della gestione operativa dei lotti. Il supporto ad altri provider MFA resta saltato come scelta di scope; qualunque futura estensione non dovrà indebolire le garanzie fail-closed del recupero.
 
 ## Contribuire
 

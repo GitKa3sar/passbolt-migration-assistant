@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.13.0"
+        Title="Passbolt Migration Assistant - v0.14.0"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -380,7 +380,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,14">
                     <Grid>
-                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Identit&#xE0; OpenPGP" FontSize="15" FontWeight="SemiBold" Foreground="#1F2933" Margin="0,0,0,10" />
                         <TextBlock Grid.Row="1" Grid.Column="0" Text="Chiave privata" Foreground="#66737F" VerticalAlignment="Center" />
@@ -403,19 +403,22 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                             <ComboBoxItem Content="Radice personale Passbolt" Tag="" />
                         </ComboBox>
                         <Button x:Name="ConfigureClientMappingsButton" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Content="Mappa clienti" Style="{StaticResource SecondaryButton}" Margin="0,9,0,0" IsEnabled="False" Visibility="Collapsed" />
-                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Formato cartelle" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <ComboBox x:Name="FolderFormat" Grid.Row="6" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito; le nuove cartelle in un contenitore condiviso ne ereditano i permessi">
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Permessi nuovi oggetti" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
+                        <TextBlock x:Name="PermissionModeStatus" Grid.Row="6" Grid.Column="1" Text="Ereditati dalla destinazione" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" TextWrapping="Wrap" ToolTip="I permessi personalizzati vengono applicati soltanto alle nuove cartelle e risorse; il proprietario autenticato resta sempre Owner" />
+                        <Button x:Name="ConfigurePermissionsButton" Grid.Row="6" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="10,9,0,0" IsEnabled="False" />
+                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Formato cartelle" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
+                        <ComboBox x:Name="FolderFormat" Grid.Row="7" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito; le nuove cartelle in un contenitore condiviso ne ereditano i permessi">
                             <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
                             <ComboBoxItem Content="v4 - nome in chiaro" Tag="v4" />
                             <ComboBoxItem Content="v5 - nome cifrato" Tag="v5" />
                         </ComboBox>
-                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Formato risorse" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <ComboBox x:Name="ResourceFormat" Grid.Row="7" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito dall'istanza Passbolt">
+                        <TextBlock Grid.Row="8" Grid.Column="0" Text="Formato risorse" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
+                        <ComboBox x:Name="ResourceFormat" Grid.Row="8" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito dall'istanza Passbolt">
                             <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
                             <ComboBoxItem Content="v4 - metadati in chiaro" Tag="v4" />
                             <ComboBoxItem Content="v5 - metadati cifrati" Tag="v5" />
                         </ComboBox>
-                        <Button x:Name="DryRunButton" Grid.Row="7" Grid.Column="2" Content="Verifica e dry-run" Style="{StaticResource PrimaryButton}" Margin="10,9,0,0" IsEnabled="False" />
+                        <Button x:Name="DryRunButton" Grid.Row="8" Grid.Column="2" Content="Verifica e dry-run" Style="{StaticResource PrimaryButton}" Margin="10,9,0,0" IsEnabled="False" />
                     </Grid>
                 </Border>
 
@@ -599,6 +602,8 @@ $ImportSessionButton = Get-Control "ImportSessionButton"
 $DestinationMode = Get-Control "DestinationMode"
 $DestinationFolder = Get-Control "DestinationFolder"
 $ConfigureClientMappingsButton = Get-Control "ConfigureClientMappingsButton"
+$PermissionModeStatus = Get-Control "PermissionModeStatus"
+$ConfigurePermissionsButton = Get-Control "ConfigurePermissionsButton"
 $FolderFormat = Get-Control "FolderFormat"
 $ResourceFormat = Get-Control "ResourceFormat"
 $DryRunButton = Get-Control "DryRunButton"
@@ -665,6 +670,10 @@ $script:PopulatingDestinationFolders = $false
 $script:AvailableDestinationFolders = @()
 $script:DestinationFolderCatalogLoaded = $false
 $script:ClientDestinationMap = @{}
+$script:PermissionMode = "inherited"
+$script:PermissionTemplate = @()
+$script:PermissionCatalog = @()
+$script:PermissionCatalogSessionId = ""
 $script:CurrentPage = "Configuration"
 
 function Get-Brush([string]$Color) {
@@ -923,6 +932,7 @@ function Update-ImportSessionState {
     }
     Update-ExecuteImportState
     Update-RecoveryActionState
+    Update-PermissionEditorState
 }
 
 function Stop-ImportSession(
@@ -956,6 +966,8 @@ function Stop-ImportSession(
     $script:ImportSessionLastActivityUtc = [DateTime]::MinValue
     $script:ImportSessionRoot = ""
     $script:ImportSessionKeyPath = ""
+    $script:PermissionCatalog = @()
+    $script:PermissionCatalogSessionId = ""
     $KeyPassphrase.Clear()
     $MfaTotpCode.Clear()
     if ($ResetPlan) {
@@ -1033,6 +1045,8 @@ function Open-ImportSession {
         $script:ImportSessionRoot = $script:InventoryFolder
         $script:ImportSessionKeyPath = $KeyPath
         $script:ImportSessionLastActivityUtc = [DateTime]::UtcNow
+        $script:PermissionCatalog = @()
+        $script:PermissionCatalogSessionId = ""
         Reset-ImportPlan "Sessione autenticata attiva. Configurare la destinazione ed eseguire il dry-run."
         if ($null -ne $script:RecoveryBatchDetails) {
             Reset-RecoveryPlan "Sessione autenticata attiva. Il lotto e' associato ai sorgenti: eseguire la verifica remota."
@@ -1231,7 +1245,12 @@ function Set-RecoveryBatchSelection {
         $script:RecoveryCandidates = $Candidates.ToArray()
         $script:RecoverySourceFilePasswords = $RecoveryPasswords
         $script:RecoverySecretOverrides = $RecoveryOverrides
-        $RecoveryStatus.Text = "Lotto associato alla cartella corrente: $($Candidates.Count) candidati riletti. Server, utente, sorgenti, destinazione e stato remoto saranno verificati nella sessione autenticata."
+        $PermissionRecoveryNote = if ([string]$Details.permission_mode -eq "custom") {
+            " Il lotto usava una ACL personalizzata: ricreare la stessa selezione nell'editor permessi prima della verifica."
+        } else {
+            " Il lotto usava i permessi ereditati; impostare l'editor su Eredita dalla destinazione."
+        }
+        $RecoveryStatus.Text = "Lotto associato alla cartella corrente: $($Candidates.Count) candidati riletti. Server, utente, sorgenti, destinazione, permessi e stato remoto saranno verificati nella sessione autenticata.$PermissionRecoveryNote"
         $RecoveryConfirmationHint.Text = if (Test-ImportSessionActive) { "Sessione attiva: verifica il lotto." } else { "Avvia la sessione sicura, poi verifica il lotto." }
     } catch {
         Clear-RecoveryCandidateState
@@ -1347,6 +1366,337 @@ function Reset-ImportPlan([string]$Status = "Eseguire il dry-run per preparare u
 function Get-SelectedDestinationFolderId {
     if ($null -eq $DestinationFolder.SelectedItem) { return "" }
     return [string]$DestinationFolder.SelectedItem.Tag
+}
+
+function Get-PermissionTemplatePayload {
+    $Entries = New-Object System.Collections.Generic.List[object]
+    foreach ($Entry in @($script:PermissionTemplate)) {
+        $Entries.Add([pscustomobject][ordered]@{
+            aro = [string]$Entry.aro
+            aro_foreign_key = [string]$Entry.aro_foreign_key
+            type = [int]$Entry.type
+        })
+    }
+    return $Entries.ToArray()
+}
+
+function Get-PermissionLevelLabel([int]$PermissionType) {
+    switch ($PermissionType) {
+        1 { return "Lettura" }
+        7 { return "Aggiornamento" }
+        15 { return "Proprietario" }
+        default { return "Non valido" }
+    }
+}
+
+function Update-PermissionEditorState {
+    $ConfigurePermissionsButton.IsEnabled = Test-ImportSessionActive
+    if ($script:PermissionMode -eq "custom") {
+        $PermissionModeStatus.Text = "Personalizzati: $(@($script:PermissionTemplate).Count) utenti/gruppi + proprietario autenticato"
+        $PermissionModeStatus.Foreground = Get-Brush "#16875D"
+    } else {
+        $PermissionModeStatus.Text = "Ereditati dalla destinazione"
+        $PermissionModeStatus.Foreground = Get-Brush "#66737F"
+    }
+}
+
+function Get-AuthenticatedPermissionCatalog {
+    if (-not (Test-ImportSessionActive)) {
+        throw "Avviare prima la sessione autenticata Passbolt."
+    }
+    $Envelope = Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+        command = "session-permissions"
+        session_id = $script:ImportSessionId
+    })
+    if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+    if ([string]$Envelope.result.command -ne "permission-catalog") {
+        throw "Passbolt non ha restituito un catalogo permessi valido."
+    }
+    $script:PermissionCatalog = @($Envelope.result.entries)
+    $script:PermissionCatalogSessionId = $script:ImportSessionId
+    return $Envelope.result
+}
+
+function Show-PermissionEditor([switch]$BuildOnly) {
+    $CatalogResult = $null
+    if ($BuildOnly) {
+        $CatalogResult = [pscustomobject]@{
+            entries = @($script:PermissionCatalog)
+            owner = if ($null -ne $script:ImportSessionInfo) { $script:ImportSessionInfo.user } else { $null }
+        }
+    } else {
+        try {
+            $CatalogResult = Get-AuthenticatedPermissionCatalog
+        } catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Permessi non disponibili", "OK", "Error") | Out-Null
+            return
+        }
+    }
+
+    $CatalogRows = New-Object System.Collections.ArrayList
+    foreach ($Entry in @($CatalogResult.entries)) {
+        $Availability = if ([bool]$Entry.available) { "" } else { " [non disponibile]" }
+        [void]$CatalogRows.Add([pscustomobject]@{
+            Aro = [string]$Entry.aro
+            Id = [string]$Entry.aro_foreign_key
+            SubjectType = [string]$Entry.subject_type
+            DisplayName = [string]$Entry.display_name
+            Detail = [string]$Entry.detail
+            Available = [bool]$Entry.available
+            UnavailableReason = [string]$Entry.unavailable_reason
+            Label = "[$([string]$Entry.subject_type)] $([string]$Entry.display_name) - $([string]$Entry.detail)$Availability"
+        })
+    }
+    $SelectedRows = New-Object System.Collections.ArrayList
+    foreach ($Permission in @($script:PermissionTemplate)) {
+        $CatalogEntry = @($CatalogRows | Where-Object { $_.Aro -eq [string]$Permission.aro -and $_.Id -eq [string]$Permission.aro_foreign_key }) | Select-Object -First 1
+        $Subject = if ($null -ne $CatalogEntry) { "[$($CatalogEntry.SubjectType)] $($CatalogEntry.DisplayName)" } else { "[$([string]$Permission.aro)] $([string]$Permission.aro_foreign_key) [non disponibile]" }
+        [void]$SelectedRows.Add([pscustomobject]@{
+            Aro = [string]$Permission.aro
+            Id = [string]$Permission.aro_foreign_key
+            Subject = $Subject
+            PermissionType = [int]$Permission.type
+            PermissionLabel = Get-PermissionLevelLabel ([int]$Permission.type)
+        })
+    }
+
+    $Dialog = New-Object System.Windows.Window
+    $Dialog.Title = "Editor permessi - Passbolt"
+    $Dialog.Width = 980
+    $Dialog.Height = 650
+    $Dialog.MinWidth = 820
+    $Dialog.MinHeight = 520
+    $Dialog.WindowStartupLocation = "CenterOwner"
+    if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
+    $Dialog.Background = Get-Brush "#F4F6F8"
+    $Dialog.FontFamily = "Segoe UI"
+
+    $Layout = New-Object System.Windows.Controls.Grid
+    $Layout.Margin = [System.Windows.Thickness]::new(20)
+    foreach ($Height in @("Auto", "Auto", "*", "Auto")) {
+        $Row = New-Object System.Windows.Controls.RowDefinition
+        $Row.Height = if ($Height -eq "*") { [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) } else { [System.Windows.GridLength]::Auto }
+        [void]$Layout.RowDefinitions.Add($Row)
+    }
+
+    $Header = New-Object System.Windows.Controls.StackPanel
+    $Title = New-Object System.Windows.Controls.TextBlock
+    $Title.Text = "Permessi per nuove cartelle e risorse"
+    $Title.FontSize = 20
+    $Title.FontWeight = "Bold"
+    $Title.Foreground = Get-Brush "#1F2933"
+    [void]$Header.Children.Add($Title)
+    $Description = New-Object System.Windows.Controls.TextBlock
+    $Description.Text = "La ACL personalizzata viene applicata solo agli oggetti creati dall'import. Il proprietario autenticato resta sempre Proprietario e non puo' essere rimosso. Gli oggetti esistenti non vengono modificati: se la loro ACL e' diversa, il dry-run blocca l'importazione."
+    $Description.TextWrapping = "Wrap"
+    $Description.Foreground = Get-Brush "#66737F"
+    $Description.Margin = [System.Windows.Thickness]::new(0, 5, 0, 0)
+    [void]$Header.Children.Add($Description)
+    [System.Windows.Controls.Grid]::SetRow($Header, 0)
+    [void]$Layout.Children.Add($Header)
+
+    $ModePanel = New-Object System.Windows.Controls.StackPanel
+    $ModePanel.Orientation = "Horizontal"
+    $ModePanel.Margin = [System.Windows.Thickness]::new(0, 14, 0, 12)
+    $InheritedRadio = New-Object System.Windows.Controls.RadioButton
+    $InheritedRadio.Content = "Eredita dalla destinazione"
+    $InheritedRadio.GroupName = "PermissionMode"
+    $InheritedRadio.IsChecked = ($script:PermissionMode -ne "custom")
+    $InheritedRadio.Margin = [System.Windows.Thickness]::new(0, 0, 22, 0)
+    $CustomRadio = New-Object System.Windows.Controls.RadioButton
+    $CustomRadio.Content = "Usa ACL personalizzata"
+    $CustomRadio.GroupName = "PermissionMode"
+    $CustomRadio.IsChecked = ($script:PermissionMode -eq "custom")
+    [void]$ModePanel.Children.Add($InheritedRadio)
+    [void]$ModePanel.Children.Add($CustomRadio)
+    [System.Windows.Controls.Grid]::SetRow($ModePanel, 1)
+    [void]$Layout.Children.Add($ModePanel)
+
+    $Content = New-Object System.Windows.Controls.Grid
+    $LeftColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $LeftColumn.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $RightColumn = New-Object System.Windows.Controls.ColumnDefinition
+    $RightColumn.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    [void]$Content.ColumnDefinitions.Add($LeftColumn)
+    [void]$Content.ColumnDefinitions.Add($RightColumn)
+    [System.Windows.Controls.Grid]::SetRow($Content, 2)
+
+    $AvailablePanel = New-Object System.Windows.Controls.DockPanel
+    $AvailablePanel.Margin = [System.Windows.Thickness]::new(0, 0, 6, 0)
+    $AvailableTitle = New-Object System.Windows.Controls.TextBlock
+    $AvailableTitle.Text = "Directory autenticata utenti e gruppi"
+    $AvailableTitle.FontWeight = "SemiBold"
+    $AvailableTitle.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
+    [System.Windows.Controls.DockPanel]::SetDock($AvailableTitle, "Top")
+    [void]$AvailablePanel.Children.Add($AvailableTitle)
+    $AddPanel = New-Object System.Windows.Controls.StackPanel
+    $AddPanel.Orientation = "Horizontal"
+    $AddPanel.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
+    [System.Windows.Controls.DockPanel]::SetDock($AddPanel, "Bottom")
+    $PermissionLevel = New-Object System.Windows.Controls.ComboBox
+    $PermissionLevel.Width = 170
+    foreach ($Type in @(1, 7, 15)) {
+        $Item = New-Object System.Windows.Controls.ComboBoxItem
+        $Item.Content = Get-PermissionLevelLabel $Type
+        $Item.Tag = $Type
+        [void]$PermissionLevel.Items.Add($Item)
+    }
+    $PermissionLevel.SelectedIndex = 0
+    $AddButton = New-Object System.Windows.Controls.Button
+    $AddButton.Content = "Aggiungi / aggiorna"
+    $AddButton.Padding = [System.Windows.Thickness]::new(14, 7, 14, 7)
+    $AddButton.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+    [void]$AddPanel.Children.Add($PermissionLevel)
+    [void]$AddPanel.Children.Add($AddButton)
+    [void]$AvailablePanel.Children.Add($AddPanel)
+    $DirectoryList = New-Object System.Windows.Controls.ListBox
+    $DirectoryList.ItemsSource = $CatalogRows
+    $DirectoryList.DisplayMemberPath = "Label"
+    [void]$AvailablePanel.Children.Add($DirectoryList)
+    [System.Windows.Controls.Grid]::SetColumn($AvailablePanel, 0)
+    [void]$Content.Children.Add($AvailablePanel)
+
+    $SelectedPanel = New-Object System.Windows.Controls.DockPanel
+    $SelectedPanel.Margin = [System.Windows.Thickness]::new(6, 0, 0, 0)
+    $SelectedTitle = New-Object System.Windows.Controls.TextBlock
+    $SelectedTitle.Text = "ACL selezionata (oltre al proprietario autenticato)"
+    $SelectedTitle.FontWeight = "SemiBold"
+    $SelectedTitle.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
+    [System.Windows.Controls.DockPanel]::SetDock($SelectedTitle, "Top")
+    [void]$SelectedPanel.Children.Add($SelectedTitle)
+    $RemoveButton = New-Object System.Windows.Controls.Button
+    $RemoveButton.Content = "Rimuovi selezionato"
+    $RemoveButton.Padding = [System.Windows.Thickness]::new(14, 7, 14, 7)
+    $RemoveButton.HorizontalAlignment = "Right"
+    $RemoveButton.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
+    [System.Windows.Controls.DockPanel]::SetDock($RemoveButton, "Bottom")
+    [void]$SelectedPanel.Children.Add($RemoveButton)
+    $SelectedGrid = New-Object System.Windows.Controls.DataGrid
+    $SelectedGrid.AutoGenerateColumns = $false
+    $SelectedGrid.IsReadOnly = $true
+    $SelectedGrid.SelectionMode = "Single"
+    $SubjectColumn = New-Object System.Windows.Controls.DataGridTextColumn
+    $SubjectColumn.Header = "Utente / gruppo"
+    $SubjectColumn.Binding = New-Object System.Windows.Data.Binding("Subject")
+    $SubjectColumn.Width = [System.Windows.Controls.DataGridLength]::new(1, [System.Windows.Controls.DataGridLengthUnitType]::Star)
+    [void]$SelectedGrid.Columns.Add($SubjectColumn)
+    $LevelColumn = New-Object System.Windows.Controls.DataGridTextColumn
+    $LevelColumn.Header = "Livello"
+    $LevelColumn.Binding = New-Object System.Windows.Data.Binding("PermissionLabel")
+    $LevelColumn.Width = 130
+    [void]$SelectedGrid.Columns.Add($LevelColumn)
+    $SelectedGrid.ItemsSource = $SelectedRows
+    [void]$SelectedPanel.Children.Add($SelectedGrid)
+    [System.Windows.Controls.Grid]::SetColumn($SelectedPanel, 1)
+    [void]$Content.Children.Add($SelectedPanel)
+    [void]$Layout.Children.Add($Content)
+
+    $SetEditorEnabled = {
+        $Enabled = [bool]$CustomRadio.IsChecked
+        $DirectoryList.IsEnabled = $Enabled
+        $PermissionLevel.IsEnabled = $Enabled
+        $AddButton.IsEnabled = $Enabled
+        $SelectedGrid.IsEnabled = $Enabled
+        $RemoveButton.IsEnabled = $Enabled
+    }
+    $CustomRadio.Add_Checked($SetEditorEnabled)
+    $InheritedRadio.Add_Checked($SetEditorEnabled)
+    & $SetEditorEnabled
+
+    $AddButton.Add_Click({
+        $Subject = $DirectoryList.SelectedItem
+        if ($null -eq $Subject) { return }
+        if (-not [bool]$Subject.Available) {
+            $Reason = if ([string]$Subject.UnavailableReason) { [string]$Subject.UnavailableReason } else { "Il destinatario non possiede una chiave pubblica verificabile." }
+            [System.Windows.MessageBox]::Show($Reason, "Destinatario non disponibile", "OK", "Warning") | Out-Null
+            return
+        }
+        $Type = [int]$PermissionLevel.SelectedItem.Tag
+        $Existing = @($SelectedRows | Where-Object { $_.Aro -eq $Subject.Aro -and $_.Id -eq $Subject.Id }) | Select-Object -First 1
+        if ($null -ne $Existing) {
+            $Existing.PermissionType = $Type
+            $Existing.PermissionLabel = Get-PermissionLevelLabel $Type
+        } else {
+            [void]$SelectedRows.Add([pscustomobject]@{
+                Aro = [string]$Subject.Aro
+                Id = [string]$Subject.Id
+                Subject = "[$($Subject.SubjectType)] $($Subject.DisplayName)"
+                PermissionType = $Type
+                PermissionLabel = Get-PermissionLevelLabel $Type
+            })
+        }
+        $SelectedGrid.Items.Refresh()
+    })
+    $RemoveButton.Add_Click({
+        if ($null -eq $SelectedGrid.SelectedItem) { return }
+        [void]$SelectedRows.Remove($SelectedGrid.SelectedItem)
+        $SelectedGrid.Items.Refresh()
+    })
+
+    $Footer = New-Object System.Windows.Controls.StackPanel
+    $Footer.Orientation = "Horizontal"
+    $Footer.HorizontalAlignment = "Right"
+    $Footer.Margin = [System.Windows.Thickness]::new(0, 14, 0, 0)
+    [System.Windows.Controls.Grid]::SetRow($Footer, 3)
+    $CancelButton = New-Object System.Windows.Controls.Button
+    $CancelButton.Content = "Annulla"
+    $CancelButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
+    $CancelButton.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    $CancelButton.Add_Click({ $Dialog.DialogResult = $false })
+    [void]$Footer.Children.Add($CancelButton)
+    $SaveButton = New-Object System.Windows.Controls.Button
+    $SaveButton.Content = "Salva permessi"
+    $SaveButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
+    $SaveButton.Background = Get-Brush "#2878D0"
+    $SaveButton.Foreground = Get-Brush "#FFFFFF"
+    $SaveButton.BorderThickness = [System.Windows.Thickness]::new(0)
+    $SaveButton.Add_Click({
+        if ([bool]$CustomRadio.IsChecked -and $SelectedRows.Count -lt 1) {
+            [System.Windows.MessageBox]::Show("Selezionare almeno un utente o gruppo, oppure usare i permessi ereditati.", "ACL incompleta", "OK", "Warning") | Out-Null
+            return
+        }
+        if ([bool]$CustomRadio.IsChecked) {
+            foreach ($Selected in @($SelectedRows)) {
+                $Available = @($CatalogRows | Where-Object { $_.Aro -eq $Selected.Aro -and $_.Id -eq $Selected.Id -and $_.Available }) | Select-Object -First 1
+                if ($null -eq $Available) {
+                    [System.Windows.MessageBox]::Show("Rimuovere i destinatari non piu' disponibili prima di salvare.", "ACL non applicabile", "OK", "Warning") | Out-Null
+                    return
+                }
+            }
+        }
+        $Dialog.Tag = [pscustomobject]@{
+            Mode = if ([bool]$CustomRadio.IsChecked) { "custom" } else { "inherited" }
+            Entries = @($SelectedRows)
+        }
+        $Dialog.DialogResult = $true
+    })
+    [void]$Footer.Children.Add($SaveButton)
+    [void]$Layout.Children.Add($Footer)
+    $Dialog.Content = $Layout
+
+    if ($BuildOnly) {
+        return [pscustomobject]@{ Window = $Dialog; SelectedGrid = $SelectedGrid; DirectoryList = $DirectoryList }
+    }
+    if ($Dialog.ShowDialog() -ne $true) { return }
+    $Result = $Dialog.Tag
+    $script:PermissionMode = [string]$Result.Mode
+    if ($script:PermissionMode -eq "custom") {
+        $script:PermissionTemplate = @($Result.Entries | ForEach-Object {
+            [pscustomobject][ordered]@{
+                aro = [string]$_.Aro
+                aro_foreign_key = [string]$_.Id
+                type = [int]$_.PermissionType
+            }
+        })
+    } else {
+        $script:PermissionTemplate = @()
+    }
+    Reset-ImportPlan "Permessi modificati. Ripetere il dry-run autenticato."
+    if ($null -ne $script:RecoveryBatchDetails) {
+        Reset-RecoveryPlan "Permessi modificati. Ripetere la verifica autenticata del lotto."
+    }
+    Update-PermissionEditorState
+    Add-Activity "Configurazione permessi aggiornata: $($script:PermissionMode), $(@($script:PermissionTemplate).Count) destinatari espliciti."
 }
 
 function Get-RequiredImportClients {
@@ -2175,6 +2525,8 @@ function Invoke-ImportReadiness {
             folder_format = $RequestedFolderFormat
             destination_folder_id = $RequestedDestinationFolderId
             client_destination_mapping = $RequestedClientDestinationMapping
+            permission_mode = $script:PermissionMode
+            permission_template = @(Get-PermissionTemplatePayload)
             candidates = $script:ImportCandidates
             source_file_passwords = $ReadinessSourceFilePasswords
         }
@@ -2240,12 +2592,14 @@ function Invoke-ImportReadiness {
         } else {
             $FolderIdentity = "contenitore: $SelectedFolderLabel; cartelle $($Result.folder_format_selected)"
         }
-        $ImportIdentity.Text = "Utente verificato: $DisplayName <$($Result.user.username)> | chiave $($Result.user_key_fingerprint) | $($Result.authentication) | risorse $($Result.resource_format_selected) | $FolderIdentity | tipo $($Result.resource_type.slug)"
+        $PermissionIdentity = if ([string]$Result.permission_mode -eq "custom") { "ACL personalizzata ($([int]$Result.permission_template_entry_count) destinatari espliciti)" } else { "ACL ereditata" }
+        $ImportIdentity.Text = "Utente verificato: $DisplayName <$($Result.user.username)> | chiave $($Result.user_key_fingerprint) | $($Result.authentication) | risorse $($Result.resource_format_selected) | $FolderIdentity | $PermissionIdentity | tipo $($Result.resource_type.slug)"
 
         if ([bool]$Result.can_import -and [int]$Result.create_count -gt 0) {
             $ExpectedPhrase = "IMPORTA $([int]$Result.create_count)"
             $SharedFolderSummary = if ([int]$Result.create_shared_folder_count -gt 0) {
-                " Cartelle condivise da creare con permessi ereditati: $([int]$Result.create_shared_folder_count)."
+                $PermissionSource = if ([string]$Result.permission_mode -eq "custom") { "personalizzati" } else { "ereditati" }
+                " Cartelle condivise da creare con permessi ${PermissionSource}: $([int]$Result.create_shared_folder_count)."
             } else { "" }
             $ReconciledFolderSummary = if ([int]$Result.reconcile_shared_folder_count -gt 0) {
                 " Cartelle personali vuote da riconciliare con i permessi del contenitore: $([int]$Result.reconcile_shared_folder_count)."
@@ -2299,10 +2653,12 @@ function Invoke-ConfirmedImport {
     $SharedCreateCount = [int]$script:ImportPlan.shared_create_count
     $EncryptedSecretCopyCount = [int]$script:ImportPlan.encrypted_secret_copy_count
     $SharingConfirmation = if ($SharedCreateCount -gt 0) {
-        " Di queste, $SharedCreateCount risorse erediteranno i permessi delle cartelle condivise; saranno prodotte $EncryptedSecretCopyCount copie cifrate complessive dei segreti. Ogni condivisione verra' prima simulata da Passbolt."
+        $PermissionAction = if ([string]$script:ImportPlan.permission_mode -eq "custom") { "riceveranno la ACL personalizzata verificata" } else { "erediteranno i permessi delle cartelle condivise" }
+        " Di queste, $SharedCreateCount risorse $PermissionAction; saranno prodotte $EncryptedSecretCopyCount copie cifrate complessive dei segreti. Ogni condivisione verra' prima simulata da Passbolt."
     } else { "" }
     $FolderSharingConfirmation = if ($CreateSharedFolderCount -gt 0) {
-        " $CreateSharedFolderCount nuove cartelle saranno create nel contenitore condiviso e riceveranno la sua maschera completa di permessi prima di creare le relative risorse."
+        $FolderPermissionAction = if ([string]$script:ImportPlan.permission_mode -eq "custom") { "la ACL personalizzata verificata" } else { "la maschera completa del contenitore" }
+        " $CreateSharedFolderCount nuove cartelle saranno create e riceveranno $FolderPermissionAction prima di creare le relative risorse."
     } else { "" }
     $FolderReconciliationConfirmation = if ($ReconcileSharedFolderCount -gt 0) {
         " $ReconcileSharedFolderCount cartelle personali gia' esistenti, verificate come vuote e di proprieta' dell'utente autenticato, riceveranno la maschera di permessi del contenitore prima della creazione delle risorse."
@@ -2350,6 +2706,8 @@ function Invoke-ConfirmedImport {
         folder_format = [string]$script:ImportPlan.folder_format_requested
         destination_folder_id = [string]$script:ImportPlan.destination_folder_id
         client_destination_mapping = @($script:ImportPlan.client_destination_mapping)
+        permission_mode = [string]$script:ImportPlan.permission_mode
+        permission_template = @(Get-PermissionTemplatePayload)
         candidates = $script:ImportCandidates
         create_candidate_ids = $CreateCandidateIds
         secret_overrides = $SecretOverrides.ToArray()
@@ -2426,7 +2784,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.13.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.14.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -2471,6 +2829,8 @@ function Invoke-RecoveryReadiness {
             command = "session-recovery-readiness"
             session_id = $script:ImportSessionId
             reconciliation_batch_id = $BatchId
+            permission_mode = $script:PermissionMode
+            permission_template = @(Get-PermissionTemplatePayload)
             candidates = $script:RecoveryCandidates
             source_file_passwords = $SourceFilePasswords
         }
@@ -2569,6 +2929,8 @@ function Invoke-ConfirmedRecovery {
             recovery_id = [string]$Plan.recovery_id
             recovery_plan_digest = [string]$Plan.recovery_plan_digest
             resource_candidate_ids = $ResourceCandidateIds
+            permission_mode = $script:PermissionMode
+            permission_template = @(Get-PermissionTemplatePayload)
             candidates = $script:RecoveryCandidates
             secret_overrides = $SecretOverrides.ToArray()
             source_file_passwords = $SourceFilePasswords
@@ -3176,6 +3538,11 @@ $PassboltUrl.Add_TextChanged({
         $DetectedFingerprint.Text = "Non ancora rilevata"
         Reset-ImportPlan "URL Passbolt modificato. Ripetere connessione e dry-run."
         $script:ClientDestinationMap = @{}
+        $script:PermissionMode = "inherited"
+        $script:PermissionTemplate = @()
+        $script:PermissionCatalog = @()
+        $script:PermissionCatalogSessionId = ""
+        Update-PermissionEditorState
         Update-DestinationFolderOptions @() "" $false
         $ConnectionDot.Fill = Get-Brush "#98A5B1"
         $ConnectionStatus.Text = "URL modificato: ripetere la verifica"
@@ -3394,6 +3761,7 @@ $DestinationFolder.Add_SelectionChanged({
     }
 })
 $ConfigureClientMappingsButton.Add_Click({ Show-ClientDestinationMappingDialog })
+$ConfigurePermissionsButton.Add_Click({ Show-PermissionEditor })
 $ImportConfirmation.Add_TextChanged({ Update-ExecuteImportState })
 $ImportSessionButton.Add_Click({
     if (Test-ImportSessionActive) {
@@ -3521,11 +3889,11 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
@@ -3563,6 +3931,22 @@ for line in sys.stdin:
         throw "La finestra UI della mappatura per cliente non puo essere costruita."
     }
     $ClientMappingDialogProbe.Window.Close()
+    $script:PermissionCatalog = @(
+        [pscustomobject]@{
+            aro = "User"
+            aro_foreign_key = "permission-user-probe"
+            subject_type = "Utente"
+            display_name = "Utente test"
+            detail = "utente@example.invalid"
+            available = $true
+            unavailable_reason = $null
+        }
+    )
+    $PermissionEditorProbe = Show-PermissionEditor -BuildOnly
+    if ($null -eq $PermissionEditorProbe -or $null -eq $PermissionEditorProbe.SelectedGrid -or $PermissionEditorProbe.DirectoryList.Items.Count -ne 1) {
+        throw "L'editor UI dei permessi non puo essere costruito nello stato previsto."
+    }
+    $PermissionEditorProbe.Window.Close()
     if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
     }
@@ -3602,10 +3986,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.13.0"
+        version = "0.14.0"
         ui = "WPF"
         phases = 4
-        controls = 91
+        controls = 93
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -3613,6 +3997,7 @@ for line in sys.stdin:
         process_argument_quoting = "OK"
         persistent_process_transport = "OK"
         client_mapping_ui = "OK"
+        permission_editor_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
         protected_excel_password_prompt = "OK"

@@ -34,6 +34,7 @@ from passbolt_reconciliation import (
     ReconciliationJournalError,
     ReconciliationJournalLease,
     hash_client_destination_mapping,
+    hash_permission_configuration,
     hash_user_identifier,
     read_batch,
 )
@@ -54,7 +55,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.14.0"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -545,6 +546,28 @@ def _prepare_recovery_context(
         raise ImportPreparationError(
             "Il lotto originale non utilizza una mappatura per cliente."
         )
+    expected_permission_mode = str(
+        recovery_state.get("permission_mode", "inherited")
+    )
+    supplied_permission_mode = request.get("permission_mode", "inherited")
+    try:
+        supplied_permission_hash = hash_permission_configuration(
+            supplied_permission_mode, request.get("permission_template")
+        )
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "La configurazione dei permessi del recupero non è valida."
+        ) from exc
+    expected_permission_hash = recovery_state.get("permission_configuration_hash")
+    if expected_permission_hash is None:
+        expected_permission_hash = hash_permission_configuration("inherited", None)
+    if (
+        str(supplied_permission_mode).strip().lower() != expected_permission_mode
+        or supplied_permission_hash != expected_permission_hash
+    ):
+        raise ImportPreparationError(
+            "I permessi configurati non corrispondono al lotto originale. Riaprire l’editor e ricreare la stessa ACL prima del recupero."
+        )
     return recovery_state, candidates
 
 
@@ -684,6 +707,8 @@ def execute_import(
         "folder_format": request.get("folder_format", "auto"),
         "destination_folder_id": request.get("destination_folder_id"),
         "client_destination_mapping": request.get("client_destination_mapping"),
+        "permission_mode": request.get("permission_mode", "inherited"),
+        "permission_template": request.get("permission_template"),
         "candidates": candidates,
         "resources": resources,
         "plan_digest": request.get("plan_digest"),
@@ -773,7 +798,17 @@ def _session_bridge_request(
                 "client_destination_mapping": request.get(
                     "client_destination_mapping"
                 ),
+                "permission_mode": request.get("permission_mode", "inherited"),
+                "permission_template": request.get("permission_template"),
                 "candidates": candidates,
+            },
+            [],
+        )
+    if command == "session-permissions":
+        return (
+            {
+                "command": "session-permissions",
+                "session_id": request.get("session_id"),
             },
             [],
         )
@@ -792,6 +827,8 @@ def _session_bridge_request(
                 "client_destination_mapping": request.get(
                     "client_destination_mapping"
                 ),
+                "permission_mode": request.get("permission_mode", "inherited"),
+                "permission_template": request.get("permission_template"),
                 "candidates": candidates,
                 "resources": resources,
                 "plan_digest": request.get("plan_digest"),
@@ -818,6 +855,8 @@ def _session_bridge_request(
                 "client_destination_mapping": request.get(
                     "client_destination_mapping"
                 ),
+                "permission_mode": request.get("permission_mode", "inherited"),
+                "permission_template": request.get("permission_template"),
                 "candidates": candidates,
                 "recovery_state": recovery_state,
                 **(
@@ -1066,6 +1105,32 @@ class _SessionReconciliationCoordinator:
                 "Il piano dell’importazione non corrisponde all’ultimo dry-run."
             )
 
+        try:
+            permission_mode = str(
+                request.get("permission_mode", "inherited")
+            ).strip().lower()
+            permission_configuration_hash = hash_permission_configuration(
+                permission_mode, bridge_request.get("permission_template")
+            )
+        except ReconciliationJournalError as exc:
+            raise ImportPreparationError(
+                "La configurazione dei permessi dell’importazione non è valida."
+            ) from exc
+        if (
+            permission_mode
+            != str(self._readiness.get("permission_mode", "inherited"))
+            or permission_configuration_hash
+            != str(
+                self._readiness.get(
+                    "permission_configuration_hash",
+                    hash_permission_configuration("inherited", None),
+                )
+            )
+        ):
+            raise ImportPreparationError(
+                "I permessi dell’importazione non corrispondono all’ultimo dry-run."
+            )
+
         user = self._session.get("user")
         candidates = bridge_request.get("candidates")
         if not isinstance(user, Mapping) or not isinstance(candidates, list):
@@ -1113,6 +1178,8 @@ class _SessionReconciliationCoordinator:
                     == "client_mapping"
                     else None
                 ),
+                permission_mode=permission_mode,
+                permission_configuration_hash=permission_configuration_hash,
                 root=self._journal_root,
             )
             lease = acquire_journal_lease(journal)
@@ -1477,6 +1544,7 @@ def _reconciliation_describe_result(
         "event_count": details.event_count,
         "truncated_tail": details.truncated_tail,
         "candidate_ids": list(details.candidate_ids),
+        "permission_mode": details.permission_mode,
     }
 
 
@@ -1538,6 +1606,7 @@ def main() -> int:
                     "recoverable_archive_protocol": True,
                     "explicit_reveal_supported": True,
                     "protected_excel_integrity_supported": True,
+                    "permission_editor_protocol": True,
                     "secrets_serialized": False,
                 },
             }

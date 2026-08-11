@@ -13,6 +13,7 @@ from passbolt_reconciliation import (
     CandidateProof,
     describe_reconciliation_batch,
     hash_client_destination_mapping,
+    hash_permission_configuration,
     list_reconciliation_batches,
     ReconciliationJournal,
     ReconciliationJournalCorrupt,
@@ -477,6 +478,55 @@ class ReconciliationJournalTests(unittest.TestCase):
             hash_client_destination_mapping(first),
             hash_client_destination_mapping(changed),
         )
+
+    def test_permission_configuration_is_order_independent_and_only_hashes_subjects(self) -> None:
+        permissions = [
+            {"aro": "User", "aro_foreign_key": "user-recipient-id", "type": 7},
+            {"aro": "Group", "aro_foreign_key": "group-recipient-id", "type": 1},
+        ]
+        permission_hash = hash_permission_configuration("custom", permissions)
+        self.assertEqual(
+            permission_hash,
+            hash_permission_configuration("custom", list(reversed(permissions))),
+        )
+        self.assertNotEqual(
+            permission_hash,
+            hash_permission_configuration(
+                "custom",
+                [
+                    {"aro": "User", "aro_foreign_key": "user-recipient-id", "type": 15},
+                    permissions[1],
+                ],
+            ),
+        )
+        with self.assertRaises(ReconciliationJournalError):
+            hash_permission_configuration("inherited", permissions)
+
+        journal = ReconciliationJournal.create(
+            app_version="0.14.0",
+            server_origin="https://passbolt.example.test",
+            server_fingerprint="0123456789ABCDEF0123456789ABCDEF01234567",
+            user_id_hash=hash_user_identifier(self.user_id),
+            plan_digest="a" * 64,
+            resource_format="v4",
+            folder_format="v4",
+            destination_mode="root",
+            destination_folder_id=None,
+            candidates=(CandidateProof("aaaaaaaaaaaaaaaa", "1" * 64),),
+            permission_mode="custom",
+            permission_configuration_hash=permission_hash,
+            root=self.root,
+        )
+        state = build_recovery_state(journal.read())
+        self.assertEqual(state["permission_mode"], "custom")
+        self.assertEqual(state["permission_configuration_hash"], permission_hash)
+        self.assertEqual(
+            describe_reconciliation_batch(journal.batch_id, self.root).permission_mode,
+            "custom",
+        )
+        journal_text = journal.path.read_text(encoding="utf-8")
+        self.assertNotIn("user-recipient-id", journal_text)
+        self.assertNotIn("group-recipient-id", journal_text)
 
     def test_batch_lease_blocks_a_concurrent_recovery_until_released(self) -> None:
         journal = self.create_journal()

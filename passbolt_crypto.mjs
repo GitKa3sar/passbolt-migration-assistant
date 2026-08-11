@@ -1053,6 +1053,8 @@ async function buildShareDirectory(document, user, keyMaterial) {
     users.set(id, {
       id,
       username: String(entry.username ?? '').slice(0, 300),
+      first_name: String(entry.profile?.first_name ?? '').slice(0, 150),
+      last_name: String(entry.profile?.last_name ?? '').slice(0, 150),
       active,
       memberships: [...new Set(memberships)].sort(),
       publicKey,
@@ -1066,6 +1068,8 @@ async function buildShareDirectory(document, user, keyMaterial) {
     users.set(currentUserId, {
       id: currentUserId,
       username: String(user.username ?? '').slice(0, 300),
+      first_name: String(user.profile?.first_name ?? '').slice(0, 150),
+      last_name: String(user.profile?.last_name ?? '').slice(0, 150),
       active: true,
       memberships: [],
       publicKey: keyMaterial.publicKey,
@@ -1129,6 +1133,88 @@ function buildFolderSharePlan(permissions, shareDirectory, currentUserId) {
   }
   recipients.sort((left, right) => left.username.localeCompare(right.username, 'it-IT', { sensitivity: 'base' }) || left.user_id.localeCompare(right.user_id));
   return { ready: recipients.length > 0, failure: recipients.length ? null : 'La cartella condivisa non contiene destinatari attivi verificabili.', recipients };
+}
+
+function buildPermissionConfiguration(permissionModeValue, permissionTemplateValue, shareDirectory, currentUserId) {
+  const mode = normalizePermissionMode(permissionModeValue);
+  if (mode === 'inherited') {
+    assert(permissionTemplateValue === undefined || permissionTemplateValue === null || (Array.isArray(permissionTemplateValue) && permissionTemplateValue.length === 0), 'INVALID_PERMISSION_TEMPLATE', 'La modalita Ereditata non accetta una maschera di permessi personalizzata.');
+    return {
+      mode,
+      template: [],
+      permissions: null,
+      recipients: null,
+      configuration_hash: digestPlan({ mode, permissions: [] }),
+    };
+  }
+
+  assert(shareDirectory, 'PERMISSION_DIRECTORY_UNAVAILABLE', 'L’elenco autenticato degli utenti e dei gruppi Passbolt non e disponibile. Riaprire l’editor dei permessi e riprovare.');
+  const template = normalizeCustomPermissionEntries(permissionTemplateValue, currentUserId);
+  assert(template.length > 0, 'EMPTY_PERMISSION_TEMPLATE', 'Selezionare almeno un utente o gruppo per usare i permessi personalizzati.');
+  for (const permission of template) {
+    if (permission.aro === 'User') {
+      const directoryUser = shareDirectory.users.get(permission.aro_foreign_key);
+      assert(directoryUser?.active, 'PERMISSION_USER_UNAVAILABLE', `L’utente ${permission.aro_foreign_key} non e disponibile o non e attivo.`);
+    } else {
+      const group = shareDirectory.groups.get(permission.aro_foreign_key);
+      assert(group && !group.deleted, 'PERMISSION_GROUP_UNAVAILABLE', `Il gruppo ${permission.aro_foreign_key} non e disponibile.`);
+    }
+  }
+  const permissions = normalizeFolderPermissions([
+    ...template,
+    { aro: 'User', aro_foreign_key: currentUserId, type: 15 },
+  ]);
+  const sharePlan = buildFolderSharePlan(permissions, shareDirectory, currentUserId);
+  assert(sharePlan.ready, 'PERMISSION_TEMPLATE_UNAVAILABLE', sharePlan.failure || 'I permessi personalizzati non sono applicabili in sicurezza.');
+  assert(sharePlan.recipients.some((recipient) => recipient.user_id !== currentUserId), 'PERMISSION_TEMPLATE_HAS_NO_RECIPIENTS', 'I permessi personalizzati devono includere almeno un altro utente attivo oltre al proprietario autenticato.');
+  return {
+    mode,
+    template,
+    permissions,
+    recipients: sharePlan.recipients,
+    configuration_hash: digestPlan({ mode, permissions: template }),
+  };
+}
+
+function permissionCatalog(shareDirectory, currentUserId) {
+  const entries = [];
+  for (const user of shareDirectory.users.values()) {
+    if (user.id === currentUserId) continue;
+    const displayName = `${user.first_name} ${user.last_name}`.trim() || user.username || user.id;
+    entries.push({
+      aro: 'User',
+      aro_foreign_key: user.id,
+      subject_type: 'Utente',
+      display_name: displayName,
+      detail: user.username || user.id,
+      available: Boolean(user.active && user.publicKey && user.fingerprint && !user.key_error),
+      unavailable_reason: user.key_error,
+      recipient_count: user.active ? 1 : 0,
+    });
+  }
+  for (const group of shareDirectory.groups.values()) {
+    const permissions = normalizeFolderPermissions([
+      { aro: 'User', aro_foreign_key: currentUserId, type: 15 },
+      { aro: 'Group', aro_foreign_key: group.id, type: 1 },
+    ]);
+    const plan = buildFolderSharePlan(permissions, shareDirectory, currentUserId);
+    const externalRecipientCount = plan.recipients.filter((recipient) => recipient.user_id !== currentUserId).length;
+    entries.push({
+      aro: 'Group',
+      aro_foreign_key: group.id,
+      subject_type: 'Gruppo',
+      display_name: group.name || group.id,
+      detail: `${externalRecipientCount} destinatari verificati`,
+      available: Boolean(!group.deleted && plan.ready && externalRecipientCount > 0),
+      unavailable_reason: group.deleted ? 'Gruppo eliminato.' : (plan.failure || (externalRecipientCount > 0 ? null : 'Il gruppo non contiene altri utenti attivi.')),
+      recipient_count: externalRecipientCount,
+    });
+  }
+  return entries.sort((left, right) => (
+    left.subject_type.localeCompare(right.subject_type, 'it-IT', { sensitivity: 'base' })
+    || left.display_name.localeCompare(right.display_name, 'it-IT', { sensitivity: 'base' })
+    || left.aro_foreign_key.localeCompare(right.aro_foreign_key)
+  ));
 }
 
 async function decryptExistingFolders(entries, user, keyMaterial, baseUrl, sharedKeyEntries, sharedKeyCache, shareDirectory = null) {
@@ -1525,6 +1611,100 @@ function digestPlan(plan) {
   return createHash('sha256').update(canonicalJson(plan), 'utf8').digest('hex');
 }
 
+function customSharingFields(permissionConfiguration) {
+  return {
+    shared: true,
+    share_permissions: permissionConfiguration.permissions,
+    share_recipients: permissionConfiguration.recipients,
+    share_recipient_count: permissionConfiguration.recipients.length,
+    share_permission_count: permissionConfiguration.permissions.length,
+    share_permission_source: 'custom',
+  };
+}
+
+function applyPermissionConfiguration(destinationPlan, permissionConfiguration) {
+  if (permissionConfiguration.mode === 'inherited') {
+    return { ...destinationPlan, permissionFailure: null };
+  }
+  const customFields = customSharingFields(permissionConfiguration);
+  const expectedMaskHash = permissionMaskDigest(permissionConfiguration.permissions);
+  const folders = destinationPlan.folders.map((folder) => {
+    if (folder.action === 'create') {
+      return {
+        ...folder,
+        ...customFields,
+        share_inherited_from_folder_id: null,
+        share_inherited_from_path: null,
+      };
+    }
+    const existingMaskMatches = folder.shared
+      && permissionMaskDigest(folder.share_permissions) === expectedMaskHash;
+    return {
+      ...folder,
+      permission_template_conflict: !existingMaskMatches,
+      permission_template_conflict_reason: folder.action === 'repair_share'
+        ? `La cartella esistente ${folder.path} richiederebbe una modifica dei permessi. L’editor applica la ACL personalizzata soltanto a nuovi oggetti.`
+        : `La cartella esistente ${folder.path} non possiede gia la stessa ACL personalizzata. Per sicurezza i suoi permessi non verranno modificati automaticamente.`,
+      ...(existingMaskMatches ? { share_permission_source: 'custom_existing_match' } : {}),
+    };
+  });
+  const byKey = new Map(folders.map((folder) => [folder.destination_key, folder]));
+  const destinations = new Map();
+  for (const [candidateId, destination] of destinationPlan.destinations.entries()) {
+    if (destination.folder_action === 'root') {
+      destinations.set(candidateId, { ...destination, ...customFields });
+      continue;
+    }
+    const folder = byKey.get(destination.destination_key);
+    if (destination.folder_action === 'create') {
+      destinations.set(candidateId, {
+        ...destination,
+        ...customFields,
+        share_inherited_from_folder_id: null,
+        share_inherited_from_path: null,
+      });
+      continue;
+    }
+    destinations.set(candidateId, {
+      ...destination,
+      ...(folder?.permission_template_conflict ? {
+        permission_template_conflict: true,
+        permission_template_conflict_reason: folder.permission_template_conflict_reason,
+      } : {}),
+      ...(folder?.share_permission_source ? { share_permission_source: folder.share_permission_source } : {}),
+    });
+  }
+  return { ...destinationPlan, folders, destinations, permissionFailure: null };
+}
+
+function normalizePermissionMode(value = 'inherited') {
+  const mode = String(value ?? 'inherited').trim().toLowerCase();
+  assert(['inherited', 'custom'].includes(mode), 'INVALID_PERMISSION_MODE', 'La modalita dei permessi deve essere Ereditata oppure Personalizzata.');
+  return mode;
+}
+
+function normalizeCustomPermissionEntries(value, currentUserId) {
+  assert(Array.isArray(value) && value.length <= 500, 'INVALID_PERMISSION_TEMPLATE', 'La configurazione dei permessi personalizzati non e valida.');
+  const entries = [];
+  const seen = new Set();
+  for (const item of value) {
+    assert(item && typeof item === 'object' && !Array.isArray(item), 'INVALID_PERMISSION_TEMPLATE', 'Una voce dei permessi personalizzati non e valida.');
+    assert(Object.keys(item).every((key) => ['aro', 'aro_foreign_key', 'type'].includes(key)), 'INVALID_PERMISSION_TEMPLATE', 'Una voce dei permessi personalizzati contiene campi non supportati.');
+    const aro = String(item.aro ?? '');
+    const aroForeignKey = String(item.aro_foreign_key ?? '').trim();
+    const type = normalizePermissionType(item.type);
+    assert(['User', 'Group'].includes(aro), 'INVALID_PERMISSION_TEMPLATE', 'Un destinatario dei permessi non indica un tipo valido.');
+    assert(aroForeignKey && aroForeignKey.length <= 128 && !/[\u0000-\u001f\u007f]/.test(aroForeignKey), 'INVALID_PERMISSION_TEMPLATE', 'Un destinatario dei permessi non contiene un identificatore valido.');
+    assert(type !== null, 'INVALID_PERMISSION_TEMPLATE', 'Il livello di un permesso personalizzato non e valido.');
+    assert(!(aro === 'User' && aroForeignKey === currentUserId), 'CURRENT_OWNER_PERMISSION_IMMUTABLE', 'Il proprietario autenticato e aggiunto automaticamente e non puo essere modificato dall’editor.');
+    const key = `${aro}:${aroForeignKey}`;
+    assert(!seen.has(key), 'DUPLICATE_PERMISSION_ENTRY', 'La configurazione contiene due permessi per lo stesso utente o gruppo.');
+    seen.add(key);
+    entries.push({ aro, aro_foreign_key: aroForeignKey, type });
+  }
+  return normalizeFolderPermissions(entries);
+}
+
 function normalizeRecoveryState(value, candidates) {
   assert(value && typeof value === 'object' && !Array.isArray(value), 'RECOVERY_STATE_INVALID', 'Il registro locale di recupero non e valido.');
   const batchId = normalizeReconciliationBatchId(value.batch_id);
@@ -1547,7 +1727,11 @@ function normalizeRecoveryState(value, candidates) {
     assert(['folder', 'resource'].includes(String(operation.object_type ?? '')), 'RECOVERY_STATE_INVALID', 'Il tipo di un’operazione del registro non e valido.');
     assert(['create_folder', 'share_folder', 'reconcile_folder', 'create_resource', 'share_resource'].includes(String(operation.action ?? '')), 'RECOVERY_STATE_INVALID', 'L’azione di un’operazione del registro non e valida.');
   }
-  return { ...value, batch_id: batchId };
+  const permissionMode = normalizePermissionMode(value.permission_mode ?? 'inherited');
+  if (value.permission_configuration_hash !== undefined) {
+    assert(/^[0-9a-f]{64}$/.test(String(value.permission_configuration_hash)), 'RECOVERY_STATE_INVALID', 'L’hash dei permessi del registro non e valido.');
+  }
+  return { ...value, batch_id: batchId, permission_mode: permissionMode };
 }
 
 function recordedRemoteId(operation) {
@@ -1599,7 +1783,10 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
   if (String(recovery.resource_format) !== String(capabilities.resource_format_selected)
       || String(recovery.folder_format) !== String(capabilities.folder_format_selected ?? 'none')
       || String(recovery.destination_mode) !== String(capabilities.destination_mode)
-      || String(recovery.destination_folder_id ?? '') !== String(capabilities.destination_folder_id ?? '')) {
+      || String(recovery.destination_folder_id ?? '') !== String(capabilities.destination_folder_id ?? '')
+      || String(recovery.permission_mode ?? 'inherited') !== String(capabilities.permission_mode ?? 'inherited')
+      || (recovery.permission_configuration_hash
+        && String(recovery.permission_configuration_hash) !== String(capabilities.permission_configuration_hash ?? ''))) {
     conflicts.push({ operation_id: null, object_type: null, action: null, code: 'RECOVERY_PLAN_CONTEXT_CHANGED' });
   }
   if (!capabilities.can_import) {
@@ -1809,6 +1996,8 @@ async function analyzeCapabilities(
   requestedFolderFormatValue = 'auto',
   destinationFolderIdValue = null,
   clientDestinationMappingValue = null,
+  permissionModeValue = 'inherited',
+  permissionTemplateValue = null,
 ) {
   const requestedFormat = normalizeResourceFormat(requestedFormatValue);
   const destinationMode = normalizeDestinationMode(destinationModeValue);
@@ -1909,6 +2098,12 @@ async function analyzeCapabilities(
       shareDirectory = null;
     }
   }
+  const permissionConfiguration = buildPermissionConfiguration(
+    permissionModeValue,
+    permissionTemplateValue,
+    shareDirectory,
+    String(user.id ?? ''),
+  );
   let duplicateDetectionAvailable = true;
   let duplicateFailure = null;
   let existingResources = [];
@@ -1985,7 +2180,7 @@ async function analyzeCapabilities(
   const folderCatalog = folderDetectionAvailable && needsFolderInventory
     ? buildFolderCatalog(existingFolders)
     : [];
-  let destinationPlan = planDestinations(
+  let destinationPlan = applyPermissionConfiguration(planDestinations(
     candidates,
     folderCatalog,
     existingResources,
@@ -1993,8 +2188,12 @@ async function analyzeCapabilities(
     selectedFolderFormat,
     destinationFolderId,
     clientDestinationMapping,
-  );
+  ), permissionConfiguration);
   let candidatePlan = buildCandidatePlan(candidates, existingResources, duplicateDetectionAvailable, destinationPlan.destinations);
+  const activePermissionConflict = candidatePlan.find((item) => item.action === 'create' && item.permission_template_conflict);
+  if (!destinationPlan.failure && activePermissionConflict) {
+    destinationPlan.failure = activePermissionConflict.permission_template_conflict_reason;
+  }
   let activeFolderKeys = new Set(candidatePlan.filter((item) => item.action === 'create').map((item) => item.destination_key));
   let folderPlan = destinationPlan.folders.filter((folder) => folder.action === 'reuse' || activeFolderKeys.has(folder.destination_key));
   let sharedCreateCount = candidatePlan.filter((item) => item.action === 'create' && item.shared).length;
@@ -2025,7 +2224,7 @@ async function analyzeCapabilities(
     }
     if (sharedMetadataKeyFailure && sharedFolderMetadataRequired && requestedFolderFormat === 'auto' && allowV4Folders) {
       selectedFolderFormat = 'v4';
-      destinationPlan = planDestinations(
+      destinationPlan = applyPermissionConfiguration(planDestinations(
         candidates,
         folderCatalog,
         existingResources,
@@ -2033,8 +2232,12 @@ async function analyzeCapabilities(
         selectedFolderFormat,
         destinationFolderId,
         clientDestinationMapping,
-      );
+      ), permissionConfiguration);
       candidatePlan = buildCandidatePlan(candidates, existingResources, duplicateDetectionAvailable, destinationPlan.destinations);
+      const fallbackPermissionConflict = candidatePlan.find((item) => item.action === 'create' && item.permission_template_conflict);
+      if (!destinationPlan.failure && fallbackPermissionConflict) {
+        destinationPlan.failure = fallbackPermissionConflict.permission_template_conflict_reason;
+      }
       activeFolderKeys = new Set(candidatePlan.filter((item) => item.action === 'create').map((item) => item.destination_key));
       folderPlan = destinationPlan.folders.filter((folder) => folder.action === 'reuse' || activeFolderKeys.has(folder.destination_key));
       sharedCreateCount = candidatePlan.filter((item) => item.action === 'create' && item.shared).length;
@@ -2095,6 +2298,9 @@ async function analyzeCapabilities(
     destination_mode: destinationMode,
     destination_folder_id: destinationFolderId,
     client_destination_mapping: clientDestinationMapping.entries,
+    permission_mode: permissionConfiguration.mode,
+    permission_template: permissionConfiguration.template,
+    permission_configuration_hash: permissionConfiguration.configuration_hash,
     folder_format_requested: requestedFolderFormat,
     folder_format_selected: selectedFolderFormat,
     metadata_key_id: metadataEncryptionKey?.id ?? null,
@@ -2125,6 +2331,9 @@ async function analyzeCapabilities(
     destination_mode: destinationMode,
     destination_folder_id: destinationFolderId,
     client_destination_mapping: clientDestinationMapping.entries,
+    permission_mode: permissionConfiguration.mode,
+    permission_configuration_hash: permissionConfiguration.configuration_hash,
+    permission_template_entry_count: permissionConfiguration.template.length,
     required_clients: clientDestinationMapping.requiredClients,
     folder_format_requested: requestedFolderFormat,
     folder_format_selected: selectedFolderFormat,
@@ -2177,6 +2386,7 @@ async function analyzeCapabilities(
       metadataEncryptionKey,
       sharedMetadataEncryptionKey,
       shareDirectory,
+      permissionConfiguration,
       folders: folderPlan,
       destinationFolders: destinationPlan.folders,
       existingFolders: folderCatalog,
@@ -2185,8 +2395,8 @@ async function analyzeCapabilities(
   };
 }
 
-async function readCapabilities(session, user, candidates, keyMaterial = null, resourceFormat = 'auto', destinationMode = 'client_folders', folderFormat = 'auto', destinationFolderId = null, clientDestinationMapping = null) {
-  return (await analyzeCapabilities(session, user, candidates, keyMaterial, resourceFormat, destinationMode, folderFormat, destinationFolderId, clientDestinationMapping)).capabilities;
+async function readCapabilities(session, user, candidates, keyMaterial = null, resourceFormat = 'auto', destinationMode = 'client_folders', folderFormat = 'auto', destinationFolderId = null, clientDestinationMapping = null, permissionMode = 'inherited', permissionTemplate = null) {
+  return (await analyzeCapabilities(session, user, candidates, keyMaterial, resourceFormat, destinationMode, folderFormat, destinationFolderId, clientDestinationMapping, permissionMode, permissionTemplate)).capabilities;
 }
 
 async function inspectKey(input) {
@@ -2219,6 +2429,8 @@ async function readiness(input) {
       input.folder_format,
       input.destination_folder_id,
       input.client_destination_mapping,
+      input.permission_mode,
+      input.permission_template,
     );
     return {
       command: 'readiness',
@@ -2824,6 +3036,8 @@ async function executeImport(input) {
       input.folder_format,
       input.destination_folder_id,
       input.client_destination_mapping,
+      input.permission_mode,
+      input.permission_template,
     );
     const { capabilities, runtime } = analysis;
     assert(capabilities.can_import, 'IMPORT_NOT_SUPPORTED', capabilities.unavailable_reason || 'Importazione non disponibile su questa istanza.');
@@ -2953,6 +3167,8 @@ class PersistentImportSession {
       input.folder_format,
       input.destination_folder_id,
       input.client_destination_mapping,
+      input.permission_mode,
+      input.permission_template,
     );
     return {
       command: 'readiness',
@@ -2964,6 +3180,25 @@ class PersistentImportSession {
       user_key_fingerprint: state.key.fingerprint,
       user: safeUser(state.user),
       ...capabilities,
+    };
+  }
+
+  async permissions(input) {
+    const state = this.requireState(input);
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const response = await state.session.request('/share/search-aros.json?api-version=v2&contain[gpgkey]=1&contain[groups_users]=1', { allowError: true });
+    assert(response.status >= 200 && response.status < 300, 'PERMISSION_DIRECTORY_READ_FAILED', apiMessage(response.document, 'Impossibile leggere l’elenco autenticato degli utenti e dei gruppi Passbolt.'));
+    const shareDirectory = await buildShareDirectory(response.document, state.user, state.key);
+    return {
+      command: 'permission-catalog',
+      session_id: state.sessionId,
+      owner: safeUser(state.user),
+      permission_types: [
+        { type: 1, label: 'Lettura' },
+        { type: 7, label: 'Aggiornamento' },
+        { type: 15, label: 'Proprietario' },
+      ],
+      entries: permissionCatalog(shareDirectory, String(state.user.id)),
     };
   }
 
@@ -2984,6 +3219,8 @@ class PersistentImportSession {
       input.folder_format === 'none' ? 'auto' : input.folder_format,
       input.destination_folder_id,
       input.client_destination_mapping,
+      input.permission_mode,
+      input.permission_template,
     );
     const plan = classifyRecovery(input.recovery_state, candidates, capabilities, runtime, String(state.user.id));
     assert(plan.recovery.batch_id === reconciliationBatchId, 'RECOVERY_BATCH_MISMATCH', 'Il registro locale non appartiene al lotto richiesto.');
@@ -3059,6 +3296,8 @@ class PersistentImportSession {
       input.folder_format === 'none' ? 'auto' : input.folder_format,
       input.destination_folder_id,
       input.client_destination_mapping,
+      input.permission_mode,
+      input.permission_template,
     );
     const plan = classifyRecovery(input.recovery_state, candidates, capabilities, runtime, String(state.user.id));
     assert(plan.conflicts.length === 0, 'RECOVERY_PLAN_CHANGED', 'Lo stato remoto e cambiato dopo la verifica; ripetere il controllo del lotto.');
@@ -3167,6 +3406,8 @@ class PersistentImportSession {
       input.folder_format,
       input.destination_folder_id,
       input.client_destination_mapping,
+      input.permission_mode,
+      input.permission_template,
     );
     assert(capabilities.can_import, 'IMPORT_NOT_SUPPORTED', capabilities.unavailable_reason || 'Importazione non disponibile su questa istanza.');
     assert(String(input.plan_digest ?? '') === capabilities.plan_digest, 'STALE_PLAN', 'Il contenuto di Passbolt o il piano sono cambiati dopo il dry-run. Ripetere la verifica.');
@@ -3245,6 +3486,8 @@ class PersistentImportSession {
         return this.open(input);
       case 'session-readiness':
         return this.readiness(input);
+      case 'session-permissions':
+        return this.permissions(input);
       case 'session-import':
         return this.import(input);
       case 'session-recovery-readiness':
@@ -3349,6 +3592,7 @@ async function selfTest() {
     persistent_session_protocol: true,
     reconciliation_progress_protocol: true,
     authenticated_recovery_protocol: true,
+    permission_editor_protocol: true,
     secrets_serialized: false,
   };
 }

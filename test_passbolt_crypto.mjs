@@ -1715,6 +1715,14 @@ async function main() {
       mfaProvider: mfaAuthentication.mfaProvider,
     };
     const loginCountBeforePersistentRequests = completedLoginCount;
+    const persistentPermissionCatalog = await persistentWorker.permissions({
+      command: 'session-permissions',
+      session_id: 'persistent-test-session',
+    });
+    assert.equal(persistentPermissionCatalog.command, 'permission-catalog');
+    assert.equal(persistentPermissionCatalog.entries.some((entry) => entry.aro === 'User' && entry.aro_foreign_key === 'direct-recipient-id' && entry.available), true);
+    assert.equal(persistentPermissionCatalog.entries.some((entry) => entry.aro === 'Group' && entry.aro_foreign_key === 'shared-group-id' && entry.available), true);
+    assert.equal(persistentPermissionCatalog.entries.some((entry) => entry.aro_foreign_key === 'user-id'), false);
     const persistentCandidates = [{
       candidate_id: 'persistent-session-candidate',
       source_sha256: '7'.repeat(64),
@@ -1724,6 +1732,110 @@ async function main() {
       username: 'persistent-user',
       uri: 'https://persistent.example.test',
     }];
+    const customPermissionTemplate = [
+      { aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 7 },
+      { aro: 'Group', aro_foreign_key: 'shared-group-id', type: 1 },
+    ];
+    const customPermissionReadiness = await persistentWorker.readiness({
+      command: 'session-readiness',
+      session_id: 'persistent-test-session',
+      candidates: persistentCandidates,
+      resource_format: 'v4',
+      destination_mode: 'root',
+      folder_format: 'auto',
+      permission_mode: 'custom',
+      permission_template: customPermissionTemplate,
+    });
+    assert.equal(customPermissionReadiness.can_import, true);
+    assert.equal(customPermissionReadiness.permission_mode, 'custom');
+    assert.equal(customPermissionReadiness.permission_template_entry_count, 2);
+    assert.equal(customPermissionReadiness.shared_create_count, 1);
+    assert.equal(customPermissionReadiness.encrypted_secret_copy_count, 3);
+    assert.equal(customPermissionReadiness.candidates[0].share_permissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === 'user-id' && permission.type === 15), true);
+    const customPermissionAnalysis = await analyzeCapabilities(
+      mfaSession,
+      mfaAuthentication.user,
+      persistentCandidates,
+      keyMaterial,
+      'v4',
+      'root',
+      'auto',
+      null,
+      null,
+      'custom',
+      customPermissionTemplate,
+    );
+    const customPermissionCreated = await createPlannedContent(
+      mfaSession,
+      customPermissionAnalysis.capabilities.candidates,
+      [{ ...persistentCandidates[0], password: 'mock-resource-password', description: 'mock description' }],
+      customPermissionAnalysis.runtime,
+      keyMaterial,
+    );
+    assert.equal(customPermissionCreated.created[0].status, 'created_shared');
+    assert.equal(customPermissionCreated.created[0].encrypted_secret_copies, 2);
+    assert.equal(sharedApplyPayload.permissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === 'direct-recipient-id' && permission.type === 7), true);
+    assert.equal(JSON.stringify(sharedApplyPayload).includes('mock-resource-password'), false);
+    const customFolderCandidates = [{
+      ...persistentCandidates[0],
+      candidate_id: 'custom-folder-permission-candidate',
+      client: 'Cliente ACL',
+      source_at_root: false,
+      title: 'Risorsa in cartella ACL',
+    }];
+    const customFolderAnalysis = await analyzeCapabilities(
+      mfaSession,
+      mfaAuthentication.user,
+      customFolderCandidates,
+      keyMaterial,
+      'v4',
+      'client_folders',
+      'v4',
+      null,
+      null,
+      'custom',
+      customPermissionTemplate,
+    );
+    assert.equal(customFolderAnalysis.capabilities.create_shared_folder_count, 1);
+    const customFolderCreated = await createPlannedContent(
+      mfaSession,
+      customFolderAnalysis.capabilities.candidates,
+      [{ ...customFolderCandidates[0], password: 'mock-resource-password', description: 'mock description' }],
+      customFolderAnalysis.runtime,
+      keyMaterial,
+    );
+    assert.equal(customFolderCreated.createdFolders[0].status, 'created_shared');
+    assert.equal(customFolderCreated.created[0].status, 'created_shared');
+    assert.equal(sharedFolderApplyPayload.permissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === 'direct-recipient-id' && permission.type === 7), true);
+    assert.equal(sharedFolderApplyPayload.permissions.some((permission) => permission.aro === 'Group' && permission.aro_foreign_key === 'shared-group-id' && permission.type === 1), true);
+    folderMode = 'shared-v4';
+    const customExistingFolderBlocked = await persistentWorker.readiness({
+      command: 'session-readiness',
+      session_id: 'persistent-test-session',
+      candidates: persistentCandidates,
+      resource_format: 'v4',
+      destination_mode: 'direct_folder',
+      folder_format: 'auto',
+      destination_folder_id: 'folder-shared-id',
+      permission_mode: 'custom',
+      permission_template: customPermissionTemplate,
+    });
+    assert.equal(customExistingFolderBlocked.can_import, false);
+    assert.match(customExistingFolderBlocked.unavailable_reason, /ACL personalizzata|oggetti esistenti/i);
+    folderMode = 'empty';
+    await assert.rejects(
+      persistentWorker.readiness({
+        command: 'session-readiness',
+        session_id: 'persistent-test-session',
+        candidates: persistentCandidates,
+        resource_format: 'v4',
+        destination_mode: 'root',
+        folder_format: 'auto',
+        permission_mode: 'custom',
+        permission_template: [{ aro: 'User', aro_foreign_key: 'user-id', type: 1 }],
+      }),
+      (error) => error?.code === 'CURRENT_OWNER_PERMISSION_IMMUTABLE',
+    );
     const firstPersistentReadiness = await persistentWorker.readiness({
       command: 'session-readiness',
       session_id: 'persistent-test-session',
@@ -1878,6 +1990,10 @@ async function main() {
         destination_folder_in_digest: true,
         readonly_destination_filtered: true,
         shared_destination_permission_mask: true,
+        authenticated_permission_catalog: true,
+        custom_permission_editor_plan: true,
+        custom_permissions_bound_to_new_objects: true,
+        current_owner_permission_immutable: true,
         shared_group_recipient_expansion: true,
         shared_recipient_deduplication: true,
         shared_recipient_key_validation: true,

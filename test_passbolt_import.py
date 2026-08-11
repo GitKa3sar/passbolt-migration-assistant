@@ -28,6 +28,7 @@ from passbolt_reconciliation import (
     CandidateProof,
     ReconciliationJournal,
     ReconciliationJournalError,
+    hash_permission_configuration,
     hash_user_identifier,
     read_journal,
 )
@@ -224,14 +225,31 @@ class ImportPreparationTests(unittest.TestCase):
                 "client_destination_mapping": [
                     {"client": "Cliente Alfa", "folder_id": "folder-alpha-id"}
                 ],
+                "permission_mode": "custom",
+                "permission_template": [
+                    {"aro": "Group", "aro_foreign_key": "group-id", "type": 7}
+                ],
                 "candidates": [self.request],
             },
         )
 
         self.assertEqual(bridge_request["command"], "session-readiness")
         self.assertEqual(bridge_request["session_id"], "session-id")
+        self.assertEqual(bridge_request["permission_mode"], "custom")
+        self.assertEqual(bridge_request["permission_template"][0]["type"], 7)
         self.assertEqual(resources, [])
         self.assertNotIn(self.secret, json.dumps(bridge_request))
+
+    def test_persistent_permission_catalog_command_requires_no_sources_or_secrets(self) -> None:
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {"command": "session-permissions", "session_id": "session-id"},
+        )
+        self.assertEqual(
+            bridge_request,
+            {"command": "session-permissions", "session_id": "session-id"},
+        )
+        self.assertEqual(resources, [])
 
     def test_persistent_session_import_hands_off_secrets_without_auth_data(self) -> None:
         bridge_request, resources = _session_bridge_request(
@@ -242,6 +260,10 @@ class ImportPreparationTests(unittest.TestCase):
                 "resource_format": "v4",
                 "destination_mode": "root",
                 "folder_format": "auto",
+                "permission_mode": "custom",
+                "permission_template": [
+                    {"aro": "User", "aro_foreign_key": "recipient-id", "type": 1}
+                ],
                 "candidates": [self.request],
                 "create_candidate_ids": [self.request["candidate_id"]],
                 "plan_digest": "digest",
@@ -252,6 +274,8 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(bridge_request["command"], "session-import")
         self.assertEqual(resources[0]["password"], self.secret)
         self.assertEqual(bridge_request["resources"][0]["password"], self.secret)
+        self.assertEqual(bridge_request["permission_mode"], "custom")
+        self.assertEqual(bridge_request["permission_template"][0]["aro"], "User")
         self.assertNotIn("passphrase", bridge_request)
         self.assertNotIn("mfa_totp", bridge_request)
 
@@ -923,6 +947,59 @@ for raw in sys.stdin:
                 },
                 self.root / "proof-journals",
             )
+
+    def test_recovery_requires_the_original_permission_configuration(self) -> None:
+        template = [
+            {"aro": "Group", "aro_foreign_key": "group-recipient-id", "type": 7}
+        ]
+        journal_root = self.root / "permission-recovery-journals"
+        journal = ReconciliationJournal.create(
+            app_version="0.14.0",
+            server_origin="https://pass.example.test",
+            server_fingerprint="D" * 40,
+            user_id_hash=hash_user_identifier(
+                "59a882e6-4909-4db0-ab84-91093461c777"
+            ),
+            plan_digest="d" * 64,
+            resource_format="v4",
+            folder_format="none",
+            destination_mode="root",
+            destination_folder_id=None,
+            candidates=(
+                CandidateProof(
+                    self.request["candidate_id"], self.request["source_sha256"]
+                ),
+            ),
+            permission_mode="custom",
+            permission_configuration_hash=hash_permission_configuration(
+                "custom", template
+            ),
+            root=journal_root,
+        )
+        with self.assertRaisesRegex(
+            ImportPreparationError, "permessi configurati non corrispondono"
+        ):
+            _prepare_recovery_context(
+                self.root,
+                {
+                    "reconciliation_batch_id": journal.batch_id,
+                    "candidates": [self.request],
+                    "permission_mode": "inherited",
+                    "permission_template": [],
+                },
+                journal_root,
+            )
+        state, _ = _prepare_recovery_context(
+            self.root,
+            {
+                "reconciliation_batch_id": journal.batch_id,
+                "candidates": [self.request],
+                "permission_mode": "custom",
+                "permission_template": template,
+            },
+            journal_root,
+        )
+        self.assertEqual(state["permission_mode"], "custom")
 
     def test_reconciliation_management_protocol_exposes_no_paths_or_secrets(self) -> None:
         journal_root = self.root / "management-journals"
