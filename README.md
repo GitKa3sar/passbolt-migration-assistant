@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.18.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.18.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -133,7 +133,9 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
-La versione 0.18.0 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto di importazione è limitato a 25 candidati. Gli editor ACL usano utenti e gruppi già presenti in Passbolt e non modificano la composizione dei gruppi. Sono supportate aggiunte, aumenti, riduzioni e revoche di permessi, ma non la cancellazione, lo spostamento o la sovrascrittura degli oggetti Passbolt. L'impatto effettivo di un singolo piano ACL è limitato a 2.000 utenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+La versione 0.18.1 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto di importazione è limitato a 25 candidati. Gli editor ACL usano utenti e gruppi già presenti in Passbolt e non modificano la composizione dei gruppi. Sono supportate aggiunte, aumenti, riduzioni e revoche di permessi, ma non la cancellazione, lo spostamento o la sovrascrittura degli oggetti Passbolt. L'impatto effettivo di un singolo piano ACL è limitato a 2.000 utenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+
+La versione 0.18.1 riallinea il login al contratto API Passbolt corrente: GPGAuth usa prioritariamente `data.gpg_auth` e la verifica TOTP invia soltanto il campo `totp`, senza il precedente parametro legacy `remember`. In caso di errore la finestra mostra codice, fase e stato HTTP sicuri; se Passbolt comunica `servertime`, segnala anche uno scarto significativo dell'orologio Windows. Chiave, passphrase, TOTP, cookie e URL privati non entrano nella diagnostica.
 
 La versione 0.17.0 applica piani ACL `additive`, `mixed` o `restrictive`. Il piano rimane volatile e obbligatorio; Python crea prima della scrittura un journal separato sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\AclReconciliation`, quindi il bridge ricostruisce da Passbolt lo stesso snapshot. La simulazione `/share/simulate/{folder|resource}/{id}.json` deve confermare esattamente aggiunte e rimozioni previste. La scrittura usa `/share/{folder|resource}/{id}.json`; per le risorse, le copie OpenPGP richieste dalla simulazione vengono create a partire dal segreto esistente senza modificarne lo schema v4/v5.
 

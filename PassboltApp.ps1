@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.18.0"
+        Title="Passbolt Migration Assistant - v0.18.1"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -1191,8 +1191,43 @@ function Open-ImportSession {
 }
 
 function Get-SecureErrorMessage($Envelope) {
-    if ($null -ne $Envelope -and $null -ne $Envelope.error -and $Envelope.error.message) {
-        return [string]$Envelope.error.message
+    if ($null -ne $Envelope -and $null -ne $Envelope.error) {
+        $Message = if ($Envelope.error.message) { [string]$Envelope.error.message } else { "Operazione protetta non riuscita." }
+        $Technical = New-Object System.Collections.Generic.List[string]
+        $Code = [string]$Envelope.error.code
+        if ($Code -match '^[A-Z][A-Z0-9_]{0,63}$') { $Technical.Add("codice $Code") }
+        $Details = $Envelope.error.details
+        if ($null -ne $Details) {
+            $PhaseLabels = @{
+                server_key = "lettura chiave server"
+                server_ownership = "verifica crittografica server"
+                user_challenge = "richiesta sfida utente"
+                challenge_decryption = "decifratura sfida utente"
+                challenge_response = "risposta alla sfida utente"
+                session_cookie = "creazione sessione"
+                identity_check = "lettura identita'"
+                mfa_totp = "verifica MFA TOTP"
+                identity_after_mfa = "verifica sessione dopo MFA"
+                identity_binding = "associazione chiave-identita'"
+            }
+            $Phase = [string]$Details.auth_phase
+            if ($PhaseLabels.ContainsKey($Phase)) { $Technical.Add("fase $($PhaseLabels[$Phase])") }
+            if ([string]$Details.http_status -match '^\d{3}$') {
+                $HttpStatus = [int]$Details.http_status
+                if ($HttpStatus -ge 100 -and $HttpStatus -le 599) { $Technical.Add("HTTP $HttpStatus") }
+            }
+            if ([string]$Details.clock_skew_seconds -match '^-?\d{1,5}$') {
+                $ClockSkew = [int]$Details.clock_skew_seconds
+                if ([Math]::Abs($ClockSkew) -ge 20) {
+                    $Technical.Add("scarto orologio $ClockSkew s")
+                    $Message += " Verificare la sincronizzazione automatica di data, ora e fuso orario di Windows."
+                }
+            }
+        }
+        if ($Technical.Count -gt 0) {
+            return "$Message`n`nDettaglio tecnico sicuro: $($Technical -join ' | ')"
+        }
+        return $Message
     }
     return "Operazione protetta non riuscita."
 }
@@ -3814,7 +3849,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.18.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.18.1", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4934,8 +4969,18 @@ for line in sys.stdin:
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
+    }
+    $LoginDiagnosticProbe = Get-SecureErrorMessage ([pscustomobject]@{
+        error = [pscustomobject]@{
+            code = "MFA_TOTP_REJECTED"
+            message = "Codice non accettato."
+            details = [pscustomobject]@{ auth_phase = "mfa_totp"; http_status = 400; clock_skew_seconds = 35 }
+        }
+    })
+    if ($LoginDiagnosticProbe -notmatch "MFA_TOTP_REJECTED" -or $LoginDiagnosticProbe -notmatch "verifica MFA TOTP" -or $LoginDiagnosticProbe -notmatch "HTTP 400" -or $LoginDiagnosticProbe -notmatch "sincronizzazione") {
+        throw "La diagnostica sicura del login non espone fase, codice e stato HTTP."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
@@ -5117,7 +5162,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.18.0"
+        version = "0.18.1"
         ui = "WPF"
         phases = 4
         controls = 109
@@ -5145,6 +5190,7 @@ for line in sys.stdin:
         recoverable_journal_archive = "OK"
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"
+        safe_login_diagnostics = "OK"
         secrets_serialized = $false
         python = $PythonExecutable
         node = $NodeExecutable

@@ -272,6 +272,8 @@ async function main() {
   let existingAclSimulationMode = 'normal';
   let existingResourceSecretReadCount = 0;
   let authenticatedMutationCount = 0;
+  let officialWrappedGpgAuthPayloadCount = 0;
+  let officialMinimalTotpPayloadCount = 0;
 
   const mockServer = createServer(async (request, response) => {
     try {
@@ -302,11 +304,12 @@ async function main() {
       }
       if (request.method === 'POST' && url.pathname === '/auth/login.json') {
         const document = await requestJson(request);
-        const auth = document?.gpg_auth ?? document?.data?.gpg_auth;
+        const auth = document?.data?.gpg_auth;
         if (!auth || auth.keyid !== userFingerprint) {
           send(response, 400, apiError('Unknown user key.'));
           return;
         }
+        officialWrappedGpgAuthPayloadCount += 1;
         if (!auth.user_token_result) {
           const challenge = await openpgp.encrypt({
             message: await openpgp.createMessage({ text: authToken }),
@@ -372,6 +375,7 @@ async function main() {
             code: 403,
             message: 'MFA authentication is required.',
             url: '/mfa/verify/error.json',
+            servertime: Math.floor(Date.now() / 1000),
           },
           body: { mfa_providers: ['totp'] },
         }));
@@ -383,10 +387,11 @@ async function main() {
           send(response, 403, apiError('Invalid CSRF token.'));
           return;
         }
-        if (document?.totp !== '654321' || document?.remember !== 0) {
+        if (document?.totp !== '654321' || Object.keys(document ?? {}).length !== 1) {
           send(response, 400, apiError('Invalid TOTP code.'));
           return;
         }
+        officialMinimalTotpPayloadCount += 1;
         send(response, 200, apiSuccess(null), {
           'Set-Cookie': 'passbolt_mfa=mock-mfa; Path=/; HttpOnly; SameSite=Lax',
         });
@@ -2502,12 +2507,14 @@ async function main() {
         gpgauth_stage0: true,
         gpgauth_stage1: true,
         gpgauth_stage2: true,
+        official_wrapped_gpgauth_payload: officialWrappedGpgAuthPayloadCount >= 2,
         same_origin_redirect: true,
         cross_origin_redirect_blocked: true,
         mfa_redirect_detected: true,
         mfa_totp_required: true,
         mfa_totp_rejected: true,
         mfa_totp_authenticated: true,
+        official_minimal_totp_payload: officialMinimalTotpPayloadCount >= 1,
         persistent_authenticated_session: true,
         reconciliation_progress_envelopes: true,
         authenticated_recovery_classification: true,

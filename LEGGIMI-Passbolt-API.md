@@ -10,7 +10,13 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.18.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.18.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Compatibilità login GPGAuth e TOTP 0.18.1
+
+Il login usa ora come formato primario la struttura documentata `data.gpg_auth` sia per ottenere la sfida utente sia per restituire il token decifrato. Se un'istanza legacy non restituisce l'header della sfida, viene tentato una sola volta il precedente payload non racchiuso. La verifica MFA usa `POST /mfa/verify/totp.json?api-version=v2` con il solo corpo `{ "totp": "......" }`; non viene inviato il campo legacy `remember`, che può essere respinto dalle versioni con validazione rigida.
+
+Ogni errore di autenticazione acquisisce internamente una fase enumerata: chiave server, verifica crittografica del server, richiesta/decifratura/risposta della sfida, cookie di sessione, lettura identità, MFA TOTP e associazione chiave-identità. La GUI visualizza soltanto fase, codice sicuro, eventuale HTTP e scarto temporale bounded ricavato da `servertime`. Non mostra endpoint, URL, cookie, token, chiavi, passphrase o codice MFA.
 
 ### Gestione dei journal ACL 0.18.0
 
@@ -181,7 +187,7 @@ Per v5 nome, username, URL e nota vengono inseriti nel documento `PASSBOLT_RESOU
 
 ### Supporto MFA TOTP 0.5.0
 
-La versione 0.5.0 completa l'autenticazione degli account protetti da MFA TOTP. Dopo GPGAuth, l'app riconosce la sfida MFA, invia una sola volta il codice a 6 cifre a `POST /mfa/verify/totp.json`, acquisisce il cookie temporaneo `passbolt_mfa` e ripete la richiesta originale nella stessa sessione. Il codice e mascherato nella UI, non viene salvato, non compare negli argomenti dei processi o nei log e viene cancellato dal campo subito dopo ogni operazione. L'opzione persistente `remember` resta disattivata.
+La versione 0.5.0 completa l'autenticazione degli account protetti da MFA TOTP. Dopo GPGAuth, l'app riconosce la sfida MFA, invia una sola volta il codice a 6 cifre a `POST /mfa/verify/totp.json`, acquisisce il cookie temporaneo `passbolt_mfa` e ripete la richiesta originale nella stessa sessione. Il codice e mascherato nella UI, non viene salvato, non compare negli argomenti dei processi o nei log e viene cancellato dal campo subito dopo ogni operazione. Dalla versione 0.18.1 il client non richiede alcuna persistenza `remember` e invia il solo campo TOTP documentato.
 
 ### Correzione 0.4.2
 
@@ -348,7 +354,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 - `GET /folders.json?contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1`
 - `GET /share/search-aros.json?contain[gpgkey]=1&contain[groups_users]=1`
 
-L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
+L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con il solo campo `totp`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
 JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.17.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
 

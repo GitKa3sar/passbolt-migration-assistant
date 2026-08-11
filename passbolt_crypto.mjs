@@ -26,7 +26,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.18.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.18.1';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -427,6 +427,15 @@ function isMfaChallengeResponse(response) {
   return Boolean(forbidden && (response.status === 403 || redirectedToMfa || responseHeaderUrl.includes('/mfa/')));
 }
 
+function mfaClockSkewSeconds(response) {
+  const header = response.document && typeof response.document === 'object' ? response.document.header : null;
+  const serverTime = header && typeof header === 'object'
+    ? Number(header.servertime ?? header.server_time)
+    : Number.NaN;
+  if (!Number.isFinite(serverTime) || serverTime <= 0) return null;
+  return Math.round(serverTime - (Date.now() / 1000));
+}
+
 function validateTotpCode(value) {
   const code = String(value ?? '').trim();
   assert(code.length > 0, 'MFA_TOTP_REQUIRED', 'Inserire il codice MFA TOTP di 6 cifre e ripetere l’operazione.');
@@ -446,21 +455,34 @@ async function completeTotpMfa(session, challengeResponse, value) {
   }
 
   const totp = validateTotpCode(value);
+  const clockSkewSeconds = mfaClockSkewSeconds(challengeResponse);
   const response = await session.request('/mfa/verify/totp.json?api-version=v2', {
     method: 'POST',
-    body: { totp, remember: 0 },
+    // The current Passbolt API contract accepts only the provider field.
+    // Older servers also accept this minimal payload, while an extra
+    // `remember` field can be rejected by strict request validation.
+    body: { totp },
     allowError: true,
   });
   const responseHeader = response.document && typeof response.document === 'object' ? response.document.header : null;
   const apiFailed = responseHeader && typeof responseHeader === 'object' && responseHeader.status === 'error';
   if (response.status === 429) {
-    throw new SafeError('MFA_RATE_LIMITED', 'Troppi tentativi MFA. Attendere e riprovare con un nuovo codice TOTP.', { http_status: response.status });
+    throw new SafeError('MFA_RATE_LIMITED', 'Troppi tentativi MFA. Attendere e riprovare con un nuovo codice TOTP.', {
+      http_status: response.status,
+      ...(clockSkewSeconds === null ? {} : { clock_skew_seconds: clockSkewSeconds }),
+    });
   }
   if (response.status < 200 || response.status >= 300 || apiFailed) {
+    const clockHint = clockSkewSeconds !== null && Math.abs(clockSkewSeconds) >= 20
+      ? ` L'orologio del PC differisce da quello del server di circa ${Math.abs(clockSkewSeconds)} secondi.`
+      : '';
     throw new SafeError(
       'MFA_TOTP_REJECTED',
-      'Il codice MFA TOTP non e stato accettato. Generare un nuovo codice e riprovare.',
-      { http_status: response.status },
+      `Il codice MFA TOTP non e stato accettato. Generare un nuovo codice e riprovare.${clockHint}`,
+      {
+        http_status: response.status,
+        ...(clockSkewSeconds === null ? {} : { clock_skew_seconds: clockSkewSeconds }),
+      },
     );
   }
   assert(session.getCookie('passbolt_mfa'), 'MFA_COOKIE_MISSING', 'Passbolt ha accettato il codice MFA ma non ha restituito il cookie di autorizzazione atteso.');
@@ -468,68 +490,90 @@ async function completeTotpMfa(session, challengeResponse, value) {
 }
 
 async function authenticate(session, keyMaterial, expectedFingerprint, mfaTotp = '') {
-  const serverPublicKey = await getServerKey(session, expectedFingerprint);
-  await verifyServerOwnership(session, serverPublicKey, keyMaterial.fingerprint);
+  let authPhase = 'server_key';
+  try {
+    const serverPublicKey = await getServerKey(session, expectedFingerprint);
+    authPhase = 'server_ownership';
+    await verifyServerOwnership(session, serverPublicKey, keyMaterial.fingerprint);
 
-  let wrappedPayload = false;
-  let stageOne = await session.request('/auth/login.json?api-version=v2', {
-    method: 'POST',
-    body: { gpg_auth: { keyid: keyMaterial.fingerprint } },
-    allowError: true,
-  });
-  let challengeHeader = stageOne.headers.get('x-gpgauth-user-auth-token');
-  if (!challengeHeader) {
-    wrappedPayload = true;
-    stageOne = await session.request('/auth/login.json?api-version=v2', {
+    // Passbolt's current GPGAuth contract wraps both login stages in
+    // data.gpg_auth. Keep an unwrapped retry only for legacy instances.
+    authPhase = 'user_challenge';
+    let wrappedPayload = true;
+    let stageOne = await session.request('/auth/login.json?api-version=v2', {
       method: 'POST',
       body: { data: { gpg_auth: { keyid: keyMaterial.fingerprint } } },
       allowError: true,
     });
-    challengeHeader = stageOne.headers.get('x-gpgauth-user-auth-token');
-  }
-  assert(challengeHeader, 'AUTH_CHALLENGE_MISSING', apiMessage(stageOne.document, 'Passbolt non ha restituito la sfida GPGAuth per questo utente.'));
-  const challenge = decodeHeaderValue(challengeHeader);
-  const token = await decryptServerChallenge(challenge, keyMaterial.privateKey, serverPublicKey);
-
-  const stageTwoData = {
-    gpg_auth: {
-      keyid: keyMaterial.fingerprint,
-      user_token_result: token,
-    },
-  };
-  const stageTwo = await session.request('/auth/login.json?api-version=v2', {
-    method: 'POST',
-    body: wrappedPayload ? { data: stageTwoData } : stageTwoData,
-    allowError: true,
-  });
-  if (stageTwo.status < 200 || stageTwo.status >= 300) {
-    throw new SafeError('AUTH_FAILED', apiMessage(stageTwo.document, `Login GPGAuth non riuscito (HTTP ${stageTwo.status}).`), { http_status: stageTwo.status });
-  }
-  const authenticatedHeader = stageTwo.headers.get('x-gpgauth-authenticated');
-  assert(!authenticatedHeader || authenticatedHeader.toLowerCase() === 'true', 'AUTH_NOT_CONFIRMED', 'Passbolt non ha confermato il completamento del login GPGAuth.');
-  const hasSession = ['passbolt_session', 'CAKEPHP', 'PHPSESSID'].some((name) => Boolean(session.getCookie(name)));
-  assert(hasSession, 'AUTH_SESSION_MISSING', 'Il login non ha restituito un cookie di sessione Passbolt.');
-
-  let mfaProvider = null;
-  let meResponse = await session.request('/users/me.json?api-version=v2', { allowError: true });
-  if (isMfaChallengeResponse(meResponse)) {
-    mfaProvider = await completeTotpMfa(session, meResponse, mfaTotp);
-    meResponse = await session.request('/users/me.json?api-version=v2', { allowError: true });
-    if (isMfaChallengeResponse(meResponse)) {
-      throw new SafeError('MFA_TOTP_REJECTED', 'La verifica MFA non ha autorizzato la sessione. Generare un nuovo codice TOTP e riprovare.');
+    let challengeHeader = stageOne.headers.get('x-gpgauth-user-auth-token');
+    if (!challengeHeader) {
+      wrappedPayload = false;
+      stageOne = await session.request('/auth/login.json?api-version=v2', {
+        method: 'POST',
+        body: { gpg_auth: { keyid: keyMaterial.fingerprint } },
+        allowError: true,
+      });
+      challengeHeader = stageOne.headers.get('x-gpgauth-user-auth-token');
     }
+    assert(challengeHeader, 'AUTH_CHALLENGE_MISSING', apiMessage(stageOne.document, 'Passbolt non ha restituito la sfida GPGAuth per questo utente.'));
+    authPhase = 'challenge_decryption';
+    const challenge = decodeHeaderValue(challengeHeader);
+    const token = await decryptServerChallenge(challenge, keyMaterial.privateKey, serverPublicKey);
+
+    authPhase = 'challenge_response';
+    const stageTwoData = {
+      gpg_auth: {
+        keyid: keyMaterial.fingerprint,
+        user_token_result: token,
+      },
+    };
+    const stageTwo = await session.request('/auth/login.json?api-version=v2', {
+      method: 'POST',
+      body: wrappedPayload ? { data: stageTwoData } : stageTwoData,
+      allowError: true,
+    });
+    if (stageTwo.status < 200 || stageTwo.status >= 300) {
+      throw new SafeError('AUTH_FAILED', apiMessage(stageTwo.document, `Login GPGAuth non riuscito (HTTP ${stageTwo.status}).`), { http_status: stageTwo.status });
+    }
+    const authenticatedHeader = stageTwo.headers.get('x-gpgauth-authenticated');
+    assert(!authenticatedHeader || authenticatedHeader.toLowerCase() === 'true', 'AUTH_NOT_CONFIRMED', 'Passbolt non ha confermato il completamento del login GPGAuth.');
+    authPhase = 'session_cookie';
+    const hasSession = ['passbolt_session', 'CAKEPHP', 'PHPSESSID'].some((name) => Boolean(session.getCookie(name)));
+    assert(hasSession, 'AUTH_SESSION_MISSING', 'Il login non ha restituito un cookie di sessione Passbolt.');
+
+    authPhase = 'identity_check';
+    let mfaProvider = null;
+    let meResponse = await session.request('/users/me.json?api-version=v2', { allowError: true });
+    if (isMfaChallengeResponse(meResponse)) {
+      authPhase = 'mfa_totp';
+      mfaProvider = await completeTotpMfa(session, meResponse, mfaTotp);
+      authPhase = 'identity_after_mfa';
+      meResponse = await session.request('/users/me.json?api-version=v2', { allowError: true });
+      if (isMfaChallengeResponse(meResponse)) {
+        throw new SafeError('MFA_TOTP_REJECTED', 'La verifica MFA non ha autorizzato la sessione. Generare un nuovo codice TOTP e riprovare.');
+      }
+    }
+    if (meResponse.status < 200 || meResponse.status >= 300) {
+      const redirectNote = meResponse.redirects.length ? ` dopo ${meResponse.redirects.length} redirect interno` : '';
+      throw new SafeError('AUTH_IDENTITY_FAILED', apiMessage(meResponse.document, `Lettura dell'identita utente non riuscita (HTTP ${meResponse.status}${redirectNote}).`), { http_status: meResponse.status });
+    }
+    authPhase = 'identity_binding';
+    const user = apiBody(meResponse.document);
+    assert(user && typeof user === 'object' && typeof user.id === 'string', 'AUTH_IDENTITY_INVALID', "Passbolt non ha restituito un'identita utente valida.");
+    const accountFingerprint = user.gpgkey && typeof user.gpgkey === 'object' && typeof user.gpgkey.fingerprint === 'string'
+      ? normalizeFingerprint(user.gpgkey.fingerprint, "Fingerprint dell'account Passbolt")
+      : null;
+    assert(!accountFingerprint || accountFingerprint === keyMaterial.fingerprint, 'AUTH_KEY_IDENTITY_MISMATCH', "La chiave privata non corrisponde alla chiave dell'identita Passbolt autenticata.");
+    return { user, serverPublicKey, mfaProvider };
+  } catch (error) {
+    if (error instanceof SafeError) {
+      const safeDetails = error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+        ? error.details
+        : {};
+      error.details = { ...safeDetails, auth_phase: authPhase };
+    }
+    throw error;
   }
-  if (meResponse.status < 200 || meResponse.status >= 300) {
-    const redirectNote = meResponse.redirects.length ? ` dopo ${meResponse.redirects.length} redirect interno` : '';
-    throw new SafeError('AUTH_IDENTITY_FAILED', apiMessage(meResponse.document, `Lettura dell'identita utente non riuscita (HTTP ${meResponse.status}${redirectNote}).`));
-  }
-  const user = apiBody(meResponse.document);
-  assert(user && typeof user === 'object' && typeof user.id === 'string', 'AUTH_IDENTITY_INVALID', "Passbolt non ha restituito un'identita utente valida.");
-  const accountFingerprint = user.gpgkey && typeof user.gpgkey === 'object' && typeof user.gpgkey.fingerprint === 'string'
-    ? normalizeFingerprint(user.gpgkey.fingerprint, "Fingerprint dell'account Passbolt")
-    : null;
-  assert(!accountFingerprint || accountFingerprint === keyMaterial.fingerprint, 'AUTH_KEY_IDENTITY_MISMATCH', "La chiave privata non corrisponde alla chiave dell'identita Passbolt autenticata.");
-  return { user, serverPublicKey, mfaProvider };
 }
 
 async function logout(session) {
@@ -4680,6 +4724,8 @@ async function selfTest() {
     decryption: true,
     signature_verification: true,
     gpgauth_header_form_decoding: true,
+    official_wrapped_gpgauth_payload_contract: true,
+    official_minimal_totp_payload_contract: true,
     passbolt_secret_schema: true,
     passbolt_string_secret_schema: true,
     duplicate_detection: true,

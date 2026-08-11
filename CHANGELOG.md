@@ -2,6 +2,25 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.1 - 2026-08-12
+
+### Fixed
+
+- riallineato il login GPGAuth al contratto API Passbolt corrente, inviando `data.gpg_auth` come struttura primaria sia per la richiesta sia per la risposta alla sfida;
+- rimosso il campo legacy `remember` dal corpo TOTP: `POST /mfa/verify/totp.json` riceve ora esclusivamente `{ "totp": "......" }`, evitando il rifiuto delle istanze con validazione rigida;
+- mantenuto il payload GPGAuth non racchiuso esclusivamente come fallback per istanze legacy che non restituiscono la sfida con il formato corrente.
+
+### Added
+
+- aggiunta una diagnostica sicura del login con codice errore, fase GPGAuth/MFA e stato HTTP, senza esporre URL privati, cookie, chiavi, passphrase o TOTP;
+- aggiunto il confronto tra ora locale e `servertime` della sfida MFA, con indicazione esplicita quando uno scarto significativo può rendere invalido il codice TOTP;
+- reso il mock end-to-end deliberatamente rigido sui payload ufficiali GPGAuth e TOTP per prevenire nuove regressioni di compatibilità.
+
+### Security
+
+- continuato a cancellare passphrase e TOTP subito dopo il tentativo e limitata la nuova diagnostica a valori tecnici enumerati e bounded;
+- mantenuti cookie di sessione, CSRF e MFA soltanto nel processo Node in memoria, senza persistenza dell'opzione `remember`.
+
 ## 0.18.0 - 2026-08-12
 
 ### Added
