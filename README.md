@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.15.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.15.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -24,6 +24,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - creazione di sottocartelle personali e condivise con permessi ereditati oppure con una ACL personalizzata;
 - editor autenticato dei permessi per selezionare utenti e gruppi Passbolt e assegnare Lettura, Aggiornamento o Proprietario ai nuovi oggetti;
 - visualizzatore autenticato e read-only delle ACL di cartelle e risorse Passbolt esistenti, inclusi percorsi v4/v5 e gruppi espansi;
+- editor di simulazione per confrontare ACL attuale e desiderata, con digest dello snapshot remoto e classificazione di aggiunte, aumenti, riduzioni e revoche;
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
@@ -79,7 +80,7 @@ Se un import si interrompe dopo l'avvio delle scritture, non ripetere direttamen
 
 I journal troncati o corrotti vengono mostrati ma restano bloccati in modalità fail-closed: richiedono un controllo manuale su Passbolt. Possono essere archiviati esplicitamente come abbandonati, senza essere cancellati.
 
-Per consultare i permessi già presenti su Passbolt, nella fase 04 aprire **Permessi esistenti**, mantenere attiva la stessa sessione autenticata e scegliere **Leggi permessi**. La scheda consente di filtrare cartelle e risorse, cercare per nome, percorso o ID e visualizzare la ACL del singolo oggetto. Le voci dirette e quelle assegnate tramite gruppo restano distinte; per i gruppi viene mostrato il numero di destinatari effettivi verificati. La versione 0.15.0 non espone comandi di modifica in questa scheda e non invia richieste HTTP mutative.
+Per consultare i permessi già presenti su Passbolt, nella fase 04 aprire **Permessi esistenti**, mantenere attiva la stessa sessione autenticata e scegliere **Leggi permessi**. La scheda consente di filtrare cartelle e risorse, cercare per nome, percorso o ID e visualizzare la ACL del singolo oggetto. Le voci dirette e quelle assegnate tramite gruppo restano distinte; per i gruppi viene mostrato il numero di destinatari effettivi verificati. Se la ACL è completa, tutti i soggetti sono verificati e l'account autenticato è Proprietario, **Simula modifica...** permette di preparare la ACL desiderata e mostra il confronto prima/dopo nella scheda **Piano read-only**. La versione 0.15.1 non espone alcun comando di applicazione e non invia richieste HTTP mutative.
 
 Il controllo pubblico può essere eseguito anche senza aprire la GUI:
 
@@ -123,7 +124,9 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
-La versione 0.15.0 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto è limitato a 25 candidati. L'editor ACL usa utenti e gruppi già presenti in Passbolt, ma non modifica la composizione dei gruppi e non cambia ancora i permessi di cartelle o risorse esistenti. Le operazioni distruttive sulle risorse esistenti restano escluse. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+La versione 0.15.1 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto è limitato a 25 candidati. Gli editor ACL usano utenti e gruppi già presenti in Passbolt, ma non modificano la composizione dei gruppi e non cambiano ancora i permessi di cartelle o risorse esistenti. Le operazioni distruttive sulle risorse esistenti restano escluse. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+
+La versione 0.15.1 aggiunge il dry-run delle modifiche ACL sugli oggetti esistenti. Il bridge riverifica sessione e identità, rilegge oggetto, maschera e directory da Passbolt, richiede accesso `Owner` e blocca ACL incomplete o soggetti non verificati. La ACL desiderata conserva implicitamente il proprietario autenticato e può essere anche priva di destinatari esterni, così da rappresentare nel solo piano una revoca completa. Il risultato distingue `add`, `upgrade`, `downgrade` e `revoke`, segnala le azioni sensibili e lega confronto, snapshot e desiderato a digest SHA-256. Il piano è volatile, dichiara `read_only=true`, `write_requests=0` e `remote_writes_planned=0` e non crea journal.
 
 La versione 0.15 introduce la consultazione autenticata degli oggetti esistenti. Il bridge legge cartelle, risorse, maschere e directory con sole richieste `GET`, decifra localmente i nomi v5, normalizza i livelli Read/Update/Owner e segnala ACL incomplete o soggetti non verificabili. Il catalogo è bounded e resta in memoria; la GUI non riceve chiavi, fingerprint o segreti. Questa fase non crea journal perché non esegue alcuna operazione remota irreversibile.
 
@@ -137,7 +140,7 @@ La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella des
 
 I registri attivi sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. L'archiviazione li sposta sotto `Reconciliation\Archive\<stato>` e non elimina l'evidenza. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali.
 
-La prossima fase della roadmap aggiungera il dry-run read-only delle modifiche ACL: selezione esplicita dell'oggetto, confronto prima/dopo, digest dello stato remoto e distinzione fra aggiunte, aumenti di livello, riduzioni e revoche. Soltanto dopo la validazione di questo piano potranno essere introdotte operazioni additive, journal dedicato e recupero idempotente; riduzioni e revoche resteranno un blocco successivo con conferma rafforzata. Seguira il miglioramento della gestione operativa dei lotti. Il supporto ad altri provider MFA resta saltato come scelta di scope.
+La prossima fase della roadmap introdurrà soltanto operazioni ACL additive sugli oggetti esistenti, vincolate ai digest del dry-run, con journal dedicato e recupero idempotente. Riduzioni e revoche resteranno escluse dalle scritture e saranno affrontate in un blocco successivo con conferma rafforzata e controlli aggiuntivi contro la perdita di accesso. Seguirà il miglioramento della gestione operativa dei lotti. Il supporto ad altri provider MFA resta saltato come scelta di scope.
 
 ## Contribuire
 

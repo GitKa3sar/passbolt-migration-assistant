@@ -55,7 +55,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.15.0"
+APP_VERSION = "0.15.1"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -817,6 +817,32 @@ def _session_bridge_request(
             {
                 "command": "session-acl-catalog",
                 "session_id": request.get("session_id"),
+            },
+            [],
+        )
+    if command == "session-acl-plan":
+        raw_permissions = request.get("desired_permissions")
+        desired_permissions: Any
+        if isinstance(raw_permissions, list):
+            desired_permissions = [
+                {
+                    "aro": item.get("aro"),
+                    "aro_foreign_key": item.get("aro_foreign_key"),
+                    "type": item.get("type"),
+                }
+                if isinstance(item, dict)
+                else None
+                for item in raw_permissions
+            ]
+        else:
+            desired_permissions = None
+        return (
+            {
+                "command": "session-acl-plan",
+                "session_id": request.get("session_id"),
+                "object_type": request.get("object_type"),
+                "object_id": request.get("object_id"),
+                "desired_permissions": desired_permissions,
             },
             [],
         )
@@ -1616,6 +1642,7 @@ def main() -> int:
                     "protected_excel_integrity_supported": True,
                     "permission_editor_protocol": True,
                     "existing_acl_viewer_protocol": True,
+                    "existing_acl_dry_run_protocol": True,
                     "secrets_serialized": False,
                 },
             }

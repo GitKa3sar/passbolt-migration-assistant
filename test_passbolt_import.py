@@ -272,6 +272,54 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertNotIn("must-not-pass", serialized)
         self.assertNotIn("123456", serialized)
 
+    def test_persistent_acl_plan_only_forwards_closed_read_only_payload(self) -> None:
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-acl-plan",
+                "session_id": "session-id",
+                "object_type": "resource",
+                "object_id": "resource-id",
+                "desired_permissions": [
+                    {
+                        "aro": "User",
+                        "aro_foreign_key": "recipient-id",
+                        "type": 7,
+                        "password": "must-not-pass",
+                        "armored_key": "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+                    }
+                ],
+                "candidates": [self.request],
+                "passphrase": "key-passphrase",
+                "mfa_totp": "123456",
+                "confirmation": "APPLICA",
+            },
+        )
+        self.assertEqual(
+            bridge_request,
+            {
+                "command": "session-acl-plan",
+                "session_id": "session-id",
+                "object_type": "resource",
+                "object_id": "resource-id",
+                "desired_permissions": [
+                    {
+                        "aro": "User",
+                        "aro_foreign_key": "recipient-id",
+                        "type": 7,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(resources, [])
+        serialized = json.dumps(bridge_request)
+        self.assertNotIn(self.secret, serialized)
+        self.assertNotIn("must-not-pass", serialized)
+        self.assertNotIn("PRIVATE KEY", serialized)
+        self.assertNotIn("key-passphrase", serialized)
+        self.assertNotIn("123456", serialized)
+        self.assertNotIn("APPLICA", serialized)
+
     def test_persistent_session_import_hands_off_secrets_without_auth_data(self) -> None:
         bridge_request, resources = _session_bridge_request(
             self.root,

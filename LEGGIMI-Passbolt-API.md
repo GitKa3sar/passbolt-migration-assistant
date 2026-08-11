@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.15.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.15.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Dry-run ACL degli oggetti esistenti 0.15.1
+
+Dopo aver caricato il catalogo nella scheda **Permessi esistenti**, **Simula modifica...** è disponibile soltanto se l'oggetto ha una maschera completa, tutti i soggetti sono verificati e l'utente autenticato possiede il livello Owner (`15`). L'editor rilegge la directory autenticata, precompila utenti e gruppi esterni presenti nella ACL corrente e mantiene il proprietario fuori dalla lista modificabile. È possibile simulare una lista esterna vuota, ma solo per rappresentare una revoca nel piano: nessuna modifica viene applicata.
+
+Python riduce la richiesta `session-acl-plan` ai soli campi `session_id`, `object_type`, `object_id` e `desired_permissions`; ogni voce desiderata conserva esclusivamente `aro`, `aro_foreign_key` e `type`. Node riverifica `/users/me.json` e ricostruisce un catalogo fresco usando le stesse sole richieste `GET` del visualizzatore. Se l'oggetto non è più univoco, la ACL è incompleta, l'accesso corrente non è Owner o un soggetto/chiave/gruppo non è verificabile, il piano viene bloccato.
+
+Il confronto normalizza entrambe le maschere e classifica ogni differenza come `add`, `upgrade`, `downgrade` o `revoke`; le riduzioni, le revoche e le concessioni del livello Owner sono marcate sensibili. Una ACL desiderata è limitata a 500 voci e un confronto a 2.000 operazioni. La risposta include conteggi, righe sicure per la GUI, `object_state_digest`, `desired_acl_digest` e `plan_digest`. Dichiara obbligatoriamente `read_only: true`, `write_requests: 0`, `remote_writes_planned: 0` e `generated_from_fresh_remote_state: true`. La GUI rifiuta un risultato privo di queste garanzie, non mostra alcun pulsante di applicazione e invalida il piano quando cambia oggetto, catalogo o sessione.
 
 ### Visualizzatore ACL read-only 0.15.0
 
@@ -18,7 +26,7 @@ La fase 04 contiene la scheda **Permessi esistenti**. Dopo l'apertura della sess
 
 Il bridge ricostruisce i percorsi gerarchici, normalizza le maschere User/Group e associa ogni soggetto alla directory autenticata. La GUI mostra tipo, percorso, accesso corrente, stato personale/condiviso e stato della ACL. Per la voce selezionata distingue utenti diretti e gruppi, visualizza Read (`1`), Update (`7`) o Owner (`15`), stato della verifica e numero di destinatari effettivi. Un gruppo viene considerato verificato soltanto se Passbolt ne restituisce integralmente la composizione e le chiavi dei membri risultano valide.
 
-La risposta non contiene chiavi, fingerprint, password, segreti o materiale OpenPGP e resta soltanto in memoria. Una maschera assente, parzialmente malformata o riferita a soggetti non verificabili viene marcata **Incompleta** o **Con avvisi**, non affidabile. Il protocollo impone al massimo 2.000 oggetti, 20.000 righe di permesso e 3 MiB di catalogo serializzato. Il risultato dichiara `read_only: true` e `write_requests: 0`; la GUI rifiuta risposte che non rispettano entrambi i valori. La versione 0.15.0 non espone alcun controllo di modifica degli oggetti esistenti e non crea journal per questa consultazione.
+La risposta non contiene chiavi, fingerprint, password, segreti o materiale OpenPGP e resta soltanto in memoria. Una maschera assente, parzialmente malformata o riferita a soggetti non verificabili viene marcata **Incompleta** o **Con avvisi**, non affidabile. Il protocollo impone al massimo 2.000 oggetti, 20.000 righe di permesso e 3 MiB di catalogo serializzato. Il risultato dichiara `read_only: true` e `write_requests: 0`; la GUI rifiuta risposte che non rispettano entrambi i valori. Il catalogo 0.15.0 non esponeva controlli di modifica; la versione 0.15.1 aggiunge soltanto l'editor del desiderato e il confronto read-only, ancora senza applicazione o journal.
 
 ### Editor autenticato dei permessi 0.14.0
 
@@ -310,7 +318,7 @@ Il dry-run della fase 04 usa inoltre questi endpoint autenticati, tutti in lettu
 
 L'autenticazione usa gli endpoint GPGAuth `/auth/verify.json` e `/auth/login.json`. Se Passbolt richiede TOTP, viene usato `POST /mfa/verify/totp.json` con `remember=0`; i cookie `passbolt_session`, `passbolt_mfa` e CSRF restano soltanto nella sessione del bridge in memoria. La scrittura usa `POST /folders.json` e `POST /resources.json` soltanto dopo tutte le conferme descritte sopra. Per una destinazione condivisa usa inoltre `PUT /share/folder/{id}.json` per le cartelle, secondo il flusso del client Passbolt ufficiale, quindi `POST /share/simulate/resource/{id}.json` e `PUT /share/resource/{id}.json` per le risorse. La condivisione delle risorse viene applicata soltanto dopo una simulazione riuscita. `POST /auth/logout.json` viene tentato alla chiusura esplicita, automatica o finale della sessione.
 
-JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.15.0 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
+JWT è il metodo indicato come preferenziale dalla documentazione Passbolt recente. La versione 0.15.1 usa GPGAuth con MFA TOTP per compatibilità con l'istanza verificata; il codice mantiene il pinning della fingerprint dopo la conferma e verifica crittograficamente le sfide di entrambi i lati. Il supporto ad altri provider MFA è intenzionalmente fuori dallo scope corrente.
 
 Per eseguire soltanto il controllo da riga di comando:
 
@@ -374,4 +382,4 @@ Node rilegge cartelle, risorse e permessi e classifica ogni intenzione storica. 
 
 La ripresa puo creare contenuti mancanti e completare condivisioni non applicate, riestraendo il segreto soltanto per le risorse che devono essere create o ricifrate per i destinatari. Non pianifica mai cancellazioni, spostamenti o sovrascritture. Duplicati multipli, oggetti in una destinazione diversa, variazioni della ACL, identita o sorgenti non corrispondenti, journal corrotti o code troncate bloccano il piano e richiedono una verifica manuale.
 
-I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.15 completa la consultazione read-only delle ACL esistenti; il blocco successivo potra costruire un dry-run prima/dopo con digest dello stato remoto, senza applicare modifiche. Soltanto una fase ulteriore potra introdurre scritture additive e un journal dedicato, seguite separatamente dalle eventuali riduzioni o revoche. La gestione operativa dei lotti verra migliorata dopo questo percorso. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.
+I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.15.1 completa il dry-run prima/dopo delle ACL esistenti con digest dello stato remoto, senza applicare modifiche. Il blocco successivo potrà introdurre esclusivamente scritture additive legate a quel piano, con journal dedicato e recupero idempotente. Riduzioni e revoche resteranno separate e richiederanno una conferma rafforzata. La gestione operativa dei lotti verrà migliorata dopo questo percorso. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.

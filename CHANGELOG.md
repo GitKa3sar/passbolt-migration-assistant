@@ -2,6 +2,31 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.1 - 2026-08-11
+
+### Added
+
+- aggiunto **Simula modifica...** nella scheda **Permessi esistenti** per preparare una ACL desiderata senza applicarla;
+- aggiunto il comando persistente `session-acl-plan`, limitato a sessione, tipo/ID dell'oggetto e voci ACL desiderate con schema chiuso;
+- aggiunto il confronto prima/dopo con classificazione separata di aggiunte, aumenti, riduzioni e revoche, conteggio delle voci invariate e marcatura delle azioni sensibili;
+- aggiunti digest SHA-256 distinti per snapshot remoto, ACL desiderata e piano completo, oltre a un ID volatile del piano;
+- aggiunta nella GUI la scheda **Piano read-only** con riepilogo, impatto e livelli precedente/successivo.
+
+### Changed
+
+- aggiornata l'applicazione e i metadati di progetto alla versione 0.15.1;
+- riutilizzato l'editor autenticato di utenti e gruppi per costruire la sola ACL desiderata degli oggetti esistenti;
+- consentita nel piano una ACL senza destinatari esterni per rappresentare una revoca completa, mantenendo sempre implicito e immutabile il proprietario autenticato;
+- spostata la roadmap successiva sulle sole scritture additive con journal dedicato, lasciando riduzioni e revoche a una fase separata.
+
+### Security
+
+- riletto lo stato remoto completo a ogni dry-run e richiesto accesso `Owner`, maschera completa e soggetti integralmente verificati;
+- mantenuto il protocollo strettamente read-only con `write_requests=0` e `remote_writes_planned=0`, senza endpoint di condivisione, conferme di applicazione o journal;
+- limitato ogni confronto a 2.000 operazioni e ogni ACL desiderata a 500 voci per mantenere bounded protocollo e interfaccia;
+- eliminate dal passaggio Python tutte le chiavi non previste nelle voci ACL, impedendo l'inoltro accidentale di candidati, password, passphrase, MFA o materiale OpenPGP;
+- aggiunti test end-to-end che dimostrano l'assenza di richieste mutative e il blocco fail-closed di ACL incomplete o directory non verificabili.
+
 ## 0.15.0 - 2026-08-11
 
 ### Added

@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.15.0"
+        Title="Passbolt Migration Assistant - v0.15.1"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -523,8 +523,8 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="150" /><ColumnDefinition Width="240" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="Visualizzatore ACL in sola lettura" FontWeight="SemiBold" Foreground="#1F2933" />
-                                        <TextBlock Text="Consulta i permessi di cartelle e risorse esistenti. Questa fase non invia richieste di modifica a Passbolt." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                                        <TextBlock Text="Visualizzatore e dry-run ACL in sola lettura" FontWeight="SemiBold" Foreground="#1F2933" />
+                                        <TextBlock Text="Consulta i permessi esistenti e simula una ACL desiderata. Il piano confronta prima/dopo ma non invia richieste di modifica a Passbolt." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <ComboBox x:Name="AclTypeFilter" Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0" ToolTip="Filtra per tipo di oggetto">
                                         <ComboBoxItem Content="Tutti gli oggetti" Tag="all" />
@@ -554,22 +554,42 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                         <TextBlock x:Name="AclObjectSummary" Text="Seleziona un oggetto per visualizzare la relativa ACL." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
                                     </Border>
                                     <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0" Padding="0">
-                                        <DataGrid x:Name="AclPermissionsGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                                            <DataGrid.Columns>
-                                                <DataGridTextColumn Header="Origine" Binding="{Binding SubjectType}" Width="105" />
-                                                <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" />
-                                                <DataGridTextColumn Header="Livello" Binding="{Binding PermissionLabel}" Width="105" />
-                                                <DataGridTextColumn Header="Verifica" Binding="{Binding VerificationLabel}" Width="125" />
-                                                <DataGridTextColumn Header="Dest." Binding="{Binding RecipientCount}" Width="55" />
-                                            </DataGrid.Columns>
-                                        </DataGrid>
+                                        <TabControl x:Name="AclDetailTabs" SelectedIndex="0">
+                                            <TabItem Header="ACL attuale">
+                                                <DataGrid x:Name="AclPermissionsGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                                    <DataGrid.Columns>
+                                                        <DataGridTextColumn Header="Origine" Binding="{Binding SubjectType}" Width="105" />
+                                                        <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" />
+                                                        <DataGridTextColumn Header="Livello" Binding="{Binding PermissionLabel}" Width="105" />
+                                                        <DataGridTextColumn Header="Verifica" Binding="{Binding VerificationLabel}" Width="125" />
+                                                        <DataGridTextColumn Header="Dest." Binding="{Binding RecipientCount}" Width="55" />
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+                                            </TabItem>
+                                            <TabItem Header="Piano read-only">
+                                                <Grid Margin="8">
+                                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                                    <TextBlock x:Name="AclPlanSummary" Text="Nessun piano calcolato. Seleziona un oggetto verificato di cui sei Proprietario." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="2,2,2,8" />
+                                                    <DataGrid x:Name="AclPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                                        <DataGrid.Columns>
+                                                            <DataGridTextColumn Header="Azione" Binding="{Binding ActionLabel}" Width="115" />
+                                                            <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" />
+                                                            <DataGridTextColumn Header="Prima" Binding="{Binding BeforeLabel}" Width="105" />
+                                                            <DataGridTextColumn Header="Dopo" Binding="{Binding AfterLabel}" Width="105" />
+                                                            <DataGridTextColumn Header="Impatto" Binding="{Binding ImpactLabel}" Width="110" />
+                                                        </DataGrid.Columns>
+                                                    </DataGrid>
+                                                </Grid>
+                                            </TabItem>
+                                        </TabControl>
                                     </Border>
                                 </Grid>
                             </Grid>
                             <Grid Grid.Row="2" Margin="0,12,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Button x:Name="AclBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
                                 <TextBlock x:Name="AclViewerStatus" Grid.Column="1" Text="Avvia la sessione sicura, quindi leggi i permessi esistenti." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
+                                <Button x:Name="AclPlanButton" Grid.Column="2" Content="Simula modifica..." Style="{StaticResource PrimaryButton}" IsEnabled="False" />
                             </Grid>
                         </Grid>
                     </TabItem>
@@ -694,8 +714,12 @@ $AclTypeFilter = Get-Control "AclTypeFilter"
 $AclSearchBox = Get-Control "AclSearchBox"
 $AclObjectsGrid = Get-Control "AclObjectsGrid"
 $AclObjectSummary = Get-Control "AclObjectSummary"
+$AclDetailTabs = Get-Control "AclDetailTabs"
 $AclPermissionsGrid = Get-Control "AclPermissionsGrid"
+$AclPlanSummary = Get-Control "AclPlanSummary"
+$AclPlanGrid = Get-Control "AclPlanGrid"
 $AclViewerStatus = Get-Control "AclViewerStatus"
+$AclPlanButton = Get-Control "AclPlanButton"
 $AclBackButton = Get-Control "AclBackButton"
 
 $script:ConnectionVerified = $false
@@ -742,6 +766,7 @@ $script:PermissionCatalogSessionId = ""
 $script:AclCatalogSessionId = ""
 $script:AllAclObjectRows = @()
 $script:UpdatingAclSelection = $false
+$script:AclPlan = $null
 $script:CurrentPage = "Configuration"
 
 function Get-Brush([string]$Color) {
@@ -1042,6 +1067,7 @@ function Stop-ImportSession(
     $AclObjectsGrid.ItemsSource = $null
     $AclPermissionsGrid.ItemsSource = $null
     $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
+    Reset-AclPlan "Sessione chiusa. Avviare una nuova sessione e rileggere il catalogo ACL."
     $KeyPassphrase.Clear()
     $MfaTotpCode.Clear()
     if ($ResetPlan) {
@@ -1126,6 +1152,7 @@ function Open-ImportSession {
         $AclObjectsGrid.ItemsSource = $null
         $AclPermissionsGrid.ItemsSource = $null
         $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
+        Reset-AclPlan "Sessione aperta. Leggere il catalogo ACL prima di calcolare un piano."
         Reset-ImportPlan "Sessione autenticata attiva. Configurare la destinazione ed eseguire il dry-run."
         if ($null -ne $script:RecoveryBatchDetails) {
             Reset-RecoveryPlan "Sessione autenticata attiva. Il lotto e' associato ai sorgenti: eseguire la verifica remota."
@@ -1496,7 +1523,12 @@ function Get-AuthenticatedPermissionCatalog {
     return $Envelope.result
 }
 
-function Show-PermissionEditor([switch]$BuildOnly) {
+function Show-PermissionEditor(
+    [switch]$BuildOnly,
+    [switch]$AclPlanMode,
+    [object[]]$InitialPermissions = @(),
+    [string]$TargetPath = ""
+) {
     $CatalogResult = $null
     if ($BuildOnly) {
         $CatalogResult = [pscustomobject]@{
@@ -1527,7 +1559,8 @@ function Show-PermissionEditor([switch]$BuildOnly) {
         })
     }
     $SelectedRows = New-Object System.Collections.ArrayList
-    foreach ($Permission in @($script:PermissionTemplate)) {
+    $SeedPermissions = if ($AclPlanMode) { @($InitialPermissions) } else { @($script:PermissionTemplate) }
+    foreach ($Permission in $SeedPermissions) {
         $CatalogEntry = @($CatalogRows | Where-Object { $_.Aro -eq [string]$Permission.aro -and $_.Id -eq [string]$Permission.aro_foreign_key }) | Select-Object -First 1
         $Subject = if ($null -ne $CatalogEntry) { "[$($CatalogEntry.SubjectType)] $($CatalogEntry.DisplayName)" } else { "[$([string]$Permission.aro)] $([string]$Permission.aro_foreign_key) [non disponibile]" }
         [void]$SelectedRows.Add([pscustomobject]@{
@@ -1540,7 +1573,7 @@ function Show-PermissionEditor([switch]$BuildOnly) {
     }
 
     $Dialog = New-Object System.Windows.Window
-    $Dialog.Title = "Editor permessi - Passbolt"
+    $Dialog.Title = if ($AclPlanMode) { "Dry-run ACL esistente - Passbolt" } else { "Editor permessi - Passbolt" }
     $Dialog.Width = 980
     $Dialog.Height = 650
     $Dialog.MinWidth = 820
@@ -1560,13 +1593,17 @@ function Show-PermissionEditor([switch]$BuildOnly) {
 
     $Header = New-Object System.Windows.Controls.StackPanel
     $Title = New-Object System.Windows.Controls.TextBlock
-    $Title.Text = "Permessi per nuove cartelle e risorse"
+    $Title.Text = if ($AclPlanMode) { "Simula la ACL desiderata" } else { "Permessi per nuove cartelle e risorse" }
     $Title.FontSize = 20
     $Title.FontWeight = "Bold"
     $Title.Foreground = Get-Brush "#1F2933"
     [void]$Header.Children.Add($Title)
     $Description = New-Object System.Windows.Controls.TextBlock
-    $Description.Text = "La ACL personalizzata viene applicata solo agli oggetti creati dall'import. Il proprietario autenticato resta sempre Proprietario e non puo' essere rimosso. Gli oggetti esistenti non vengono modificati: se la loro ACL e' diversa, il dry-run blocca l'importazione."
+    $Description.Text = if ($AclPlanMode) {
+        "Oggetto: $TargetPath`nModifica la selezione per costruire un confronto prima/dopo. Il proprietario autenticato resta Proprietario. Questo editor calcola esclusivamente un piano read-only: non applica alcuna modifica a Passbolt."
+    } else {
+        "La ACL personalizzata viene applicata solo agli oggetti creati dall'import. Il proprietario autenticato resta sempre Proprietario e non puo' essere rimosso. Gli oggetti esistenti non vengono modificati: se la loro ACL e' diversa, il dry-run blocca l'importazione."
+    }
     $Description.TextWrapping = "Wrap"
     $Description.Foreground = Get-Brush "#66737F"
     $Description.Margin = [System.Windows.Thickness]::new(0, 5, 0, 0)
@@ -1580,14 +1617,23 @@ function Show-PermissionEditor([switch]$BuildOnly) {
     $InheritedRadio = New-Object System.Windows.Controls.RadioButton
     $InheritedRadio.Content = "Eredita dalla destinazione"
     $InheritedRadio.GroupName = "PermissionMode"
-    $InheritedRadio.IsChecked = ($script:PermissionMode -ne "custom")
+    $InheritedRadio.IsChecked = (-not $AclPlanMode -and $script:PermissionMode -ne "custom")
     $InheritedRadio.Margin = [System.Windows.Thickness]::new(0, 0, 22, 0)
     $CustomRadio = New-Object System.Windows.Controls.RadioButton
     $CustomRadio.Content = "Usa ACL personalizzata"
     $CustomRadio.GroupName = "PermissionMode"
-    $CustomRadio.IsChecked = ($script:PermissionMode -eq "custom")
-    [void]$ModePanel.Children.Add($InheritedRadio)
-    [void]$ModePanel.Children.Add($CustomRadio)
+    $CustomRadio.IsChecked = ($AclPlanMode -or $script:PermissionMode -eq "custom")
+    if ($AclPlanMode) {
+        $ReadOnlyNotice = New-Object System.Windows.Controls.TextBlock
+        $ReadOnlyNotice.Text = "DRY-RUN: sono consentite anche riduzioni e revoche nel piano, ma nessuna richiesta HTTP di scrittura verra' inviata."
+        $ReadOnlyNotice.Foreground = Get-Brush "#B7791F"
+        $ReadOnlyNotice.FontWeight = "SemiBold"
+        $ReadOnlyNotice.TextWrapping = "Wrap"
+        [void]$ModePanel.Children.Add($ReadOnlyNotice)
+    } else {
+        [void]$ModePanel.Children.Add($InheritedRadio)
+        [void]$ModePanel.Children.Add($CustomRadio)
+    }
     [System.Windows.Controls.Grid]::SetRow($ModePanel, 1)
     [void]$Layout.Children.Add($ModePanel)
 
@@ -1638,7 +1684,7 @@ function Show-PermissionEditor([switch]$BuildOnly) {
     $SelectedPanel = New-Object System.Windows.Controls.DockPanel
     $SelectedPanel.Margin = [System.Windows.Thickness]::new(6, 0, 0, 0)
     $SelectedTitle = New-Object System.Windows.Controls.TextBlock
-    $SelectedTitle.Text = "ACL selezionata (oltre al proprietario autenticato)"
+    $SelectedTitle.Text = if ($AclPlanMode) { "ACL desiderata (oltre al proprietario autenticato)" } else { "ACL selezionata (oltre al proprietario autenticato)" }
     $SelectedTitle.FontWeight = "SemiBold"
     $SelectedTitle.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
     [System.Windows.Controls.DockPanel]::SetDock($SelectedTitle, "Top")
@@ -1724,13 +1770,13 @@ function Show-PermissionEditor([switch]$BuildOnly) {
     $CancelButton.Add_Click({ $Dialog.DialogResult = $false })
     [void]$Footer.Children.Add($CancelButton)
     $SaveButton = New-Object System.Windows.Controls.Button
-    $SaveButton.Content = "Salva permessi"
+    $SaveButton.Content = if ($AclPlanMode) { "Calcola dry-run" } else { "Salva permessi" }
     $SaveButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
     $SaveButton.Background = Get-Brush "#2878D0"
     $SaveButton.Foreground = Get-Brush "#FFFFFF"
     $SaveButton.BorderThickness = [System.Windows.Thickness]::new(0)
     $SaveButton.Add_Click({
-        if ([bool]$CustomRadio.IsChecked -and $SelectedRows.Count -lt 1) {
+        if (-not $AclPlanMode -and [bool]$CustomRadio.IsChecked -and $SelectedRows.Count -lt 1) {
             [System.Windows.MessageBox]::Show("Selezionare almeno un utente o gruppo, oppure usare i permessi ereditati.", "ACL incompleta", "OK", "Warning") | Out-Null
             return
         }
@@ -1754,10 +1800,21 @@ function Show-PermissionEditor([switch]$BuildOnly) {
     $Dialog.Content = $Layout
 
     if ($BuildOnly) {
-        return [pscustomobject]@{ Window = $Dialog; SelectedGrid = $SelectedGrid; DirectoryList = $DirectoryList }
+        return [pscustomobject]@{ Window = $Dialog; SelectedGrid = $SelectedGrid; DirectoryList = $DirectoryList; PlanMode = [bool]$AclPlanMode }
     }
     if ($Dialog.ShowDialog() -ne $true) { return }
     $Result = $Dialog.Tag
+    if ($AclPlanMode) {
+        return [pscustomobject]@{
+            Entries = @($Result.Entries | ForEach-Object {
+                [pscustomobject][ordered]@{
+                    aro = [string]$_.Aro
+                    aro_foreign_key = [string]$_.Id
+                    type = [int]$_.PermissionType
+                }
+            })
+        }
+    }
     $script:PermissionMode = [string]$Result.Mode
     if ($script:PermissionMode -eq "custom") {
         $script:PermissionTemplate = @($Result.Entries | ForEach-Object {
@@ -1787,15 +1844,58 @@ function Get-AclInspectionStatusLabel([string]$Status) {
     }
 }
 
+function Reset-AclPlan([string]$Message = "Nessun piano calcolato. Seleziona un oggetto verificato di cui sei Proprietario.") {
+    $script:AclPlan = $null
+    $AclPlanGrid.ItemsSource = $null
+    $AclPlanSummary.Text = $Message
+    $AclPlanSummary.ToolTip = $null
+    $AclDetailTabs.SelectedIndex = 0
+}
+
+function Update-AclPlanActionState {
+    $Selected = $AclObjectsGrid.SelectedItem
+    $Eligible = $false
+    $Reason = "Seleziona un oggetto verificato di cui sei Proprietario."
+    if (-not (Test-ImportSessionActive)) {
+        $Reason = "Avvia prima la sessione sicura Passbolt."
+    } elseif ($script:AclCatalogSessionId -ne $script:ImportSessionId) {
+        $Reason = "Leggi prima il catalogo ACL della sessione corrente."
+    } elseif ($null -eq $Selected) {
+        $Reason = "Seleziona una cartella o una risorsa."
+    } else {
+        $Raw = $Selected.Raw
+        if (-not [bool]$Raw.acl_complete) {
+            $Reason = "La ACL corrente e' incompleta: il dry-run resta bloccato."
+        } elseif (-not [bool]$Raw.subjects_verified) {
+            $Reason = "Uno o piu' soggetti non sono verificabili: il dry-run resta bloccato."
+        } elseif ([int]$Raw.current_access_type -ne 15) {
+            $Reason = "Il dry-run e' disponibile soltanto al proprietario dell'oggetto."
+        } else {
+            $Eligible = $true
+            $Reason = "Costruisci un confronto prima/dopo read-only; nessuna modifica verra' applicata."
+        }
+    }
+    $AclPlanButton.IsEnabled = $Eligible
+    $AclPlanButton.ToolTip = $Reason
+}
+
 function Update-AclPermissionDetail {
     if ($script:UpdatingAclSelection) { return }
     $Selected = $AclObjectsGrid.SelectedItem
     if ($null -eq $Selected) {
         $AclPermissionsGrid.ItemsSource = $null
         $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
+        if ($null -ne $script:AclPlan) { Reset-AclPlan }
+        Update-AclPlanActionState
         return
     }
     $Raw = $Selected.Raw
+    if ($null -ne $script:AclPlan -and (
+        [string]$script:AclPlan.object.object_type -ne [string]$Raw.object_type -or
+        [string]$script:AclPlan.object.object_id -ne [string]$Raw.object_id
+    )) {
+        Reset-AclPlan "La selezione e' cambiata. Calcolare un nuovo piano read-only per l'oggetto corrente."
+    }
     $Rows = New-Object System.Collections.Generic.List[object]
     foreach ($Permission in @($Raw.permissions)) {
         $Rows.Add([pscustomobject]@{
@@ -1817,6 +1917,7 @@ function Update-AclPermissionDetail {
     $Verification = if ([bool]$Raw.subjects_verified) { "soggetti verificati" } else { "uno o piu' soggetti richiedono attenzione" }
     $WarningSuffix = if ([string]::IsNullOrWhiteSpace($WarningText)) { "" } else { " $WarningText" }
     $AclObjectSummary.Text = "$([string]$Raw.object_type_label): $([string]$Raw.path)`nID: $([string]$Raw.object_id)`nAccesso corrente: $([string]$Raw.current_access_label) | $([string]$Raw.sharing_label) | ACL $StatusText ($Completeness, $Verification).$WarningSuffix"
+    Update-AclPlanActionState
 }
 
 function Update-AclObjectFilter {
@@ -1844,6 +1945,7 @@ function Set-AclCatalogResult($Result) {
     if ($null -eq $Result -or [string]$Result.command -ne "acl-catalog" -or -not [bool]$Result.read_only -or [int]$Result.write_requests -ne 0) {
         throw "Passbolt non ha restituito un catalogo ACL read-only valido."
     }
+    Reset-AclPlan "Catalogo aggiornato. Seleziona un oggetto verificato di cui sei Proprietario per calcolare un piano."
     $Rows = New-Object System.Collections.Generic.List[object]
     foreach ($Entry in @($Result.objects)) {
         $Rows.Add([pscustomobject]@{
@@ -1872,6 +1974,90 @@ function Update-AclViewerState {
     } elseif ($script:AclCatalogSessionId -ne $script:ImportSessionId) {
         $AclViewerStatus.Text = "Sessione attiva. Seleziona Leggi permessi per caricare il catalogo read-only."
     }
+    Update-AclPlanActionState
+}
+
+function Set-AclPlanResult($Result) {
+    if ($null -eq $Result -or [string]$Result.command -ne "acl-plan" -or -not [bool]$Result.read_only -or [int]$Result.write_requests -ne 0 -or [int]$Result.remote_writes_planned -ne 0 -or -not [bool]$Result.complete -or -not [bool]$Result.generated_from_fresh_remote_state) {
+        throw "Passbolt non ha restituito un piano ACL read-only valido."
+    }
+    $Selected = $AclObjectsGrid.SelectedItem
+    if ($null -eq $Selected -or [string]$Selected.Raw.object_type -ne [string]$Result.object.object_type -or [string]$Selected.Raw.object_id -ne [string]$Result.object.object_id) {
+        throw "L'oggetto selezionato non corrisponde al piano ACL restituito."
+    }
+    $Rows = New-Object System.Collections.Generic.List[object]
+    foreach ($Operation in @($Result.operations)) {
+        $Rows.Add([pscustomobject]@{
+            Sequence = [int]$Operation.sequence
+            Action = [string]$Operation.action
+            ActionLabel = [string]$Operation.action_label
+            DisplayName = "[$([string]$Operation.subject_type)] $([string]$Operation.display_name)"
+            Detail = [string]$Operation.detail
+            BeforeLabel = [string]$Operation.before_permission_label
+            AfterLabel = [string]$Operation.after_permission_label
+            ImpactLabel = "$([string]$Operation.direction_label) / $([string]$Operation.risk_label)"
+            Sensitive = [bool]$Operation.sensitive
+            SubjectId = [string]$Operation.subject_id
+        })
+    }
+    $script:AclPlan = $Result
+    $AclPlanGrid.ItemsSource = $Rows.ToArray()
+    $Counts = $Result.counts
+    $NoChanges = if ([int]$Result.change_count -eq 0) { " Nessuna modifica rilevata." } else { "" }
+    $AclPlanSummary.Text = "Piano read-only: $([int]$Result.change_count) modifiche; aggiunte $([int]$Counts.add), aumenti $([int]$Counts.upgrade), riduzioni $([int]$Counts.downgrade), revoche $([int]$Counts.revoke), invariate $([int]$Counts.unchanged). Azioni sensibili: $([int]$Result.sensitive_action_count).$NoChanges`nDigest snapshot: $([string]$Result.object_state_digest)`nDigest piano: $([string]$Result.plan_digest)"
+    $AclPlanSummary.ToolTip = "Digest ACL desiderata: $([string]$Result.desired_acl_digest)`nID piano volatile: $([string]$Result.plan_id)"
+    $AclDetailTabs.SelectedIndex = 1
+}
+
+function Invoke-AclDryRun {
+    Update-AclPlanActionState
+    if (-not $AclPlanButton.IsEnabled) {
+        [System.Windows.MessageBox]::Show([string]$AclPlanButton.ToolTip, "Dry-run ACL non disponibile", "OK", "Warning") | Out-Null
+        return
+    }
+    $Selected = $AclObjectsGrid.SelectedItem
+    $Raw = $Selected.Raw
+    $InitialPermissions = @($Raw.permissions | Where-Object { -not [bool]$_.current_user } | ForEach-Object {
+        [pscustomobject][ordered]@{
+            aro = [string]$_.subject_kind
+            aro_foreign_key = [string]$_.subject_id
+            type = [int]$_.permission_type
+        }
+    })
+    $EditorResult = Show-PermissionEditor -AclPlanMode -InitialPermissions $InitialPermissions -TargetPath ([string]$Raw.path)
+    if ($null -eq $EditorResult) { return }
+    Reset-AclPlan "Rilettura dello stato remoto e calcolo del confronto prima/dopo in corso..."
+    $AclPlanButton.IsEnabled = $false
+    $AclViewerStatus.Text = "Calcolo autenticato del piano ACL read-only in corso..."
+    Add-Activity "Avvio dry-run ACL read-only per $([string]$Raw.object_type) $([string]$Raw.object_id)."
+    Update-Ui
+    $CloseSessionForError = $false
+    try {
+        $Envelope = Invoke-ImportSessionJson ([pscustomobject][ordered]@{
+            command = "session-acl-plan"
+            session_id = $script:ImportSessionId
+            object_type = [string]$Raw.object_type
+            object_id = [string]$Raw.object_id
+            desired_permissions = @($EditorResult.Entries)
+        }) 120000
+        if (-not [bool]$Envelope.ok) {
+            $CloseSessionForError = Test-TerminalImportSessionError $Envelope
+            throw (Get-SecureErrorMessage $Envelope)
+        }
+        Set-AclPlanResult $Envelope.result
+        $AclViewerStatus.Text = "Piano ACL calcolato su uno snapshot remoto fresco. Richieste di scrittura inviate: 0."
+        Add-Activity "Dry-run ACL completato: $([int]$Envelope.result.change_count) modifiche classificate, 0 richieste di scrittura."
+    } catch {
+        Reset-AclPlan "Dry-run ACL non riuscito. Nessuna modifica e' stata applicata."
+        $AclViewerStatus.Text = "Dry-run ACL non riuscito: $($_.Exception.Message)"
+        Add-Activity "Dry-run ACL non riuscito: $($_.Exception.Message)"
+        if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
+            Stop-ImportSession "" $false
+        }
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Piano ACL non disponibile", "OK", "Error") | Out-Null
+    } finally {
+        Update-AclPlanActionState
+    }
 }
 
 function Refresh-ExistingAclCatalog {
@@ -1880,6 +2066,7 @@ function Refresh-ExistingAclCatalog {
         return
     }
     $RefreshAclButton.IsEnabled = $false
+    Reset-AclPlan "Aggiornamento del catalogo ACL in corso..."
     $AclViewerStatus.Text = "Lettura autenticata di cartelle, risorse e permessi in corso..."
     Add-Activity "Avvio lettura read-only delle ACL degli oggetti Passbolt esistenti."
     Update-Ui
@@ -1901,6 +2088,7 @@ function Refresh-ExistingAclCatalog {
         $AclObjectsGrid.ItemsSource = $null
         $AclPermissionsGrid.ItemsSource = $null
         $AclObjectSummary.Text = "Seleziona un oggetto per visualizzare la relativa ACL."
+        Reset-AclPlan "Catalogo ACL non disponibile. Nessun piano e' stato conservato."
         $AclViewerStatus.Text = "Lettura ACL non riuscita: $($_.Exception.Message)"
         Add-Activity "Lettura ACL non riuscita: $($_.Exception.Message)"
         if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
@@ -2997,7 +3185,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.15.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.15.1", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -3915,6 +4103,7 @@ $RecoveryConfirmation.Add_TextChanged({ Update-RecoveryActionState })
 $VerifyRecoveryButton.Add_Click({ Invoke-RecoveryReadiness })
 $ExecuteRecoveryButton.Add_Click({ Invoke-ConfirmedRecovery })
 $RefreshAclButton.Add_Click({ Refresh-ExistingAclCatalog })
+$AclPlanButton.Add_Click({ Invoke-AclDryRun })
 $AclTypeFilter.Add_SelectionChanged({ Update-AclObjectFilter })
 $AclSearchBox.Add_TextChanged({ Update-AclObjectFilter })
 $AclObjectsGrid.Add_SelectionChanged({ Update-AclPermissionDetail })
@@ -4108,11 +4297,11 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
@@ -4181,6 +4370,7 @@ for line in sys.stdin:
             object_id = "acl-folder-probe"
             name = "Cliente ACL"
             path = "Clienti / Cliente ACL"
+            current_access_type = 15
             current_access_label = "Proprietario"
             sharing_label = "Condiviso"
             inspection_status = "verified"
@@ -4188,13 +4378,51 @@ for line in sys.stdin:
             subjects_verified = $true
             warnings = @()
             permissions = @(
-                [pscustomobject]@{ subject_type = "Utente diretto"; subject_id = "owner-probe"; display_name = "Proprietario test"; detail = "owner@example.invalid"; permission_label = "Proprietario"; current_user = $true; verified = $true; verification_status = "Chiave verificata"; recipient_count = 1 },
-                [pscustomobject]@{ subject_type = "Gruppo"; subject_id = "group-probe"; display_name = "Team test"; detail = "2 destinatari effettivi verificati"; permission_label = "Lettura"; current_user = $false; verified = $true; verification_status = "Composizione e chiavi verificate"; recipient_count = 2 }
+                [pscustomobject]@{ subject_kind = "User"; subject_type = "Utente diretto"; subject_id = "owner-probe"; display_name = "Proprietario test"; detail = "owner@example.invalid"; permission_type = 15; permission_label = "Proprietario"; current_user = $true; verified = $true; verification_status = "Chiave verificata"; recipient_count = 1 },
+                [pscustomobject]@{ subject_kind = "Group"; subject_type = "Gruppo"; subject_id = "group-probe"; display_name = "Team test"; detail = "2 destinatari effettivi verificati"; permission_type = 1; permission_label = "Lettura"; current_user = $false; verified = $true; verification_status = "Composizione e chiavi verificate"; recipient_count = 2 }
             )
         })
     })
     if ($AclObjectsGrid.Items.Count -ne 1 -or $AclPermissionsGrid.Items.Count -ne 2 -or [string]$AclObjectSummary.Text -notmatch "Cliente ACL") {
         throw "Il visualizzatore UI delle ACL esistenti non espone oggetti e permessi nello stato previsto."
+    }
+    $AclPlanEditorProbe = Show-PermissionEditor -BuildOnly -AclPlanMode -InitialPermissions @([pscustomobject]@{ aro = "User"; aro_foreign_key = "permission-user-probe"; type = 7 }) -TargetPath "Clienti / Cliente ACL"
+    if ($null -eq $AclPlanEditorProbe -or -not $AclPlanEditorProbe.PlanMode -or $AclPlanEditorProbe.SelectedGrid.Items.Count -ne 1 -or $AclPlanEditorProbe.DirectoryList.Items.Count -ne 1) {
+        throw "L'editor UI del dry-run ACL non puo essere costruito nello stato previsto."
+    }
+    $AclPlanEditorProbe.Window.Close()
+    Set-AclPlanResult ([pscustomobject]@{
+        command = "acl-plan"
+        read_only = $true
+        write_requests = 0
+        remote_writes_planned = 0
+        complete = $true
+        generated_from_fresh_remote_state = $true
+        plan_id = "acl-plan-probe"
+        object_state_digest = ("a" * 64)
+        desired_acl_digest = ("b" * 64)
+        plan_digest = ("c" * 64)
+        change_count = 1
+        sensitive_action_count = 1
+        counts = [pscustomobject]@{ add = 0; upgrade = 0; downgrade = 1; revoke = 0; unchanged = 1 }
+        object = [pscustomobject]@{ object_type = "folder"; object_id = "acl-folder-probe"; path = "Clienti / Cliente ACL" }
+        operations = @([pscustomobject]@{
+            sequence = 1
+            action = "downgrade"
+            action_label = "Riduzione livello"
+            subject_type = "Gruppo"
+            subject_id = "group-probe"
+            display_name = "Team test"
+            detail = "2 destinatari effettivi verificati"
+            before_permission_label = "Aggiornamento"
+            after_permission_label = "Lettura"
+            direction_label = "Riduce accesso"
+            risk_label = "Sensibile"
+            sensitive = $true
+        })
+    })
+    if ($AclPlanGrid.Items.Count -ne 1 -or $AclDetailTabs.SelectedIndex -ne 1 -or [string]$AclPlanSummary.Text -notmatch "riduzioni 1" -or $null -eq $script:AclPlan) {
+        throw "La vista UI del piano ACL read-only non espone il confronto nello stato previsto."
     }
     if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
@@ -4235,10 +4463,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.15.0"
+        version = "0.15.1"
         ui = "WPF"
         phases = 4
-        controls = 101
+        controls = 105
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -4248,6 +4476,7 @@ for line in sys.stdin:
         client_mapping_ui = "OK"
         permission_editor_ui = "OK"
         existing_acl_viewer_ui = "OK"
+        existing_acl_dry_run_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
         protected_excel_password_prompt = "OK"

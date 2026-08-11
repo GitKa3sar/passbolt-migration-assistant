@@ -25,7 +25,8 @@ const MAX_IMPORT_RESOURCES = 25;
 const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.15.0';
+const MAX_ACL_PLAN_OPERATIONS = 2_000;
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.15.1';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -1758,7 +1759,7 @@ function buildAclObjectCatalog(existingFolders, existingResources, shareDirector
   ));
 }
 
-async function readAclCatalog(session, user, keyMaterial) {
+async function analyzeAclCatalog(session, user, keyMaterial) {
   const [resourcesResponse, foldersResponse, shareDirectoryResponse] = await Promise.all([
     session.request('/resources.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
     session.request('/folders.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
@@ -1786,12 +1787,170 @@ async function readAclCatalog(session, user, keyMaterial) {
   const objects = buildAclObjectCatalog(existingFolders, existingResources, shareDirectory, String(user.id ?? ''));
   assert(Buffer.byteLength(JSON.stringify(objects), 'utf8') <= MAX_ACL_CATALOG_BYTES, 'ACL_CATALOG_TOO_LARGE', 'Il catalogo ACL supera il limite sicuro della risposta locale; affinare il supporto a cataloghi di grandi dimensioni prima di procedere.');
   return {
-    objects,
-    folder_count: objects.filter((entry) => entry.object_type === 'folder').length,
-    resource_count: objects.filter((entry) => entry.object_type === 'resource').length,
-    shared_count: objects.filter((entry) => entry.shared).length,
-    verified_count: objects.filter((entry) => entry.inspection_status === 'verified').length,
-    warning_count: objects.filter((entry) => entry.inspection_status !== 'verified').length,
+    catalog: {
+      objects,
+      folder_count: objects.filter((entry) => entry.object_type === 'folder').length,
+      resource_count: objects.filter((entry) => entry.object_type === 'resource').length,
+      shared_count: objects.filter((entry) => entry.shared).length,
+      verified_count: objects.filter((entry) => entry.inspection_status === 'verified').length,
+      warning_count: objects.filter((entry) => entry.inspection_status !== 'verified').length,
+    },
+    runtime: { shareDirectory },
+  };
+}
+
+async function readAclCatalog(session, user, keyMaterial) {
+  const analysis = await analyzeAclCatalog(session, user, keyMaterial);
+  return analysis.catalog;
+}
+
+function normalizeAclObjectType(value) {
+  const objectType = String(value ?? '').trim().toLowerCase();
+  assert(['folder', 'resource'].includes(objectType), 'ACL_PLAN_OBJECT_TYPE_INVALID', 'Il tipo dell’oggetto selezionato non e valido.');
+  return objectType;
+}
+
+function normalizeAclObjectId(value) {
+  const objectId = String(value ?? '').trim();
+  assert(objectId && objectId.length <= 200 && !/[\u0000-\u001f\u007f]/.test(objectId), 'ACL_PLAN_OBJECT_ID_INVALID', 'L’identificativo dell’oggetto selezionato non e valido.');
+  return objectId;
+}
+
+function aclMaskFromRows(rows) {
+  return normalizeFolderPermissions((Array.isArray(rows) ? rows : []).map((row) => ({
+    aro: row?.subject_kind,
+    aro_foreign_key: row?.subject_id,
+    type: row?.permission_type,
+  })));
+}
+
+function aclOperationLabel(action) {
+  switch (action) {
+    case 'add': return 'Aggiunta';
+    case 'upgrade': return 'Aumento livello';
+    case 'downgrade': return 'Riduzione livello';
+    case 'revoke': return 'Revoca';
+    default: return 'Nessuna modifica';
+  }
+}
+
+function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, currentUserId) {
+  assert(target && typeof target === 'object', 'ACL_PLAN_OBJECT_NOT_FOUND', 'L’oggetto selezionato non e piu presente su Passbolt.');
+  assert(target.acl_complete, 'ACL_PLAN_OBJECT_INCOMPLETE', 'La maschera ACL dell’oggetto selezionato non e completa; il dry-run e bloccato.');
+  assert(target.subjects_verified, 'ACL_PLAN_SUBJECTS_UNVERIFIED', 'Uno o piu soggetti della ACL corrente non sono verificabili; il dry-run e bloccato.');
+  assert(target.current_access_type === 15, 'ACL_PLAN_OWNER_REQUIRED', 'Solo un proprietario dell’oggetto puo preparare un piano di modifica ACL.');
+
+  const currentPermissions = aclMaskFromRows(target.permissions);
+  assert(
+    currentPermissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === currentUserId && permission.type === 15),
+    'ACL_PLAN_CURRENT_OWNER_MISSING',
+    'La ACL corrente non conferma il proprietario autenticato; il dry-run e bloccato.',
+  );
+  const desiredTemplate = normalizeCustomPermissionEntries(desiredPermissionValue, currentUserId);
+  for (const permission of desiredTemplate) {
+    if (permission.aro === 'User') {
+      const directoryUser = shareDirectory.users.get(permission.aro_foreign_key);
+      assert(directoryUser?.active, 'ACL_PLAN_USER_UNAVAILABLE', `L’utente ${permission.aro_foreign_key} non e disponibile o non e attivo.`);
+    } else {
+      const group = shareDirectory.groups.get(permission.aro_foreign_key);
+      assert(group && !group.deleted, 'ACL_PLAN_GROUP_UNAVAILABLE', `Il gruppo ${permission.aro_foreign_key} non e disponibile.`);
+    }
+  }
+  const desiredPermissions = normalizeFolderPermissions([
+    ...desiredTemplate,
+    { aro: 'User', aro_foreign_key: currentUserId, type: 15 },
+  ]);
+  const desiredRows = aclPermissionRows(desiredPermissions, shareDirectory, currentUserId);
+  assert(desiredRows.every((row) => row.verified), 'ACL_PLAN_DESIRED_UNVERIFIED', 'La ACL desiderata contiene utenti, gruppi o chiavi non completamente verificabili.');
+
+  const currentBySubject = new Map(currentPermissions.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
+  const desiredBySubject = new Map(desiredPermissions.map((permission) => [`${permission.aro}:${permission.aro_foreign_key}`, permission]));
+  const currentRowsBySubject = new Map(target.permissions.map((row) => [`${row.subject_kind}:${row.subject_id}`, row]));
+  const desiredRowsBySubject = new Map(desiredRows.map((row) => [`${row.subject_kind}:${row.subject_id}`, row]));
+  const keys = [...new Set([...currentBySubject.keys(), ...desiredBySubject.keys()])].sort();
+  const operations = [];
+  let unchangedCount = 0;
+  for (const key of keys) {
+    const before = currentBySubject.get(key) ?? null;
+    const after = desiredBySubject.get(key) ?? null;
+    if (before && after && before.type === after.type) {
+      unchangedCount += 1;
+      continue;
+    }
+    let action;
+    if (!before) action = 'add';
+    else if (!after) action = 'revoke';
+    else action = after.type > before.type ? 'upgrade' : 'downgrade';
+    const subject = desiredRowsBySubject.get(key) ?? currentRowsBySubject.get(key);
+    const direction = ['downgrade', 'revoke'].includes(action) ? 'restrictive' : 'expansive';
+    const sensitive = direction === 'restrictive' || after?.type === 15;
+    assert(operations.length < MAX_ACL_PLAN_OPERATIONS, 'ACL_PLAN_TOO_LARGE', `Il confronto contiene piu di ${MAX_ACL_PLAN_OPERATIONS} modifiche e non puo essere mostrato in un unico piano.`);
+    operations.push({
+      sequence: operations.length + 1,
+      action,
+      action_label: aclOperationLabel(action),
+      direction,
+      direction_label: direction === 'restrictive' ? 'Riduce accesso' : 'Estende accesso',
+      sensitive,
+      risk_label: sensitive ? 'Sensibile' : 'Standard',
+      subject_kind: subject.subject_kind,
+      subject_type: subject.subject_type,
+      subject_id: subject.subject_id,
+      display_name: subject.display_name,
+      detail: subject.detail,
+      before_permission_type: before?.type ?? null,
+      before_permission_label: before ? permissionTypeLabel(before.type) : 'Nessuno',
+      after_permission_type: after?.type ?? null,
+      after_permission_label: after ? permissionTypeLabel(after.type) : 'Nessuno',
+    });
+  }
+
+  const counts = {
+    add: operations.filter((operation) => operation.action === 'add').length,
+    upgrade: operations.filter((operation) => operation.action === 'upgrade').length,
+    downgrade: operations.filter((operation) => operation.action === 'downgrade').length,
+    revoke: operations.filter((operation) => operation.action === 'revoke').length,
+    unchanged: unchangedCount,
+  };
+  const objectStateDigest = digestPlan({
+    object_type: target.object_type,
+    object_id: target.object_id,
+    permissions: currentPermissions,
+  });
+  const desiredAclDigest = digestPlan({
+    object_type: target.object_type,
+    object_id: target.object_id,
+    permissions: desiredPermissions,
+  });
+  const planDigest = digestPlan({
+    object_state_digest: objectStateDigest,
+    desired_acl_digest: desiredAclDigest,
+    operations: operations.map((operation) => ({
+      action: operation.action,
+      subject_kind: operation.subject_kind,
+      subject_id: operation.subject_id,
+      before_permission_type: operation.before_permission_type,
+      after_permission_type: operation.after_permission_type,
+    })),
+  });
+  return {
+    plan_id: randomUUID(),
+    object: {
+      object_type: target.object_type,
+      object_type_label: target.object_type_label,
+      object_id: target.object_id,
+      name: target.name,
+      path: target.path,
+    },
+    object_state_digest: objectStateDigest,
+    desired_acl_digest: desiredAclDigest,
+    plan_digest: planDigest,
+    current_permission_count: currentPermissions.length,
+    desired_permission_count: desiredPermissions.length,
+    change_count: operations.length,
+    sensitive_action_count: operations.filter((operation) => operation.sensitive).length,
+    counts,
+    operations,
   };
 }
 
@@ -3400,6 +3559,28 @@ class PersistentImportSession {
     };
   }
 
+  async aclPlan(input) {
+    const state = this.requireState(input);
+    await verifyPersistentSession(state.session, String(state.user.id));
+    const objectType = normalizeAclObjectType(input.object_type);
+    const objectId = normalizeAclObjectId(input.object_id);
+    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const matches = analysis.catalog.objects.filter((entry) => entry.object_type === objectType && entry.object_id === objectId);
+    assert(matches.length === 1, 'ACL_PLAN_OBJECT_NOT_FOUND', 'L’oggetto selezionato non e piu presente in modo univoco su Passbolt. Aggiornare il catalogo ACL.');
+    const plan = buildAclChangePlan(matches[0], input.desired_permissions, analysis.runtime.shareDirectory, String(state.user.id));
+    return {
+      command: 'acl-plan',
+      session_id: state.sessionId,
+      read_only: true,
+      write_requests: 0,
+      remote_writes_planned: 0,
+      complete: true,
+      generated_from_fresh_remote_state: true,
+      owner: safeUser(state.user),
+      ...plan,
+    };
+  }
+
   async recoveryReadiness(input) {
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
@@ -3688,6 +3869,8 @@ class PersistentImportSession {
         return this.permissions(input);
       case 'session-acl-catalog':
         return this.aclCatalog(input);
+      case 'session-acl-plan':
+        return this.aclPlan(input);
       case 'session-import':
         return this.import(input);
       case 'session-recovery-readiness':
@@ -3794,6 +3977,7 @@ async function selfTest() {
     authenticated_recovery_protocol: true,
     permission_editor_protocol: true,
     existing_acl_viewer_protocol: true,
+    existing_acl_dry_run_protocol: true,
     secrets_serialized: false,
   };
 }
@@ -3911,6 +4095,7 @@ export {
   createPlannedContent,
   encryptSecret,
   buildAclObjectCatalog,
+  buildAclChangePlan,
   permissionMaskDigest,
   readCapabilities,
 };

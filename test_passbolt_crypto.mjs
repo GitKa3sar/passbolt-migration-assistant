@@ -1805,6 +1805,95 @@ async function main() {
     assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
     assert.equal(JSON.stringify(persistentAclCatalog).includes('BEGIN PGP'), false);
     assert.equal(JSON.stringify(persistentAclCatalog).includes('mock-resource-password'), false);
+
+    const changedAclPlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [
+        { aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 7 },
+        { aro: 'Group', aro_foreign_key: 'shared-group-id', type: 1 },
+      ],
+    });
+    assert.equal(changedAclPlan.command, 'acl-plan');
+    assert.equal(changedAclPlan.read_only, true);
+    assert.equal(changedAclPlan.write_requests, 0);
+    assert.equal(changedAclPlan.remote_writes_planned, 0);
+    assert.equal(changedAclPlan.complete, true);
+    assert.equal(changedAclPlan.generated_from_fresh_remote_state, true);
+    assert.equal(changedAclPlan.change_count, 2);
+    assert.equal(changedAclPlan.counts.upgrade, 1);
+    assert.equal(changedAclPlan.counts.downgrade, 1);
+    assert.equal(changedAclPlan.counts.unchanged, 1);
+    assert.equal(changedAclPlan.sensitive_action_count, 1);
+    assert.equal(changedAclPlan.operations.some((entry) => entry.action === 'upgrade' && entry.subject_id === 'direct-recipient-id' && entry.before_permission_type === 1 && entry.after_permission_type === 7), true);
+    assert.equal(changedAclPlan.operations.some((entry) => entry.action === 'downgrade' && entry.subject_id === 'shared-group-id' && entry.before_permission_type === 7 && entry.after_permission_type === 1 && entry.sensitive), true);
+    assert.match(changedAclPlan.object_state_digest, /^[0-9a-f]{64}$/);
+    assert.match(changedAclPlan.desired_acl_digest, /^[0-9a-f]{64}$/);
+    assert.match(changedAclPlan.plan_digest, /^[0-9a-f]{64}$/);
+    const repeatedAclPlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [
+        { aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 7 },
+        { aro: 'Group', aro_foreign_key: 'shared-group-id', type: 1 },
+      ],
+    });
+    assert.equal(repeatedAclPlan.plan_digest, changedAclPlan.plan_digest);
+    assert.notEqual(repeatedAclPlan.plan_id, changedAclPlan.plan_id);
+
+    const revokeAclPlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [{ aro: 'Group', aro_foreign_key: 'shared-group-id', type: 7 }],
+    });
+    assert.equal(revokeAclPlan.counts.revoke, 1);
+    assert.equal(revokeAclPlan.operations.some((entry) => entry.action === 'revoke' && entry.subject_id === 'direct-recipient-id' && entry.after_permission_type === null), true);
+    assert.notEqual(revokeAclPlan.plan_digest, changedAclPlan.plan_digest);
+
+    resourceAclMode = 'owner';
+    const addAclPlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [{ aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 1 }],
+    });
+    assert.equal(addAclPlan.counts.add, 1);
+    assert.equal(addAclPlan.counts.unchanged, 1);
+    assert.equal(addAclPlan.operations.some((entry) => entry.action === 'add' && entry.before_permission_type === null && entry.after_permission_type === 1), true);
+
+    resourceAclMode = 'shared';
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'persistent-test-session',
+        object_type: 'resource',
+        object_id: 'existing-resource-id',
+        desired_permissions: [{ aro: 'User', aro_foreign_key: 'user-id', type: 1 }],
+      }),
+      (error) => error?.code === 'CURRENT_OWNER_PERMISSION_IMMUTABLE',
+    );
+    shareDirectoryMode = 'missing-key';
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'persistent-test-session',
+        object_type: 'resource',
+        object_id: 'existing-resource-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'ACL_PLAN_SUBJECTS_UNVERIFIED',
+    );
+    shareDirectoryMode = 'valid';
+    assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
+    assert.equal(JSON.stringify(changedAclPlan).includes('BEGIN PGP'), false);
+    assert.equal(JSON.stringify(changedAclPlan).includes('fingerprint'), false);
     folderMode = 'v4';
     resourceAclMode = 'none';
     existingResourceFolderId = 'folder-alpha-id';
@@ -1815,6 +1904,16 @@ async function main() {
     assert.equal(incompleteAclCatalog.warning_count, 2);
     assert.equal(incompleteAclCatalog.objects.every((entry) => entry.inspection_status === 'incomplete' && entry.warnings.length > 0), true);
     assert.equal(authenticatedMutationCount, mutationCountBeforeAclCatalog);
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'persistent-test-session',
+        object_type: 'resource',
+        object_id: 'existing-resource-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'ACL_PLAN_OBJECT_INCOMPLETE',
+    );
     folderMode = 'empty';
     resourceAclMode = 'none';
     existingResourceFolderId = null;
@@ -2087,6 +2186,7 @@ async function main() {
         shared_destination_permission_mask: true,
         authenticated_permission_catalog: true,
         existing_acl_readonly_viewer: true,
+        existing_acl_readonly_dry_run: true,
         custom_permission_editor_plan: true,
         custom_permissions_bound_to_new_objects: true,
         current_owner_permission_immutable: true,
