@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.17.0"
+        Title="Passbolt Migration Assistant - v0.18.0"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -586,13 +586,14 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                 </Grid>
                             </Grid>
                             <Grid Grid.Row="2" Margin="0,12,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="225" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="225" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Button x:Name="AclBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
                                 <TextBlock x:Name="AclViewerStatus" Grid.Column="1" Text="Avvia la sessione sicura, quindi leggi i permessi esistenti." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
                                 <TextBox x:Name="AclConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase di conferma mostrata nel piano" Margin="6,0" />
                                 <Button x:Name="AclPlanButton" Grid.Column="3" Content="Simula modifica..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
                                 <Button x:Name="ApplyAclButton" Grid.Column="4" Content="Applica ACL" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
                                 <Button x:Name="RecoverAclButton" Grid.Column="5" Content="Recupera ACL..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
+                                <Button x:Name="ManageAclJournalsButton" Grid.Column="6" Content="Gestisci journal..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" ToolTip="Elenca, filtra, descrive e archivia i journal ACL locali senza cancellarli" />
                             </Grid>
                         </Grid>
                     </TabItem>
@@ -726,6 +727,7 @@ $AclPlanButton = Get-Control "AclPlanButton"
 $AclConfirmation = Get-Control "AclConfirmation"
 $ApplyAclButton = Get-Control "ApplyAclButton"
 $RecoverAclButton = Get-Control "RecoverAclButton"
+$ManageAclJournalsButton = Get-Control "ManageAclJournalsButton"
 $AclBackButton = Get-Control "AclBackButton"
 
 $script:ConnectionVerified = $false
@@ -2219,9 +2221,9 @@ function Select-AclRecoveryBatch($Batches) {
     }
 }
 
-function Read-AclRecoveryConfirmation([string]$Message, [string]$Required) {
+function Read-AclRecoveryConfirmation([string]$Message, [string]$Required, [string]$Title = "Conferma recupero ACL") {
     $Dialog = New-Object System.Windows.Forms.Form
-    $Dialog.Text = "Conferma recupero ACL"
+    $Dialog.Text = $Title
     $Dialog.StartPosition = "CenterParent"
     $Dialog.Width = 640; $Dialog.Height = 245
     $Dialog.MinimizeBox = $false; $Dialog.MaximizeBox = $false
@@ -2242,6 +2244,353 @@ function Read-AclRecoveryConfirmation([string]$Message, [string]$Required) {
     try {
         if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
         return [string]$Input.Text
+    } finally {
+        $Dialog.Dispose()
+    }
+}
+
+function Show-AclJournalManager([switch]$BuildOnly) {
+    $Dialog = New-Object System.Windows.Forms.Form
+    $Dialog.Text = "Gestione journal ACL"
+    $Dialog.StartPosition = "CenterParent"
+    $Dialog.Width = 1080
+    $Dialog.Height = 690
+    $Dialog.MinimumSize = New-Object System.Drawing.Size(940, 610)
+    $Dialog.MinimizeBox = $false
+
+    $Intro = New-Object System.Windows.Forms.Label
+    $Intro.Text = "Journal ACL locali attivi. I dettagli escludono percorsi, identita', fingerprint, destinatari e segreti. Archiviare sposta l'evidenza sotto Archive\<stato> senza cancellarla."
+    $Intro.Left = 12; $Intro.Top = 12; $Intro.Width = 1038; $Intro.Height = 38
+    $Intro.Anchor = "Top,Left,Right"
+
+    $StatusLabel = New-Object System.Windows.Forms.Label
+    $StatusLabel.Text = "Stato"
+    $StatusLabel.Left = 12; $StatusLabel.Top = 58; $StatusLabel.Width = 45
+    $StatusFilter = New-Object System.Windows.Forms.ComboBox
+    $StatusFilter.Left = 58; $StatusFilter.Top = 54; $StatusFilter.Width = 155
+    $StatusFilter.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $StatusFilter.DisplayMember = "Label"
+    @(
+        [pscustomobject]@{ Label = "Tutti gli stati"; Value = "all" },
+        [pscustomobject]@{ Label = "Recuperabile"; Value = "recovery_required" },
+        [pscustomobject]@{ Label = "Completo"; Value = "complete" },
+        [pscustomobject]@{ Label = "Troncato"; Value = "truncated" },
+        [pscustomobject]@{ Label = "Corrotto"; Value = "corrupt" }
+    ) | ForEach-Object { [void]$StatusFilter.Items.Add($_) }
+    $StatusFilter.SelectedIndex = 0
+
+    $TypeLabel = New-Object System.Windows.Forms.Label
+    $TypeLabel.Text = "Tipo"
+    $TypeLabel.Left = 225; $TypeLabel.Top = 58; $TypeLabel.Width = 35
+    $TypeFilter = New-Object System.Windows.Forms.ComboBox
+    $TypeFilter.Left = 262; $TypeFilter.Top = 54; $TypeFilter.Width = 135
+    $TypeFilter.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $TypeFilter.DisplayMember = "Label"
+    @(
+        [pscustomobject]@{ Label = "Tutti gli oggetti"; Value = "all" },
+        [pscustomobject]@{ Label = "Cartelle"; Value = "folder" },
+        [pscustomobject]@{ Label = "Risorse"; Value = "resource" }
+    ) | ForEach-Object { [void]$TypeFilter.Items.Add($_) }
+    $TypeFilter.SelectedIndex = 0
+
+    $DateLabel = New-Object System.Windows.Forms.Label
+    $DateLabel.Text = "Data"
+    $DateLabel.Left = 409; $DateLabel.Top = 58; $DateLabel.Width = 35
+    $DateFilter = New-Object System.Windows.Forms.ComboBox
+    $DateFilter.Left = 446; $DateFilter.Top = 54; $DateFilter.Width = 145
+    $DateFilter.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $DateFilter.DisplayMember = "Label"
+    @(
+        [pscustomobject]@{ Label = "Qualsiasi data"; Days = 0 },
+        [pscustomobject]@{ Label = "Ultime 24 ore"; Days = 1 },
+        [pscustomobject]@{ Label = "Ultimi 7 giorni"; Days = 7 },
+        [pscustomobject]@{ Label = "Ultimi 30 giorni"; Days = 30 }
+    ) | ForEach-Object { [void]$DateFilter.Items.Add($_) }
+    $DateFilter.SelectedIndex = 0
+
+    $SearchLabel = New-Object System.Windows.Forms.Label
+    $SearchLabel.Text = "Cerca"
+    $SearchLabel.Left = 603; $SearchLabel.Top = 58; $SearchLabel.Width = 45
+    $SearchBox = New-Object System.Windows.Forms.TextBox
+    $SearchBox.Left = 650; $SearchBox.Top = 54; $SearchBox.Width = 288
+    $SearchBox.Anchor = "Top,Left,Right"
+    $SearchBox.MaxLength = 200
+
+    $RefreshButton = New-Object System.Windows.Forms.Button
+    $RefreshButton.Text = "Aggiorna"
+    $RefreshButton.Left = 950; $RefreshButton.Top = 52; $RefreshButton.Width = 100
+    $RefreshButton.Anchor = "Top,Right"
+
+    $Grid = New-Object System.Windows.Forms.DataGridView
+    $Grid.Left = 12; $Grid.Top = 88; $Grid.Width = 1038; $Grid.Height = 300
+    $Grid.Anchor = "Top,Bottom,Left,Right"
+    $Grid.ReadOnly = $true
+    $Grid.AllowUserToAddRows = $false
+    $Grid.AllowUserToDeleteRows = $false
+    $Grid.AllowUserToResizeRows = $false
+    $Grid.MultiSelect = $false
+    $Grid.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+    $Grid.AutoGenerateColumns = $false
+    $Grid.RowHeadersVisible = $false
+    foreach ($Column in @(
+        [pscustomobject]@{ Name = "RecordedAt"; Header = "Data"; Width = 135; Fill = $false },
+        [pscustomobject]@{ Name = "Status"; Header = "Stato"; Width = 105; Fill = $false },
+        [pscustomobject]@{ Name = "ObjectType"; Header = "Tipo"; Width = 80; Fill = $false },
+        [pscustomobject]@{ Name = "ObjectId"; Header = "ID oggetto"; Width = 220; Fill = $true },
+        [pscustomobject]@{ Name = "Mode"; Header = "Modalita'"; Width = 95; Fill = $false },
+        [pscustomobject]@{ Name = "Changes"; Header = "Modifiche"; Width = 75; Fill = $false },
+        [pscustomobject]@{ Name = "BatchId"; Header = "ID journal"; Width = 245; Fill = $false }
+    )) {
+        $GridColumn = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+        $GridColumn.Name = $Column.Name
+        $GridColumn.HeaderText = $Column.Header
+        $GridColumn.Width = $Column.Width
+        if ($Column.Fill) { $GridColumn.AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill }
+        [void]$Grid.Columns.Add($GridColumn)
+    }
+
+    $DetailsLabel = New-Object System.Windows.Forms.Label
+    $DetailsLabel.Text = "Dettaglio tecnico sicuro"
+    $DetailsLabel.Left = 12; $DetailsLabel.Top = 400; $DetailsLabel.Width = 220
+    $DetailsLabel.Anchor = "Bottom,Left"
+    $Details = New-Object System.Windows.Forms.TextBox
+    $Details.Left = 12; $Details.Top = 422; $Details.Width = 1038; $Details.Height = 164
+    $Details.Anchor = "Bottom,Left,Right"
+    $Details.Multiline = $true
+    $Details.ReadOnly = $true
+    $Details.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+    $Details.BackColor = [System.Drawing.Color]::White
+    $Details.Text = "Selezionare un journal."
+
+    $CountLabel = New-Object System.Windows.Forms.Label
+    $CountLabel.Text = "0 journal"
+    $CountLabel.Left = 12; $CountLabel.Top = 606; $CountLabel.Width = 600; $CountLabel.Height = 30
+    $CountLabel.Anchor = "Bottom,Left,Right"
+
+    $ArchiveButton = New-Object System.Windows.Forms.Button
+    $ArchiveButton.Text = "Archivia..."
+    $ArchiveButton.Left = 845; $ArchiveButton.Top = 600; $ArchiveButton.Width = 100
+    $ArchiveButton.Anchor = "Bottom,Right"
+    $ArchiveButton.Enabled = $false
+    $CloseButton = New-Object System.Windows.Forms.Button
+    $CloseButton.Text = "Chiudi"
+    $CloseButton.Left = 950; $CloseButton.Top = 600; $CloseButton.Width = 100
+    $CloseButton.Anchor = "Bottom,Right"
+    $CloseButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+    $Dialog.Controls.AddRange(@(
+        $Intro, $StatusLabel, $StatusFilter, $TypeLabel, $TypeFilter,
+        $DateLabel, $DateFilter, $SearchLabel, $SearchBox, $RefreshButton,
+        $Grid, $DetailsLabel, $Details, $CountLabel, $ArchiveButton, $CloseButton
+    ))
+    $Dialog.CancelButton = $CloseButton
+
+    $State = [pscustomobject]@{ Batches = @(); Loading = $false }
+    $GetSelected = {
+        if ($Grid.SelectedRows.Count -eq 0) { return $null }
+        return $Grid.SelectedRows[0].Tag
+    }
+    $StatusText = {
+        param([string]$Value)
+        switch ($Value) {
+            "recovery_required" { return "Recuperabile" }
+            "complete" { return "Completo" }
+            "truncated" { return "Troncato" }
+            "corrupt" { return "Corrotto" }
+            default { return "Sconosciuto" }
+        }
+    }
+    $TypeText = {
+        param([string]$Value)
+        if ($Value -eq "folder") { return "Cartella" }
+        if ($Value -eq "resource") { return "Risorsa" }
+        return [string][char]0x2014
+    }
+    $ModeText = {
+        param([string]$Value)
+        switch ($Value) {
+            "additive" { return "Additiva" }
+            "mixed" { return "Mista" }
+            "restrictive" { return "Restrittiva" }
+            default { return [string][char]0x2014 }
+        }
+    }
+    $ApplyFilters = {
+        if ($State.Loading) { return }
+        $State.Loading = $true
+        $SelectedId = ""
+        $SelectedBefore = & $GetSelected
+        if ($null -ne $SelectedBefore) { $SelectedId = [string]$SelectedBefore.batch_id }
+        $StatusValue = [string]$StatusFilter.SelectedItem.Value
+        $TypeValue = [string]$TypeFilter.SelectedItem.Value
+        $Days = [int]$DateFilter.SelectedItem.Days
+        $Threshold = if ($Days -gt 0) { [DateTimeOffset]::UtcNow.AddDays(-$Days) } else { [DateTimeOffset]::MinValue }
+        $Needle = $SearchBox.Text.Trim().ToLowerInvariant()
+        $Grid.Rows.Clear()
+        foreach ($Batch in @($State.Batches)) {
+            if ($StatusValue -ne "all" -and [string]$Batch.status -ne $StatusValue) { continue }
+            if ($TypeValue -ne "all" -and [string]$Batch.object_type -ne $TypeValue) { continue }
+            if ($Days -gt 0) {
+                if (-not [string]$Batch.recorded_at) { continue }
+                try { if ([DateTimeOffset]::Parse([string]$Batch.recorded_at) -lt $Threshold) { continue } } catch { continue }
+            }
+            $Haystack = "$([string]$Batch.batch_id) $([string]$Batch.object_id) $([string]$Batch.object_type) $([string]$Batch.status) $([string]$Batch.apply_mode)".ToLowerInvariant()
+            if ($Needle -and -not $Haystack.Contains($Needle)) { continue }
+            $When = [string][char]0x2014
+            if ([string]$Batch.recorded_at) {
+                try { $When = ([DateTimeOffset]::Parse([string]$Batch.recorded_at)).ToLocalTime().ToString("dd/MM/yyyy HH:mm") } catch { $When = [string]$Batch.recorded_at }
+            }
+            $Changes = if ($null -eq $Batch.change_count) { [string][char]0x2014 } else { [string]$Batch.change_count }
+            $Index = $Grid.Rows.Add(@(
+                $When,
+                (& $StatusText ([string]$Batch.status)),
+                (& $TypeText ([string]$Batch.object_type)),
+                $(if ([string]$Batch.object_id) { [string]$Batch.object_id } else { [string][char]0x2014 }),
+                (& $ModeText ([string]$Batch.apply_mode)),
+                $Changes,
+                [string]$Batch.batch_id
+            ))
+            $Grid.Rows[$Index].Tag = $Batch
+            if ($SelectedId -and [string]$Batch.batch_id -eq $SelectedId) {
+                $Grid.Rows[$Index].Selected = $true
+                $Grid.CurrentCell = $Grid.Rows[$Index].Cells[0]
+            }
+        }
+        $CountLabel.Text = "$($Grid.Rows.Count) journal visualizzati su $(@($State.Batches).Count) attivi"
+        if ($Grid.Rows.Count -gt 0 -and $Grid.SelectedRows.Count -eq 0) {
+            $Grid.Rows[0].Selected = $true
+            $Grid.CurrentCell = $Grid.Rows[0].Cells[0]
+        }
+        $ArchiveButton.Enabled = $Grid.SelectedRows.Count -gt 0
+        if ($Grid.Rows.Count -eq 0) { $Details.Text = "Nessun journal corrisponde ai filtri selezionati." }
+        $State.Loading = $false
+    }
+    $LoadDetails = {
+        if ($State.Loading) { return }
+        $Selected = & $GetSelected
+        $ArchiveButton.Enabled = $null -ne $Selected
+        if ($null -eq $Selected) {
+            $Details.Text = "Selezionare un journal."
+            return
+        }
+        try {
+            $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--acl-reconciliation-describe") ([pscustomobject]@{
+                batch_id = [string]$Selected.batch_id
+            }) 30000
+            if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+            $Item = $Envelope.result
+            if ([string]$Item.batch_id -ne [string]$Selected.batch_id -or [string]$Item.status -ne [string]$Selected.status) {
+                throw "Lo stato del journal ACL e' cambiato. Aggiornare l'elenco."
+            }
+            if ([string]$Item.status -eq "corrupt") {
+                $Details.Text = "ID journal: $([string]$Item.batch_id)`r`nStato: Corrotto`r`n`r`nIl contenuto non e' attendibile e non viene interpretato. Il recupero automatico e' bloccato; e' disponibile soltanto l'archiviazione non distruttiva."
+            } else {
+                $Details.Text = @(
+                    "ID journal: $([string]$Item.batch_id)",
+                    "Stato: $(& $StatusText ([string]$Item.status))",
+                    "Oggetto: $(& $TypeText ([string]$Item.object_type)) | $([string]$Item.object_id)",
+                    "Modalita': $(& $ModeText ([string]$Item.apply_mode))",
+                    "Modifiche: $([int]$Item.change_count) (aggiunte $([int]$Item.add_count), aumenti $([int]$Item.upgrade_count), riduzioni $([int]$Item.downgrade_count), revoche $([int]$Item.revoke_count))",
+                    "Eventi: $([int]$Item.event_count) | applicazioni $([int]$Item.applied_operation_count) | errori $([int]$Item.failed_operation_count) | verifiche recupero $([int]$Item.recovery_verification_count)",
+                    "Coda troncata: $(if ([bool]$Item.truncated_tail) { 'si' } else { 'no' })"
+                ) -join "`r`n"
+            }
+        } catch {
+            $Details.Text = "Dettaglio non disponibile: $($_.Exception.Message)"
+        }
+    }
+    $Refresh = {
+        if ($State.Loading) { return }
+        $State.Loading = $true
+        $RefreshButton.Enabled = $false
+        $ArchiveButton.Enabled = $false
+        $Details.Text = "Lettura dei metadati locali in corso..."
+        try {
+            $Envelope = Invoke-PythonJson $ImportScript @("--acl-reconciliation-list")
+            if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+            $State.Batches = @($Envelope.result.batches)
+            $State.Loading = $false
+            & $ApplyFilters
+            & $LoadDetails
+            Add-Activity "Journal ACL aggiornati: $(@($State.Batches).Count) lotti attivi; nessun percorso, destinatario o segreto esposto."
+        } catch {
+            $State.Batches = @()
+            $Grid.Rows.Clear()
+            $CountLabel.Text = "Elenco non disponibile"
+            $Details.Text = "Elenco dei journal ACL non disponibile: $($_.Exception.Message)"
+            Add-Activity "Elenco journal ACL non disponibile: $($_.Exception.Message)"
+        } finally {
+            $State.Loading = $false
+            $RefreshButton.Enabled = $true
+        }
+    }
+    $Archive = {
+        $Selected = & $GetSelected
+        if ($null -eq $Selected) { return }
+        $BatchId = [string]$Selected.batch_id
+        $Status = [string]$Selected.status
+        $Warning = "Il journal ACL $BatchId verra' spostato nell'archivio locale dello stato '$(& $StatusText $Status)'.`r`n`r`nNessuna evidenza verra' cancellata. Il lotto non comparira' piu nell'elenco attivo. Continuare?"
+        if ([System.Windows.Forms.MessageBox]::Show($Warning, "Archivia journal ACL", "YesNo", "Warning") -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        $Required = "ARCHIVIA ACL $BatchId"
+        $Confirmation = Read-AclRecoveryConfirmation "L'operazione e' locale e non modifica Passbolt. Confermare lo spostamento non distruttivo del journal nello stato corrente." $Required "Conferma archiviazione ACL"
+        if ($null -eq $Confirmation) { return }
+        $ArchiveButton.Enabled = $false
+        try {
+            $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ImportScript, "--acl-reconciliation-archive") ([pscustomobject]@{
+                batch_id = $BatchId
+                expected_status = $Status
+                confirmation = $Confirmation
+            }) 30000
+            if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+            if ([bool]$Envelope.result.deleted) { throw "Il backend ha restituito un esito di cancellazione non consentito." }
+            Add-Activity "Journal ACL $BatchId archiviato dallo stato $Status; nessuna evidenza eliminata."
+            [System.Windows.Forms.MessageBox]::Show("Journal ACL archiviato correttamente. L'evidenza e' stata spostata, non cancellata.", "Archiviazione completata", "OK", "Information") | Out-Null
+            & $Refresh
+        } catch {
+            Add-Activity "Archiviazione journal ACL non riuscita: $($_.Exception.Message)"
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Archiviazione non riuscita", "OK", "Error") | Out-Null
+        } finally {
+            $ArchiveButton.Enabled = $Grid.SelectedRows.Count -gt 0
+        }
+    }
+
+    $StatusFilter.Add_SelectedIndexChanged({ & $ApplyFilters; & $LoadDetails })
+    $TypeFilter.Add_SelectedIndexChanged({ & $ApplyFilters; & $LoadDetails })
+    $DateFilter.Add_SelectedIndexChanged({ & $ApplyFilters; & $LoadDetails })
+    $SearchBox.Add_TextChanged({ & $ApplyFilters; & $LoadDetails })
+    $Grid.Add_SelectionChanged({ & $LoadDetails })
+    $RefreshButton.Add_Click({ & $Refresh })
+    $ArchiveButton.Add_Click({ & $Archive })
+
+    if ($BuildOnly) {
+        $State.Batches = @([pscustomobject]@{
+            batch_id = "11111111-1111-4111-8111-111111111111"
+            recorded_at = "2026-08-11T12:00:00.000Z"
+            status = "recovery_required"
+            object_type = "folder"
+            object_id = "acl-journal-ui-probe"
+            change_count = 1
+            add_count = 1
+            upgrade_count = 0
+            downgrade_count = 0
+            revoke_count = 0
+            apply_mode = "additive"
+        })
+        & $ApplyFilters
+        return [pscustomobject]@{
+            Window = $Dialog
+            StatusFilter = $StatusFilter
+            TypeFilter = $TypeFilter
+            DateFilter = $DateFilter
+            SearchBox = $SearchBox
+            Grid = $Grid
+            Details = $Details
+            ArchiveButton = $ArchiveButton
+        }
+    }
+    try {
+        & $Refresh
+        [void]$Dialog.ShowDialog()
     } finally {
         $Dialog.Dispose()
     }
@@ -3465,7 +3814,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.17.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.18.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4387,6 +4736,7 @@ $AclPlanButton.Add_Click({ Invoke-AclDryRun })
 $AclConfirmation.Add_TextChanged({ Update-AclApplyActionState })
 $ApplyAclButton.Add_Click({ Invoke-ConfirmedAclApply })
 $RecoverAclButton.Add_Click({ Invoke-AclRecovery })
+$ManageAclJournalsButton.Add_Click({ Show-AclJournalManager })
 $AclTypeFilter.Add_SelectionChanged({ Update-AclObjectFilter })
 $AclSearchBox.Add_TextChanged({ Update-AclObjectFilter })
 $AclObjectsGrid.Add_SelectionChanged({ Update-AclPermissionDetail })
@@ -4580,7 +4930,7 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
@@ -4722,6 +5072,11 @@ for line in sys.stdin:
     if ($ApplyAclButton.IsEnabled -or $AclConfirmation.IsEnabled -or $null -eq $RecoverAclButton) {
         throw "I controlli UI ACL non rispettano il requisito di una sessione autenticata attiva."
     }
+    $AclJournalManagerProbe = Show-AclJournalManager -BuildOnly
+    if ($null -eq $AclJournalManagerProbe -or $null -eq $AclJournalManagerProbe.Grid -or $AclJournalManagerProbe.Grid.Rows.Count -ne 1 -or [string]$AclJournalManagerProbe.Grid.Rows[0].Cells[3].Value -ne "acl-journal-ui-probe" -or $AclJournalManagerProbe.StatusFilter.Items.Count -ne 5 -or $AclJournalManagerProbe.TypeFilter.Items.Count -ne 3 -or $AclJournalManagerProbe.DateFilter.Items.Count -ne 4 -or $null -eq $AclJournalManagerProbe.ArchiveButton) {
+        throw "La gestione UI dei journal ACL non espone elenco, filtri, dettaglio e archiviazione."
+    }
+    $AclJournalManagerProbe.Window.Close()
     Reset-AclPlan
     if ([bool]$ReviewPasswordToggle.IsChecked -or [string]$ReviewPasswordState.Text -ne "PASSWORD MASCHERATE") {
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
@@ -4762,10 +5117,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.17.0"
+        version = "0.18.0"
         ui = "WPF"
         phases = 4
-        controls = 108
+        controls = 109
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -4779,6 +5134,7 @@ for line in sys.stdin:
         existing_acl_additive_apply_ui = "OK"
         existing_acl_restrictive_apply_ui = "OK"
         existing_acl_recovery_ui = "OK"
+        acl_journal_management_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
         protected_excel_password_prompt = "OK"

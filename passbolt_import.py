@@ -41,7 +41,9 @@ from passbolt_reconciliation import (
 from passbolt_acl_reconciliation import (
     AclReconciliationJournal,
     acquire_acl_journal_lease,
+    archive_acl_batch,
     build_acl_recovery_state,
+    describe_acl_batch,
     list_acl_batches,
     read_acl_batch,
 )
@@ -62,7 +64,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.17.0"
+APP_VERSION = "0.18.0"
 MAX_IMPORT_CANDIDATES = 25
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 4 * 1024 * 1024
@@ -2050,11 +2052,67 @@ def _acl_reconciliation_list_result(
                 "object_type": item.object_type,
                 "object_id": item.object_id,
                 "change_count": item.change_count,
+                "add_count": item.add_count,
+                "upgrade_count": item.upgrade_count,
+                "downgrade_count": item.downgrade_count,
+                "revoke_count": item.revoke_count,
+                "apply_mode": item.apply_mode,
                 "event_count": item.event_count,
                 "truncated_tail": item.truncated_tail,
             }
             for item in summaries
         ]
+    }
+
+
+def _acl_reconciliation_describe_result(
+    request: Mapping[str, Any],
+    journal_root: str | Path | None = None,
+) -> dict[str, Any]:
+    try:
+        details = describe_acl_batch(request.get("batch_id"), journal_root)
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "Il journal ACL selezionato non può essere descritto in modo affidabile."
+        ) from exc
+    return {
+        "batch_id": details.batch_id,
+        "recorded_at": details.recorded_at,
+        "status": details.status,
+        "object_type": details.object_type,
+        "object_id": details.object_id,
+        "change_count": details.change_count,
+        "add_count": details.add_count,
+        "upgrade_count": details.upgrade_count,
+        "downgrade_count": details.downgrade_count,
+        "revoke_count": details.revoke_count,
+        "apply_mode": details.apply_mode,
+        "event_count": details.event_count,
+        "truncated_tail": details.truncated_tail,
+        "applied_operation_count": details.applied_operation_count,
+        "failed_operation_count": details.failed_operation_count,
+        "recovery_verification_count": details.recovery_verification_count,
+    }
+
+
+def _acl_reconciliation_archive_result(
+    request: Mapping[str, Any],
+    journal_root: str | Path | None = None,
+) -> dict[str, Any]:
+    try:
+        archived = archive_acl_batch(
+            request.get("batch_id"),
+            expected_status=request.get("expected_status"),
+            confirmation=request.get("confirmation"),
+            root=journal_root,
+        )
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(str(exc)) from exc
+    return {
+        "batch_id": archived.batch_id,
+        "previous_status": archived.previous_status,
+        "archived_at": archived.archived_at,
+        "deleted": False,
     }
 
 
@@ -2071,6 +2129,8 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--reconciliation-describe", action="store_true")
     mode.add_argument("--reconciliation-archive", action="store_true")
     mode.add_argument("--acl-reconciliation-list", action="store_true")
+    mode.add_argument("--acl-reconciliation-describe", action="store_true")
+    mode.add_argument("--acl-reconciliation-archive", action="store_true")
     mode.add_argument("--self-test", action="store_true")
     parser.add_argument("--root")
     parser.add_argument("--journal-root")
@@ -2104,6 +2164,7 @@ def main() -> int:
                     "existing_acl_restrictive_apply_protocol": True,
                     "existing_acl_recovery_protocol": True,
                     "dedicated_acl_journal_protocol": True,
+                    "acl_journal_management_protocol": True,
                     "secrets_serialized": False,
                 },
             }
@@ -2130,6 +2191,20 @@ def main() -> int:
                     ),
                 }
             )
+            return 0
+        if args.acl_reconciliation_describe or args.acl_reconciliation_archive:
+            request = _read_stdin_json()
+            if args.acl_reconciliation_describe:
+                operation_result = _acl_reconciliation_describe_result(
+                    request,
+                    args.acl_journal_root,
+                )
+            else:
+                operation_result = _acl_reconciliation_archive_result(
+                    request,
+                    args.acl_journal_root,
+                )
+            _write_json({"ok": True, "result": operation_result})
             return 0
         if args.reconciliation_describe or args.reconciliation_archive:
             request = _read_stdin_json()

@@ -13,6 +13,9 @@ from unittest import mock
 
 from passbolt_import import (
     ImportPreparationError,
+    _acl_reconciliation_archive_result,
+    _acl_reconciliation_describe_result,
+    _acl_reconciliation_list_result,
     _bridge_line_exchange,
     _prepare_recovery_context,
     _reconciliation_archive_result,
@@ -1181,6 +1184,56 @@ for raw in sys.stdin:
                 "batch_id": journal.batch_id,
                 "expected_status": "recovery_required",
                 "confirmation": f"ARCHIVIA {journal.batch_id}",
+            },
+            journal_root,
+        )
+        self.assertFalse(archived["deleted"])
+        self.assertEqual(archived["previous_status"], "recovery_required")
+
+    def test_acl_journal_management_protocol_exposes_no_identity_paths_or_secrets(self) -> None:
+        journal_root = self.root / "acl-management-journals"
+        journal = AclReconciliationJournal.create(
+            app_version="0.18.0",
+            server_origin="https://pass.example.test",
+            server_fingerprint="E" * 40,
+            user_id_hash=hash_user_identifier(
+                "59a882e6-4909-4db0-ab84-91093461c777"
+            ),
+            object_type="folder",
+            object_id="folder-id",
+            object_state_digest="1" * 64,
+            desired_acl_digest="2" * 64,
+            plan_digest="3" * 64,
+            desired_permissions=[
+                {"aro": "Group", "aro_foreign_key": "group-id", "type": 7}
+            ],
+            change_count=1,
+            add_count=0,
+            upgrade_count=1,
+            downgrade_count=0,
+            revoke_count=0,
+            apply_mode="additive",
+            root=journal_root,
+        )
+
+        listing = _acl_reconciliation_list_result(journal_root)
+        self.assertEqual(listing["batches"][0]["batch_id"], journal.batch_id)
+        self.assertEqual(listing["batches"][0]["apply_mode"], "additive")
+        details = _acl_reconciliation_describe_result(
+            {"batch_id": journal.batch_id}, journal_root
+        )
+        self.assertEqual(details["object_id"], "folder-id")
+        serialized = json.dumps({"listing": listing, "details": details})
+        self.assertNotIn(str(journal_root), serialized)
+        self.assertNotIn("pass.example.test", serialized)
+        self.assertNotIn("group-id", serialized)
+        self.assertNotIn(self.secret, serialized)
+
+        archived = _acl_reconciliation_archive_result(
+            {
+                "batch_id": journal.batch_id,
+                "expected_status": "recovery_required",
+                "confirmation": f"ARCHIVIA ACL {journal.batch_id}",
             },
             journal_root,
         )

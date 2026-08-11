@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.17.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.18.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Gestione dei journal ACL 0.18.0
+
+La scheda **Permessi esistenti** espone **Gestisci journal...** anche senza una sessione Passbolt attiva, perché le operazioni sono esclusivamente locali. La finestra richiama `--acl-reconciliation-list` e mostra tutti i journal attivi negli stati `recovery_required`, `complete`, `truncated` e `corrupt`. È possibile filtrare per stato, cartella/risorsa, ultime 24 ore, 7 giorni o 30 giorni e cercare per UUID, ID oggetto, tipo, stato o modalità.
+
+`--acl-reconciliation-describe` accetta da standard input soltanto `batch_id` e restituisce UUID, data, stato, tipo e ID oggetto, modalità, contatori delle modifiche e contatori degli eventi. Non restituisce percorso del file, origine o fingerprint del server, hash dell'utente, ACL desiderata o ID dei destinatari. Se il journal è corrotto, non ne interpreta il contenuto e restituisce soltanto UUID e stato `corrupt` con i restanti campi tecnici non disponibili.
+
+`--acl-reconciliation-archive` accetta soltanto `batch_id`, `expected_status` e `confirmation`. La conferma deve essere esattamente `ARCHIVIA ACL <UUID>`; il backend risolve il file tramite UUID v4 canonico, acquisisce il lease esclusivo e rilegge lo stato prima dello spostamento. Il journal e il relativo lock vengono preservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\AclReconciliation\Archive\<stato>`. L'operazione non cancella evidenze, non legge sorgenti e non contatta Passbolt.
 
 ### Riduzioni e revoche ACL protette 0.17.0
 
@@ -406,4 +414,4 @@ Node rilegge cartelle, risorse e permessi e classifica ogni intenzione storica. 
 
 La ripresa puo creare contenuti mancanti e completare condivisioni non applicate, riestraendo il segreto soltanto per le risorse che devono essere create o ricifrate per i destinatari. Non pianifica mai cancellazioni, spostamenti o sovrascritture. Duplicati multipli, oggetti in una destinazione diversa, variazioni della ACL, identita o sorgenti non corrispondenti, journal corrotti o code troncate bloccano il piano e richiedono una verifica manuale.
 
-I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.16.0 ha aggiunto `--acl-reconciliation-list` e il journal ACL; la 0.17.0 estende lo stesso protocollo a piani misti e restrittivi mantenendo il recupero idempotente. La prossima fase amplierà la gestione operativa dei journal ACL con descrizione e archiviazione non distruttiva dalla GUI. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.
+I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.16.0 ha aggiunto `--acl-reconciliation-list` e il journal ACL; la 0.17.0 estende lo stesso protocollo a piani misti e restrittivi; la 0.18.0 completa la gestione locale con `--acl-reconciliation-describe`, `--acl-reconciliation-archive`, filtri e dettagli sicuri nella GUI. La prossima fase consoliderà una matrice di integrazione ripetibile contro istanze Passbolt v4/v5 reali, seguita dalla preparazione della distribuzione Windows. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 import uuid
@@ -12,7 +13,9 @@ from passbolt_acl_reconciliation import (
     ReconciliationJournalCorrupt,
     ReconciliationJournalError,
     acquire_acl_journal_lease,
+    archive_acl_batch,
     build_acl_recovery_state,
+    describe_acl_batch,
     list_acl_batches,
     read_acl_batch,
 )
@@ -182,6 +185,114 @@ class AclJournalTests(unittest.TestCase):
                     resolution="remote_success",
                     remote_acl_digest=DESIRED_DIGEST,
                     recovery_plan_digest="4" * 64,
+                )
+
+    def test_safe_details_expose_counts_but_not_identity_or_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            journal = create_journal(temporary)
+            details = describe_acl_batch(journal.batch_id, temporary)
+            self.assertEqual(details.status, "recovery_required")
+            self.assertEqual(details.object_id, "resource-id")
+            self.assertEqual(details.add_count, 1)
+            self.assertEqual(details.apply_mode, "additive")
+            serialized = json.dumps(details.__dict__)
+            self.assertNotIn(SERVER_ORIGIN, serialized)
+            self.assertNotIn(SERVER_FINGERPRINT, serialized)
+            self.assertNotIn(USER_HASH, serialized)
+            self.assertNotIn("recipient-id", serialized)
+            self.assertNotIn(temporary, serialized)
+
+    def test_archiving_requires_exact_status_confirmation_and_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            journal = create_journal(temporary)
+            with self.assertRaises(ReconciliationJournalError):
+                archive_acl_batch(
+                    journal.batch_id,
+                    expected_status="complete",
+                    confirmation=f"ARCHIVIA ACL {journal.batch_id}",
+                    root=temporary,
+                )
+            with self.assertRaises(ReconciliationJournalError):
+                archive_acl_batch(
+                    journal.batch_id,
+                    expected_status="recovery_required",
+                    confirmation=f"ARCHIVIA {journal.batch_id}",
+                    root=temporary,
+                )
+            lease = acquire_acl_journal_lease(journal)
+            try:
+                with self.assertRaises(ReconciliationJournalBusy):
+                    archive_acl_batch(
+                        journal.batch_id,
+                        expected_status="recovery_required",
+                        confirmation=f"ARCHIVIA ACL {journal.batch_id}",
+                        root=temporary,
+                    )
+            finally:
+                lease.close()
+
+            result = archive_acl_batch(
+                journal.batch_id,
+                expected_status="recovery_required",
+                confirmation=f"ARCHIVIA ACL {journal.batch_id}",
+                root=temporary,
+            )
+            archived = (
+                Path(temporary)
+                / "Archive"
+                / "recovery_required"
+                / journal.path.name
+            )
+            self.assertEqual(result.previous_status, "recovery_required")
+            self.assertFalse(journal.path.exists())
+            self.assertTrue(archived.is_file())
+            self.assertEqual(read_acl_batch(journal.batch_id, archived.parent).batch_id, journal.batch_id)
+
+    def test_complete_truncated_and_corrupt_journals_are_preserved_by_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            completed = create_journal(temporary)
+            append_complete(completed)
+            complete_result = archive_acl_batch(
+                completed.batch_id,
+                expected_status="complete",
+                confirmation=f"ARCHIVIA ACL {completed.batch_id}",
+                root=temporary,
+            )
+            self.assertEqual(complete_result.previous_status, "complete")
+
+            truncated = create_journal(temporary)
+            with truncated.path.open("ab") as handle:
+                handle.write(b'{"partial"')
+                handle.flush()
+                os.fsync(handle.fileno())
+            truncated_result = archive_acl_batch(
+                truncated.batch_id,
+                expected_status="truncated",
+                confirmation=f"ARCHIVIA ACL {truncated.batch_id}",
+                root=temporary,
+            )
+            self.assertEqual(truncated_result.previous_status, "truncated")
+
+            corrupt_id = str(uuid.uuid4())
+            corrupt_path = Path(temporary) / f"acl-batch-{corrupt_id}.jsonl"
+            corrupt_path.write_bytes(b"not-json\n")
+            corrupt_details = describe_acl_batch(corrupt_id, temporary)
+            self.assertEqual(corrupt_details.status, "corrupt")
+            self.assertIsNone(corrupt_details.object_id)
+            corrupt_result = archive_acl_batch(
+                corrupt_id,
+                expected_status="corrupt",
+                confirmation=f"ARCHIVIA ACL {corrupt_id}",
+                root=temporary,
+            )
+            self.assertEqual(corrupt_result.previous_status, "corrupt")
+            for status, path in (
+                ("complete", completed.path),
+                ("truncated", truncated.path),
+                ("corrupt", corrupt_path),
+            ):
+                self.assertTrue(
+                    (Path(temporary) / "Archive" / status / path.name).is_file()
                 )
 
     def test_hash_tampering_is_detected(self) -> None:

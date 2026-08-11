@@ -78,6 +78,38 @@ class AclBatchSummary:
     change_count: int | None
     event_count: int | None
     truncated_tail: bool
+    add_count: int | None
+    upgrade_count: int | None
+    downgrade_count: int | None
+    revoke_count: int | None
+    apply_mode: str | None
+
+
+@dataclass(frozen=True)
+class AclBatchDetails:
+    batch_id: str
+    recorded_at: str | None
+    status: str
+    object_type: str | None
+    object_id: str | None
+    change_count: int | None
+    add_count: int | None
+    upgrade_count: int | None
+    downgrade_count: int | None
+    revoke_count: int | None
+    apply_mode: str | None
+    event_count: int | None
+    truncated_tail: bool
+    applied_operation_count: int | None
+    failed_operation_count: int | None
+    recovery_verification_count: int | None
+
+
+@dataclass(frozen=True)
+class ArchivedAclBatch:
+    batch_id: str
+    previous_status: str
+    archived_at: str
 
 
 def default_acl_journal_root() -> Path:
@@ -460,7 +492,10 @@ def acl_journal_path(batch_id: object, root: str | Path | None = None) -> Path:
     journal_root = Path(root) if root is not None else default_acl_journal_root()
     if not journal_root.is_dir() or journal_root.is_symlink():
         raise ReconciliationJournalError("Directory dei journal ACL non disponibile.")
-    return journal_root / f"acl-batch-{normalized}.jsonl"
+    path = journal_root / f"acl-batch-{normalized}.jsonl"
+    if path.parent != journal_root:
+        raise ReconciliationJournalError("Identificativo del lotto ACL non valido.")
+    return path
 
 
 def read_acl_batch(batch_id: object, root: str | Path | None = None) -> AclJournalSnapshot:
@@ -469,6 +504,14 @@ def read_acl_batch(batch_id: object, root: str | Path | None = None) -> AclJourn
 
 def acquire_acl_journal_lease(journal: "AclReconciliationJournal") -> ReconciliationJournalLease:
     return _acquire_path_lease(journal.read().path)
+
+
+def _acl_snapshot_status(snapshot: AclJournalSnapshot) -> str:
+    if snapshot.complete:
+        return "complete"
+    if snapshot.truncated_tail:
+        return "truncated"
+    return "recovery_required"
 
 
 def list_acl_batches(root: str | Path | None = None, *, incomplete_only: bool = False) -> tuple[AclBatchSummary, ...]:
@@ -484,21 +527,184 @@ def list_acl_batches(root: str | Path | None = None, *, incomplete_only: bool = 
     for path in candidates:
         try:
             snapshot = read_acl_journal(path)
-            status = "complete" if snapshot.complete else ("truncated" if snapshot.truncated_tail else "recovery_required")
+            status = _acl_snapshot_status(snapshot)
             if incomplete_only and status == "complete":
                 continue
             header = snapshot.events[0]
+            payload = header["payload"]
             result.append(AclBatchSummary(
-                snapshot.batch_id, str(header["recorded_at"]), status,
-                str(header["payload"]["object_type"]), str(header["payload"]["object_id"]),
-                int(header["payload"]["change_count"]), len(snapshot.events), snapshot.truncated_tail,
+                batch_id=snapshot.batch_id,
+                recorded_at=str(header["recorded_at"]),
+                status=status,
+                object_type=str(payload["object_type"]),
+                object_id=str(payload["object_id"]),
+                change_count=int(payload["change_count"]),
+                event_count=len(snapshot.events),
+                truncated_tail=snapshot.truncated_tail,
+                add_count=int(payload["add_count"]),
+                upgrade_count=int(payload["upgrade_count"]),
+                downgrade_count=int(payload.get("downgrade_count", 0)),
+                revoke_count=int(payload.get("revoke_count", 0)),
+                apply_mode=str(payload.get("apply_mode", "additive")),
             ))
         except ReconciliationJournalError:
             match = _NAME.fullmatch(path.name)
             assert match is not None
-            result.append(AclBatchSummary(str(uuid.UUID(match.group("batch_id"))), None, "corrupt", None, None, None, None, False))
+            result.append(AclBatchSummary(
+                batch_id=str(uuid.UUID(match.group("batch_id"))),
+                recorded_at=None,
+                status="corrupt",
+                object_type=None,
+                object_id=None,
+                change_count=None,
+                event_count=None,
+                truncated_tail=False,
+                add_count=None,
+                upgrade_count=None,
+                downgrade_count=None,
+                revoke_count=None,
+                apply_mode=None,
+            ))
     result.sort(key=lambda item: item.recorded_at or "", reverse=True)
     return tuple(result)
+
+
+def describe_acl_batch(
+    batch_id: object, root: str | Path | None = None
+) -> AclBatchDetails:
+    """Return bounded technical details without exposing journal paths or identity data."""
+
+    normalized_batch_id = _uuid4(batch_id, "Lotto ACL")
+    path = acl_journal_path(normalized_batch_id, root)
+    try:
+        snapshot = read_acl_journal(path)
+    except ReconciliationJournalCorrupt:
+        return AclBatchDetails(
+            batch_id=normalized_batch_id,
+            recorded_at=None,
+            status="corrupt",
+            object_type=None,
+            object_id=None,
+            change_count=None,
+            add_count=None,
+            upgrade_count=None,
+            downgrade_count=None,
+            revoke_count=None,
+            apply_mode=None,
+            event_count=None,
+            truncated_tail=False,
+            applied_operation_count=None,
+            failed_operation_count=None,
+            recovery_verification_count=None,
+        )
+
+    header = snapshot.events[0]
+    payload = header["payload"]
+    return AclBatchDetails(
+        batch_id=snapshot.batch_id,
+        recorded_at=str(header["recorded_at"]),
+        status=_acl_snapshot_status(snapshot),
+        object_type=str(payload["object_type"]),
+        object_id=str(payload["object_id"]),
+        change_count=int(payload["change_count"]),
+        add_count=int(payload["add_count"]),
+        upgrade_count=int(payload["upgrade_count"]),
+        downgrade_count=int(payload.get("downgrade_count", 0)),
+        revoke_count=int(payload.get("revoke_count", 0)),
+        apply_mode=str(payload.get("apply_mode", "additive")),
+        event_count=len(snapshot.events),
+        truncated_tail=snapshot.truncated_tail,
+        applied_operation_count=sum(
+            event["event_type"] == "acl_operation_applied"
+            for event in snapshot.events
+        ),
+        failed_operation_count=sum(
+            event["event_type"] == "acl_operation_failed"
+            for event in snapshot.events
+        ),
+        recovery_verification_count=sum(
+            event["event_type"] == "acl_recovery_verified"
+            for event in snapshot.events
+        ),
+    )
+
+
+def archive_acl_batch(
+    batch_id: object,
+    *,
+    expected_status: object,
+    confirmation: object,
+    root: str | Path | None = None,
+) -> ArchivedAclBatch:
+    """Move one exact ACL journal into its status archive without deleting it."""
+
+    normalized_batch_id = _uuid4(batch_id, "Lotto ACL")
+    normalized_expected = str(expected_status).strip().lower()
+    if normalized_expected not in {
+        "complete",
+        "recovery_required",
+        "truncated",
+        "corrupt",
+    }:
+        raise ReconciliationJournalError("Stato atteso del lotto ACL non valido.")
+    if str(confirmation).strip() != f"ARCHIVIA ACL {normalized_batch_id}":
+        raise ReconciliationJournalError("Conferma di archiviazione ACL non valida.")
+
+    journal_path = acl_journal_path(normalized_batch_id, root)
+    lease = _acquire_path_lease(journal_path)
+    archive_path: Path | None = None
+    previous_status = "corrupt"
+    try:
+        try:
+            previous_status = _acl_snapshot_status(read_acl_journal(journal_path))
+        except ReconciliationJournalError:
+            previous_status = "corrupt"
+        if previous_status != normalized_expected:
+            raise ReconciliationJournalError(
+                "Lo stato del lotto ACL è cambiato; aggiornare l’elenco prima di archiviarlo."
+            )
+
+        journal_root = journal_path.parent
+        archive_base = journal_root / "Archive"
+        _prepare_root(archive_base)
+        archive_root = archive_base / previous_status
+        _prepare_root(archive_root)
+        archive_path = archive_root / journal_path.name
+        if archive_path.exists() or archive_path.is_symlink():
+            raise ReconciliationJournalError("Il lotto ACL risulta già archiviato.")
+        try:
+            journal_path.rename(archive_path)
+        except OSError as exc:
+            raise ReconciliationJournalError(
+                "Archiviazione del journal ACL non riuscita."
+            ) from exc
+    finally:
+        lock_path = lease.path
+        lease.close()
+
+    archived_lock_path = archive_path.with_suffix(".lock") if archive_path else None
+    if lock_path.exists():
+        if not lock_path.is_file() or lock_path.is_symlink():
+            raise ReconciliationJournalError(
+                "Il journal ACL è archiviato, ma il relativo lock non è valido."
+            )
+        if archived_lock_path is not None and archived_lock_path.exists():
+            raise ReconciliationJournalError(
+                "Il journal ACL è archiviato, ma il relativo lock esiste già."
+            )
+        try:
+            if archived_lock_path is not None:
+                lock_path.rename(archived_lock_path)
+        except OSError as exc:
+            raise ReconciliationJournalError(
+                "Il journal ACL è archiviato, ma il relativo lock non è stato spostato."
+            ) from exc
+
+    return ArchivedAclBatch(
+        batch_id=normalized_batch_id,
+        previous_status=previous_status,
+        archived_at=_utc_now(),
+    )
 
 
 def build_acl_recovery_state(batch_id: object, root: str | Path | None = None) -> dict[str, Any]:
@@ -587,8 +793,9 @@ class AclReconciliationJournal:
 
 
 __all__ = [
-    "AclBatchSummary", "AclJournalSnapshot", "AclReconciliationJournal",
+    "AclBatchDetails", "AclBatchSummary", "AclJournalSnapshot", "AclReconciliationJournal",
+    "ArchivedAclBatch", "archive_acl_batch",
     "ReconciliationJournalBusy", "ReconciliationJournalCorrupt", "ReconciliationJournalError",
     "ReconciliationJournalLease", "acquire_acl_journal_lease", "build_acl_recovery_state",
-    "default_acl_journal_root", "list_acl_batches", "read_acl_batch", "read_acl_journal",
+    "default_acl_journal_root", "describe_acl_batch", "list_acl_batches", "read_acl_batch", "read_acl_journal",
 ]

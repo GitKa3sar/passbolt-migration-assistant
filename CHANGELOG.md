@@ -2,6 +2,27 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.0 - 2026-08-12
+
+### Added
+
+- aggiunta la finestra **Gestisci journal...** nella scheda dei permessi esistenti, con elenco di tutti i journal ACL attivi e filtri per stato, tipo di oggetto, data e testo;
+- aggiunto un dettaglio tecnico bounded per contatori, modalità ed esiti del journal, senza esporre percorsi, origine server, fingerprint, identità o destinatari;
+- aggiunti i comandi locali `--acl-reconciliation-describe` e `--acl-reconciliation-archive`;
+- aggiunti test per descrizione sicura, stato corrotto, archiviazione di journal recuperabili/completi/troncati/corrotti e lease concorrente.
+
+### Changed
+
+- aggiornata l'applicazione e i metadati di progetto alla versione 0.18.0;
+- esteso l'elenco ACL con conteggi di aggiunte, aumenti, riduzioni e revoche e con la modalità `additive`, `mixed` o `restrictive`;
+- spostata la prossima fase della roadmap sul consolidamento dei test di integrazione contro istanze Passbolt v4/v5 reali e sulla preparazione della distribuzione Windows.
+
+### Security
+
+- resa l'archiviazione ACL non distruttiva e vincolata a UUID v4 canonico, stato atteso, conferma esatta `ARCHIVIA ACL <UUID>` e lease esclusivo;
+- separati gli archivi ACL per stato sotto `AclReconciliation\Archive\<stato>`, preservando journal e relativo lock senza inviare richieste remote;
+- limitato il protocollo di descrizione ai soli metadati operativi sicuri; un journal corrotto non viene interpretato e può essere soltanto preservato nell'archivio `corrupt`.
+
 ## 0.17.0 - 2026-08-11
 
 ### Added

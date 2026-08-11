@@ -6,9 +6,9 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.17.x | Sì |
-| 0.16.x | No |
-| < 0.16 | No |
+| 0.18.x | Sì |
+| 0.17.x | No |
+| < 0.17 | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultima versione pubblicata.
 
@@ -57,3 +57,5 @@ Il recupero ACL acquisisce un lease esclusivo e accetta soltanto uno stato remot
 La versione 0.17.0 estende il percorso di scrittura a `downgrade` e `revoke` senza permettere modifiche implicite. Il bridge calcola l'accesso effettivo di ciascun utente dopo l'espansione completa dei gruppi, include le variazioni nel digest del piano e limita a 2.000 gli utenti coinvolti. L'utente autenticato deve comparire nella ACL corrente e desiderata come permesso diretto `Owner`; il risultato deve conservare almeno un Owner. Queste proprietà vengono ricontrollate durante dry-run, applicazione e recupero, dopo una nuova lettura autenticata dello stato remoto.
 
 Ogni revoca usa esclusivamente l'ID del record corrente con `delete: true`; ogni downgrade conserva l'ID e cambia il livello. La simulazione Passbolt deve restituire esattamente gli utenti effettivi aggiunti e rimossi previsti dal piano: destinatari duplicati, sovrapposti, mancanti o inattesi bloccano la `PUT`. La GUI richiede una frase che incorpora conteggio delle operazioni restrittive, utenti che perderanno accesso e digest, quindi un secondo avviso. Il journal registra modalità e conteggi restrittivi senza segreti; il recupero può ripetere una riduzione soltanto se snapshot, desiderato, directory, piano e conteggi sono ancora identici. I journal additivi 0.16.0 restano leggibili.
+
+La versione 0.18.0 aggiunge la gestione locale dei journal ACL senza ampliare i dati esposti alla GUI. La descrizione omette percorso, origine server, fingerprint, hash dell'utente, ACL desiderata e ID dei destinatari; per un journal corrotto non interpreta alcun record. L'archiviazione accetta soltanto UUID v4 canonico, stato atteso corrente e la conferma esatta `ARCHIVIA ACL <UUID>`, acquisisce lo stesso lease esclusivo usato dal recupero e sposta journal e lock sotto `AclReconciliation\Archive\<stato>`. Non elimina evidenze, non legge documenti o segreti e non invia richieste a Passbolt.
