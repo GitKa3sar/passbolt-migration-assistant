@@ -1,5 +1,9 @@
 __pycache__/
 *.py[cod]
+
+# Local real-instance integration configuration and sanitized run reports.
+integration-matrix.local.json
+.integration-results/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

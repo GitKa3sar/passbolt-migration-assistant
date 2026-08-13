@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.18.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.19.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Matrice di integrazione reale v4/v5 0.19.0
+
+`passbolt_integration_matrix.py` riusa il probe HTTPS e il bridge persistente OpenPGP per eseguire sette scenari automatizzati esclusivamente in lettura su profili di laboratorio v4/v5. La configurazione schema 1 contiene un massimo di otto profili e ammette soltanto ID logico, URL HTTPS, fingerprint OpenPGP attesa, formato risorsa e formato cartella. Un profilo attivo rifiuta la fingerprint segnaposto.
+
+Il runner verifica healthcheck e `/auth/verify.json`, apre GPGAuth/TOTP, legge `/share/search-aros.json`, il catalogo ACL e due piani sintetici: risorsa nella radice e risorsa in una nuova cartella cliente. Non invia `session-import`, `session-acl-apply` o conferme e registra `remote_writes_performed=0`. Chiave privata, passphrase e TOTP vengono richiesti interattivamente e la sola richiesta che li contiene è `session-open` sullo standard input del bridge.
+
+Il report schema 1 include identificativo casuale del run, ID logico dell'istanza, formati attesi, orari, stati, contatori e codici errore enumerati. Esclude URL, fingerprint, session ID, identità utente, ID e nomi remoti, materiale OpenPGP, messaggi API e segreti. Il digest SHA-256 canonico rileva modifiche e troncamenti ma non è una firma. Nove scenari con scrittura vengono eseguiti tramite l'app su laboratori usa-e-getta e registrati come attestazioni `passed`, `failed` o `blocked`: import root, nuova cartella, destinazione esistente, duplicato, condivisione personalizzata, ACL additiva, ACL restrittiva e i due recuperi interrotti.
 
 ### Compatibilità login GPGAuth e TOTP 0.18.1
 
@@ -420,4 +428,4 @@ Node rilegge cartelle, risorse e permessi e classifica ogni intenzione storica. 
 
 La ripresa puo creare contenuti mancanti e completare condivisioni non applicate, riestraendo il segreto soltanto per le risorse che devono essere create o ricifrate per i destinatari. Non pianifica mai cancellazioni, spostamenti o sovrascritture. Duplicati multipli, oggetti in una destinazione diversa, variazioni della ACL, identita o sorgenti non corrispondenti, journal corrotti o code troncate bloccano il piano e richiedono una verifica manuale.
 
-I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.16.0 ha aggiunto `--acl-reconciliation-list` e il journal ACL; la 0.17.0 estende lo stesso protocollo a piani misti e restrittivi; la 0.18.0 completa la gestione locale con `--acl-reconciliation-describe`, `--acl-reconciliation-archive`, filtri e dettagli sicuri nella GUI. La prossima fase consoliderà una matrice di integrazione ripetibile contro istanze Passbolt v4/v5 reali, seguita dalla preparazione della distribuzione Windows. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.
+I comandi locali `--reconciliation-list`, `--reconciliation-describe` e `--reconciliation-archive` mantengono la GUI separata dai percorsi fisici. L'archiviazione richiede UUID canonico, stato atteso, conferma esatta e lease esclusivo, quindi sposta il journal sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation\Archive\<stato>` senza cancellarlo. La versione 0.16.0 ha aggiunto `--acl-reconciliation-list` e il journal ACL; la 0.17.0 estende lo stesso protocollo a piani misti e restrittivi; la 0.18.0 completa la gestione locale con `--acl-reconciliation-describe`, `--acl-reconciliation-archive`, filtri e dettagli sicuri nella GUI; la 0.19.0 fornisce il runner e il report della matrice reale v4/v5. La prossima fase eseguirà tutti i sedici scenari sui due laboratori prima della preparazione della distribuzione Windows. La composizione dei gruppi e gli altri provider MFA restano fuori dallo scope corrente.

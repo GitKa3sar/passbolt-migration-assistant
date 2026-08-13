@@ -2,6 +2,26 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.0 - 2026-08-13
+
+### Added
+
+- aggiunto `passbolt_integration_matrix.py`, runner opt-in per una matrice ripetibile contro istanze Passbolt v4/v5 reali;
+- aggiunte sette prove automatizzate e in sola lettura per healthcheck/pinning, GPGAuth/MFA, directory permessi, catalogo ACL e dry-run sintetici di risorsa e cartella;
+- aggiunti nove scenari manuali attestabili per importazioni, destinazioni, duplicati, condivisione, ACL additive/restrittive e recuperi interrotti;
+- aggiunti configurazione di esempio, launcher PowerShell, report canonico con digest SHA-256 e otto test automatici dedicati;
+- collegato il self-test della matrice al self-test WPF e uniformati i metadati dei componenti alla versione 0.19.0.
+
+### Security
+
+- chiave, passphrase e TOTP sono richiesti interattivamente e inviati soltanto via standard input al comando `session-open`, senza comparire in configurazione, argomenti, ambiente o report;
+- i report sanitizzati omettono URL, fingerprint, identità, ID remoti, nomi degli oggetti e messaggi API e accettano soltanto contatori, stati e codici enumerati;
+- l'automazione dichiara zero scritture remote e non può invocare importazione o applicazione ACL; le prove mutative restano operazioni esplicite dell'app su laboratori dedicati.
+
+### Roadmap
+
+- la fase successiva eseguirà tutti i sedici scenari sui laboratori v4 e v5; la distribuzione Windows inizierà soltanto dopo la chiusura della matrice.
+
 ## 0.18.1 - 2026-08-12
 
 ### Fixed

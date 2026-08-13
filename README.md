@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.18.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.19.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -32,6 +32,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
+- matrice di integrazione ripetibile per laboratori Passbolt v4/v5, con sette prove automatizzate in sola lettura, nove attestazioni operative e report sanitizzati con digest;
 - nessun caricamento dei documenti sorgente su servizi esterni.
 
 ## Requisiti
@@ -126,14 +127,56 @@ python .\passbolt_import.py --self-test
 '{"command":"self-test"}' | node .\passbolt_crypto.mjs
 node .\test_passbolt_crypto.mjs
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py test_passbolt_acl_reconciliation.py
+python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py test_passbolt_acl_reconciliation.py test_passbolt_integration_matrix.py
 ```
+
+## Matrice di integrazione v4/v5
+
+La versione 0.19.0 aggiunge un runner separato per verificare l'app contro istanze Passbolt di laboratorio reali. La configurazione contiene esclusivamente ID del profilo, URL HTTPS, fingerprint pubblica attesa e formati v4/v5: chiave privata, passphrase e TOTP non devono essere aggiunti al file.
+
+Preparare una configurazione locale ignorata da Git:
+
+```powershell
+Copy-Item .\integration-matrix.example.json .\integration-matrix.local.json
+notepad .\integration-matrix.local.json
+.\run_passbolt_integration_matrix.ps1 -Action Validate
+```
+
+Per ogni profilo, sostituire URL e fingerprint, impostare `enabled` a `true` e avviare le prove automatizzate:
+
+```powershell
+.\run_passbolt_integration_matrix.ps1 -Action Run -Instance v4-lab
+.\run_passbolt_integration_matrix.ps1 -Action Run -Instance v5-lab
+```
+
+Il runner richiede interattivamente percorso della chiave `.asc`, passphrase e TOTP; nessuno di questi valori compare negli argomenti del processo. Le sette prove automatiche eseguono healthcheck, pinning della fingerprint, GPGAuth/MFA, lettura della directory dei permessi, lettura del catalogo ACL e dry-run sintetici di una risorsa nella radice e di una nuova cartella cliente. Dichiarano sempre `write_requests=0` e non chiamano importazione o applicazione ACL.
+
+I report vengono salvati per impostazione predefinita sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\IntegrationMatrix`. Contengono soltanto profilo logico, formati attesi, stati, contatori e codici enumerati; omettono URL, fingerprint, identità, ID remoti, nomi degli oggetti, chiavi, passphrase, MFA e messaggi API. Un digest SHA-256 rileva modifiche o troncamenti.
+
+Le nove prove che creano oggetti, modificano permessi o simulano recuperi devono essere eseguite nell'app su istanze usa-e-getta e poi attestate singolarmente. Per esempio:
+
+```powershell
+.\run_passbolt_integration_matrix.ps1 `
+  -Action Record `
+  -Report "$env:LOCALAPPDATA\Passbolt Migration Assistant\IntegrationMatrix\matrix-v4-lab-<UUID>.json" `
+  -Scenario import_root_resource `
+  -Status passed
+
+.\run_passbolt_integration_matrix.ps1 `
+  -Action Summary `
+  -Report "$env:LOCALAPPDATA\Passbolt Migration Assistant\IntegrationMatrix\matrix-v4-lab-<UUID>.json" `
+  -RequireComplete
+```
+
+Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, destinazione esistente, duplicati, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero import interrotto e recupero ACL interrotto. Un esito `failed` o `blocked` richiede soltanto un `-ErrorCode` enumerato; non inserire note libere o dati reali nel report.
 
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
 
-La versione 0.18.1 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto di importazione è limitato a 25 candidati. Gli editor ACL usano utenti e gruppi già presenti in Passbolt e non modificano la composizione dei gruppi. Sono supportate aggiunte, aumenti, riduzioni e revoche di permessi, ma non la cancellazione, lo spostamento o la sovrascrittura degli oggetti Passbolt. L'impatto effettivo di un singolo piano ACL è limitato a 2.000 utenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+La versione 0.19.0 supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Il lotto di importazione è limitato a 25 candidati. Gli editor ACL usano utenti e gruppi già presenti in Passbolt e non modificano la composizione dei gruppi. Sono supportate aggiunte, aumenti, riduzioni e revoche di permessi, ma non la cancellazione, lo spostamento o la sovrascrittura degli oggetti Passbolt. L'impatto effettivo di un singolo piano ACL è limitato a 2.000 utenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
+
+La versione 0.19.0 introduce la matrice ripetibile v4/v5 senza automatizzare scritture distruttive o lasciare artefatti remoti. I controlli pubblici e autenticati in sola lettura sono automatici; importazioni, permessi e recuperi restano operazioni dell'app su laboratori dedicati e vengono registrati come attestazioni esplicite. Il report è sanitizzato e legato a digest, ma non costituisce una firma né sostituisce la revisione dell'operatore.
 
 La versione 0.18.1 riallinea il login al contratto API Passbolt corrente: GPGAuth usa prioritariamente `data.gpg_auth` e la verifica TOTP invia soltanto il campo `totp`, senza il precedente parametro legacy `remember`. In caso di errore la finestra mostra codice, fase e stato HTTP sicuri; se Passbolt comunica `servertime`, segnala anche uno scarto significativo dell'orologio Windows. Chiave, passphrase, TOTP, cookie e URL privati non entrano nella diagnostica.
 
@@ -157,7 +200,7 @@ La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella des
 
 I registri attivi sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. L'archiviazione li sposta sotto `Reconciliation\Archive\<stato>` e non elimina l'evidenza. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali.
 
-La prossima fase della roadmap consoliderà i test di integrazione contro istanze Passbolt v4 e v5 reali, con una matrice ripetibile per importazione, cartelle, risorse, permessi e recuperi. Seguirà la preparazione della distribuzione Windows, inclusi pacchetto riproducibile, firma/verifica degli artefatti e guida di aggiornamento. Il supporto ad altri provider MFA resta saltato come scelta di scope.
+La prossima fase della roadmap eseguirà e chiuderà la matrice 0.19.0 su due istanze di laboratorio reali, una v4 e una v5, conservando soltanto i report sanitizzati fuori dal repository. Dopo il completamento di tutti i sedici scenari per entrambi i profili seguirà la preparazione della distribuzione Windows, inclusi pacchetto riproducibile, firma/verifica degli artefatti e guida di aggiornamento. Il supporto ad altri provider MFA resta saltato come scelta di scope.
 
 ## Contribuire
 

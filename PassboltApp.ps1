@@ -14,6 +14,7 @@ $InventoryScript = Join-Path $ProjectRoot "passbolt_app.py"
 $ReviewScript = Join-Path $ProjectRoot "passbolt_review.py"
 $ImportScript = Join-Path $ProjectRoot "passbolt_import.py"
 $CryptoScript = Join-Path $ProjectRoot "passbolt_crypto.mjs"
+$IntegrationMatrixScript = Join-Path $ProjectRoot "passbolt_integration_matrix.py"
 $BundledPython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $BundledNode = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 
@@ -38,7 +39,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.18.1"
+        Title="Passbolt Migration Assistant - v0.19.0"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -3849,7 +3850,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.18.1", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.19.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4972,6 +4973,10 @@ for line in sys.stdin:
     if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
+    $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
+    if (-not $IntegrationMatrixTest.ok -or $IntegrationMatrixTest.result.secrets_serialized -or -not $IntegrationMatrixTest.result.read_only_automation -or -not $IntegrationMatrixTest.result.report_digest_valid -or -not $IntegrationMatrixTest.result.safe_failure_projection -or $IntegrationMatrixTest.result.automated_scenario_count -ne 7 -or $IntegrationMatrixTest.result.manual_scenario_count -ne 9) {
+        throw "La matrice di integrazione non rispetta il contratto di sicurezza."
+    }
     $LoginDiagnosticProbe = Get-SecureErrorMessage ([pscustomobject]@{
         error = [pscustomobject]@{
             code = "MFA_TOTP_REJECTED"
@@ -5162,7 +5167,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.18.1"
+        version = "0.19.0"
         ui = "WPF"
         phases = 4
         controls = 109
@@ -5191,6 +5196,7 @@ for line in sys.stdin:
         mfa_reused_without_reprompt = "OK"
         automatic_fingerprint_confirmation = "OK"
         safe_login_diagnostics = "OK"
+        integration_matrix_backend = "OK"
         secrets_serialized = $false
         python = $PythonExecutable
         node = $NodeExecutable

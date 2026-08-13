@@ -6,9 +6,9 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.18.x | Sì |
-| 0.17.x | No |
-| < 0.17 | No |
+| 0.19.x | Sì |
+| 0.18.x | No |
+| < 0.18 | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultima versione pubblicata.
 
@@ -61,3 +61,5 @@ Ogni revoca usa esclusivamente l'ID del record corrente con `delete: true`; ogni
 La versione 0.18.0 aggiunge la gestione locale dei journal ACL senza ampliare i dati esposti alla GUI. La descrizione omette percorso, origine server, fingerprint, hash dell'utente, ACL desiderata e ID dei destinatari; per un journal corrotto non interpreta alcun record. L'archiviazione accetta soltanto UUID v4 canonico, stato atteso corrente e la conferma esatta `ARCHIVIA ACL <UUID>`, acquisisce lo stesso lease esclusivo usato dal recupero e sposta journal e lock sotto `AclReconciliation\Archive\<stato>`. Non elimina evidenze, non legge documenti o segreti e non invia richieste a Passbolt.
 
 La versione 0.18.1 riallinea GPGAuth e MFA al contratto API Passbolt corrente. Le due fasi utente usano prioritariamente `data.gpg_auth`; il fallback legacy viene eseguito soltanto se la risposta primaria non contiene la sfida. Il corpo TOTP contiene esclusivamente il codice e non richiede persistenza `remember`. La diagnostica del login è composta soltanto da codice enumerato, fase enumerata, stato HTTP e scarto temporale numerico bounded; non include endpoint, URL, cookie, token, chiavi, passphrase, TOTP o materiale OpenPGP.
+
+La versione 0.19.0 separa la configurazione pubblica della matrice dalle credenziali. Il file locale contiene URL e fingerprint ma non chiavi, passphrase, MFA o account-kit ed è ignorato da Git; i segreti sono richiesti interattivamente, non compaiono negli argomenti o nell'ambiente e vengono inviati soltanto a `session-open` sullo standard input. Le sette prove automatiche non inviano comandi di importazione o applicazione ACL. Il report omette origine server, fingerprint, identità, sessione, oggetti e messaggi API e conserva esclusivamente stati, contatori e codici enumerati. Il digest rileva alterazioni accidentali, non autentica l'operatore: le nove prove mutative sono attestazioni da eseguire soltanto su istanze di laboratorio dedicate tramite i controlli e i journal dell'app.
