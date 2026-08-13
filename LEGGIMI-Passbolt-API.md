@@ -10,7 +10,7 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.19.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.19.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
 
 ### Matrice di integrazione reale v4/v5 0.19.0
 
@@ -239,7 +239,7 @@ La fase:
 - consente, dopo conferma esplicita, di mostrare o nascondere temporaneamente le password;
 - consente di modificare cliente, titolo, username, URL/host e password, ricalcolando lo stato del candidato e invalidando un eventuale piano precedente;
 - calcola l'hash SHA-256 del documento sorgente, tenuto in memoria, per poter rilevare future modifiche prima dell'importazione;
-- consente di selezionare fino a 25 candidati **Pronti** per il lotto di importazione;
+- consente di selezionare tutti i candidati **Pronti** necessari, senza un tetto numerico applicativo per il lotto di importazione;
 - non crea risorse in Passbolt durante la revisione.
 
 La password in chiaro può essere presente temporaneamente nella memoria locale durante il riconoscimento, la visualizzazione esplicita, la modifica o l'importazione, ma:
@@ -294,7 +294,7 @@ Le creazioni sono sequenziali e Passbolt non espone una transazione unica per l'
 
 ### Limiti attuali dell'importazione
 
-- massimo 25 candidati per lotto;
+- nessun massimo numerico applicativo di candidati per lotto; la capacità effettiva dipende dalla memoria, dai messaggi locali e dall'istanza Passbolt;
 - massimo 65.536 caratteri per password;
 - supporto alla creazione di risorse password v4 e v5 nei quattro tipi compatibili elencati sopra;
 - supporto a cartelle personali e condivise v4/v5 sotto la radice o sotto il contenitore scelto, riutilizzate per nome univoco o create prima delle risorse;
@@ -324,14 +324,12 @@ Per i file YAML viene riconosciuta la sintassi semplice `chiave: valore`; non vi
 
 ## Limiti di sicurezza della revisione
 
-Ogni sessione di revisione applica questi limiti:
+Ogni sessione di revisione non impone un massimo numerico di file selezionati o di candidati complessivi. Applica comunque questi limiti di sicurezza:
 
-- massimo 50 file selezionati;
 - massimo 20 MB per file;
 - massimo 100 MB non compressi per un documento Office;
 - massimo 5.000 record per file;
 - massimo 200 pagine per PDF;
-- massimo 2.000 candidati complessivi;
 - nessuna apertura di collegamenti simbolici a file;
 - nessun percorso esterno alla cartella clienti configurata;
 - rifiuto degli XML contenenti DTD o dichiarazioni di entità;
@@ -418,7 +416,7 @@ python .\passbolt_review.py `
 
 La versione 0.13 introduce `passbolt_reconciliation.py`, il componente di persistenza, e lo collega alle operazioni reali della fase 04: dopo un dry-run valido, Python crea il registro prima di consegnare le risorse al bridge Node e passa al bridge soltanto l'UUID del lotto. Il protocollo persistente esegue verifica autenticata e ripresa idempotente; l'interfaccia espone selezione dei lotti, associazione dei sorgenti, riepilogo del piano, conferma esatta e archiviazione per l'operatore.
 
-Ogni lotto usa un file `batch-<UUID>.jsonl` sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`. Il primo evento lega il registro a versione dell'app, origine e fingerprint del server, hash dell'identita Passbolt, digest del piano, formati, destinazione, eventuale hash della mappatura cliente/cartella, modalità e hash della configurazione permessi e coppie `candidate_id`/SHA-256 del sorgente. Gli eventi successivi possono contenere soltanto intenzioni operative, hash della destinazione e della maschera di permessi prevista, ID remoti, stati di creazione e condivisione, contatori e codici di errore tecnici. Non sono ammessi titolo, username, URL delle credenziali, percorsi dei documenti, password, password Excel, chiavi, passphrase, MFA, cookie o identificatori di sessione.
+Ogni lotto usa un file `batch-<UUID>.jsonl` sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`. Il primo evento lega il registro a versione dell'app, origine e fingerprint del server, hash dell'identita Passbolt, digest del piano, formati, destinazione, eventuale hash della mappatura cliente/cartella, modalità e hash della configurazione permessi. Per i lotti piccoli include anche le coppie `candidate_id`/SHA-256 del sorgente; per i lotti estesi queste prove vengono concatenate in eventi `candidate_manifest` da massimo 200 elementi, senza imporre un massimo numerico al lotto. Gli eventi operativi successivi possono contenere soltanto intenzioni, hash della destinazione e della maschera di permessi prevista, ID remoti, stati di creazione e condivisione, contatori e codici di errore tecnici. Non sono ammessi titolo, username, URL delle credenziali, percorsi dei documenti, password, password Excel, chiavi, passphrase, MFA, cookie o identificatori di sessione.
 
 Ogni riga contiene numero di sequenza, timestamp UTC, hash della riga precedente e hash SHA-256 del record corrente. La scrittura viene sincronizzata prima di confermare l'append. Node emette `operation_intent` subito prima delle richieste irreversibili e un evento di esito dopo la risposta; Python consuma questi envelope internamente, quindi il protocollo WPF continua a ricevere un solo documento `{ok,result|error}` per comando. Soltanto dopo `batch_completed` Python accetta un esito finale riuscito. Una riga finale parziale non viene considerata un evento riuscito, marca il lotto come da verificare e blocca nuove scritture; un errore o un'alterazione in una riga interna rende il registro non fidato. Un lotto concluso diventa immutabile. La catena SHA-256 rileva corruzioni e modifiche non coerenti, ma non e una firma digitale: per questo il recupero non si basa mai sul solo contenuto del file.
 

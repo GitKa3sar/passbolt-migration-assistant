@@ -16,17 +16,16 @@ import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import * as openpgp from 'openpgp';
 
-const INPUT_LIMIT = 8 * 1024 * 1024;
+const INPUT_LIMIT = 64 * 1024 * 1024;
 const KEY_FILE_LIMIT = 2 * 1024 * 1024;
-const RESPONSE_LIMIT = 12 * 1024 * 1024;
+const RESPONSE_LIMIT = 64 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 25_000;
 const MAX_REDIRECTS = 5;
-const MAX_IMPORT_RESOURCES = 25;
 const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.19.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.19.1';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -751,7 +750,6 @@ function normalizeComparable(value) {
 function safeCandidates(value) {
   assert(Array.isArray(value), 'CANDIDATES_REQUIRED', 'Il piano non contiene candidati validi.');
   assert(value.length > 0, 'CANDIDATES_REQUIRED', 'Selezionare almeno un candidato pronto.');
-  assert(value.length <= MAX_IMPORT_RESOURCES, 'TOO_MANY_CANDIDATES', `Importare al massimo ${MAX_IMPORT_RESOURCES} credenziali per volta.`);
   const seen = new Set();
   return value.map((item) => {
     assert(item && typeof item === 'object', 'INVALID_CANDIDATE', 'Un candidato del piano non e valido.');
@@ -4642,6 +4640,15 @@ class PersistentImportSession {
 
 async function selfTest() {
   const passphrase = `self-test-${randomUUID()}`;
+  const unlimitedCandidateProbe = safeCandidates(Array.from({ length: 64 }, (_, index) => ({
+    candidate_id: `unlimited-candidate-${index}`,
+    client: '(radice)',
+    source_at_root: true,
+    title: `Candidato ${index}`,
+    username: `utente-${index}`,
+    uri: `https://example.test/${index}`,
+  })));
+  assert(unlimitedCandidateProbe.length === 64, 'SELF_TEST_FAILED', 'La selezione senza limite numerico non e disponibile.');
   const generated = await openpgp.generateKey({
     type: 'ecc',
     curve: 'curve25519',
@@ -4726,6 +4733,7 @@ async function selfTest() {
     gpgauth_header_form_decoding: true,
     official_wrapped_gpgauth_payload_contract: true,
     official_minimal_totp_payload_contract: true,
+    unlimited_candidate_selection: true,
     passbolt_secret_schema: true,
     passbolt_string_secret_schema: true,
     duplicate_detection: true,

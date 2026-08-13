@@ -39,7 +39,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.19.0"
+        Title="Passbolt Migration Assistant - v0.19.1"
         Width="1240" Height="800" MinWidth="1080" MinHeight="700"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI">
@@ -330,7 +330,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0" Padding="0">
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                        <DataGrid x:Name="ReviewCandidatesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" ToolTip="Seleziona fino a 25 candidati pronti con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <DataGrid x:Name="ReviewCandidatesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" ToolTip="Seleziona i candidati pronti con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Stato" Binding="{Binding StatusLabel}" Width="105" />
                                 <DataGridTextColumn Header="Cliente" Binding="{Binding Client}" Width="125" />
@@ -963,7 +963,7 @@ function Invoke-ImportSessionJson(
     }
 
     $Payload = $InputObject | ConvertTo-Json -Depth 14 -Compress
-    if ($Payload.Length -gt 8388608) {
+    if ($Payload.Length -gt 67108864) {
         throw "La richiesta della sessione sicura e' troppo grande."
     }
     $PayloadBytes = $null
@@ -977,7 +977,7 @@ function Invoke-ImportSessionJson(
             throw "Timeout della sessione sicura locale."
         }
         $Output = $OutputTask.Result
-        if ([string]::IsNullOrWhiteSpace($Output) -or $Output.Length -gt 8388608) {
+        if ([string]::IsNullOrWhiteSpace($Output) -or $Output.Length -gt 67108864) {
             throw "La sessione sicura locale non ha restituito un risultato valido."
         }
         try {
@@ -3468,11 +3468,9 @@ function Update-ImportSelectionState {
     $ReadyCount = @($Selected | Where-Object { $_.Status -eq "ready" }).Count
     $AllReady = ($Selected.Count -gt 0 -and $ReadyCount -eq $Selected.Count)
     $PrepareImportButton.Content = "Prepara importazione ($($Selected.Count))"
-    $PrepareImportButton.IsEnabled = ($AllReady -and $Selected.Count -le 25)
+    $PrepareImportButton.IsEnabled = $AllReady
     $EditReviewCandidateButton.IsEnabled = ($Selected.Count -eq 1)
-    if ($Selected.Count -gt 25) {
-        $PrepareImportButton.Content = "Massimo 25 candidati"
-    } elseif ($Selected.Count -gt 0 -and -not $AllReady) {
+    if ($Selected.Count -gt 0 -and -not $AllReady) {
         $PrepareImportButton.Content = "Seleziona solo candidati pronti"
     }
 }
@@ -3497,10 +3495,6 @@ function Update-ExecuteImportState {
 function Open-ImportPreparation {
     $Selected = @($ReviewCandidatesGrid.SelectedItems)
     if ($Selected.Count -lt 1) { return }
-    if ($Selected.Count -gt 25) {
-        [System.Windows.MessageBox]::Show("Selezionare al massimo 25 candidati pronti per ogni importazione.", "Troppi candidati", "OK", "Warning") | Out-Null
-        return
-    }
     if (@($Selected | Where-Object { $_.Status -ne "ready" }).Count -gt 0) {
         [System.Windows.MessageBox]::Show("La selezione contiene candidati da completare. Selezionare soltanto righe con stato Pronto.", "Selezione non importabile", "OK", "Warning") | Out-Null
         return
@@ -3850,7 +3844,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.19.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.19.1", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4201,10 +4195,7 @@ function Apply-InventoryFilters {
 function Update-ReviewSelectionState {
     $Count = $FilesGrid.SelectedItems.Count
     $ReviewSelectionButton.Content = "Rivedi selezionati ($Count)"
-    $ReviewSelectionButton.IsEnabled = ($Count -gt 0 -and $Count -le 50)
-    if ($Count -gt 50) {
-        $ReviewSelectionButton.Content = "Massimo 50 file"
-    }
+    $ReviewSelectionButton.IsEnabled = ($Count -gt 0)
 }
 
 function Set-ReviewFilters {
@@ -4370,11 +4361,6 @@ function Invoke-SecureExcelReview([string[]]$Files, [hashtable]$Passwords) {
 function Invoke-SelectedReview {
     $SelectedCount = $FilesGrid.SelectedItems.Count
     if ($SelectedCount -lt 1) { return }
-    if ($SelectedCount -gt 50) {
-        [System.Windows.MessageBox]::Show("Selezionare al massimo 50 file per ogni revisione.", "Troppi file selezionati", "OK", "Warning") | Out-Null
-        return
-    }
-
     $Decision = [System.Windows.MessageBox]::Show(
         "La revisione aprira' localmente soltanto i $SelectedCount file selezionati. Le password saranno riconosciute in memoria ma resteranno mascherate e non verranno salvate. Continuare?",
         "Autorizza analisi locale",
@@ -4962,15 +4948,15 @@ for line in sys.stdin:
         Stop-ImportSession "" $false
     }
     $ReviewBackendTest = Invoke-PythonJson $ReviewScript @("--self-test")
-    if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported) {
+    if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported -or -not $ReviewBackendTest.unlimited_file_selection -or -not $ReviewBackendTest.unlimited_candidate_collection) {
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
@@ -5167,7 +5153,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.19.0"
+        version = "0.19.1"
         ui = "WPF"
         phases = 4
         controls = 109
@@ -5197,6 +5183,7 @@ for line in sys.stdin:
         automatic_fingerprint_confirmation = "OK"
         safe_login_diagnostics = "OK"
         integration_matrix_backend = "OK"
+        unlimited_file_and_candidate_selection = "OK"
         secrets_serialized = $false
         python = $PythonExecutable
         node = $NodeExecutable

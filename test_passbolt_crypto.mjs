@@ -1001,6 +1001,18 @@ async function main() {
     assert.equal(capabilities.duplicate_count, 1);
     assert.equal(capabilities.csrf_token_available, true);
 
+    const extendedCandidates = Array.from({ length: 64 }, (_, index) => ({
+      candidate_id: `candidate-extended-${index}`,
+      client: '(radice)',
+      source_at_root: true,
+      title: `Nuovo portale ${index}`,
+      username: `new-user-${index}`,
+      uri: `https://new-${index}.example.test`,
+    }));
+    const extendedCapabilities = await readCapabilities(session, user, extendedCandidates);
+    assert.equal(extendedCapabilities.create_count, 64);
+    assert.equal(extendedCapabilities.duplicate_count, 0);
+
     const encryptedSecret = await encryptSecret(
       'mock-resource-password',
       'mock description',
@@ -2521,6 +2533,7 @@ async function main() {
         recovery_conflicts_blocked: true,
         mfa_reused_without_reprompt: true,
         csrf: true,
+        unlimited_candidate_selection: true,
         duplicate_detection: true,
         v4_resource_creation: true,
         v5_shared_metadata_key_verified: true,

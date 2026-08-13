@@ -64,11 +64,10 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.19.0"
-MAX_IMPORT_CANDIDATES = 25
+APP_VERSION = "0.19.1"
 MAX_SECRET_CHARACTERS = 65_536
-MAX_STDIN_BYTES = 4 * 1024 * 1024
-MAX_BRIDGE_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_STDIN_BYTES = 64 * 1024 * 1024
+MAX_BRIDGE_OUTPUT_BYTES = 64 * 1024 * 1024
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -165,10 +164,6 @@ def _candidate_request(value: object) -> SelectedCandidate:
 def _selected_candidates(values: object) -> list[SelectedCandidate]:
     if not isinstance(values, list) or not values:
         raise ImportPreparationError("Selezionare almeno un candidato pronto.")
-    if len(values) > MAX_IMPORT_CANDIDATES:
-        raise ImportPreparationError(
-            f"Selezionare al massimo {MAX_IMPORT_CANDIDATES} candidati per importazione."
-        )
     candidates = [_candidate_request(value) for value in values]
     identifiers = [candidate.candidate_id for candidate in candidates]
     if len(set(identifiers)) != len(identifiers):
@@ -2148,7 +2143,7 @@ def main() -> int:
                 "ok": True,
                 "result": {
                     "version": APP_VERSION,
-                    "max_import_candidates": MAX_IMPORT_CANDIDATES,
+                    "unlimited_candidate_selection": True,
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
                     "reconciliation_progress_protocol": True,

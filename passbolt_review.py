@@ -27,16 +27,14 @@ from typing import Iterable, Iterator, Mapping
 from xml.etree import ElementTree
 
 
-APP_VERSION = "0.19.0"
+APP_VERSION = "0.19.1"
 ROOT_CLIENT_LABEL = "(radice)"
-MAX_SELECTED_FILES = 50
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 MAX_TEXT_CHARACTERS = 2_000_000
 MAX_RECORDS_PER_FILE = 5_000
 MAX_PDF_PAGES = 200
-MAX_CANDIDATES = 2_000
-MAX_SECURE_REVIEW_STDIN_BYTES = 2 * 1024 * 1024
+MAX_SECURE_REVIEW_STDIN_BYTES = 64 * 1024 * 1024
 MAX_OFFICE_PASSWORD_CHARACTERS = 1_024
 OLE_COMPOUND_FILE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 
@@ -735,9 +733,6 @@ def analyze_files(
     supplied_files = list(dict.fromkeys(str(value) for value in selected_files))
     if not supplied_files:
         raise ReviewError("Selezionare almeno un file da revisionare.")
-    if len(supplied_files) > MAX_SELECTED_FILES:
-        raise ReviewError(f"Selezionare al massimo {MAX_SELECTED_FILES} file per ogni revisione.")
-
     supplied_keys = {_normalized_supplied_path(value) for value in supplied_files}
     password_map: dict[str, str] = {}
     for supplied_path, password in dict(file_passwords or {}).items():
@@ -758,9 +753,6 @@ def analyze_files(
     analyzed_files = 0
 
     for supplied in supplied_files:
-        if len(candidates) >= MAX_CANDIDATES:
-            warnings.append(f"Limite complessivo di {MAX_CANDIDATES} candidati raggiunto.")
-            break
         relative_path = _normalized_supplied_path(supplied)
         try:
             path, relative_path = _safe_selected_path(root_path, supplied)
@@ -795,8 +787,6 @@ def analyze_files(
                 if candidate is not None:
                     candidates.append(candidate)
                     file_candidates += 1
-                if len(candidates) >= MAX_CANDIDATES:
-                    break
             analyzed_files += 1
             if file_candidates == 0:
                 warnings.append(f"{relative_path}: nessun candidato riconosciuto.")
@@ -887,7 +877,8 @@ def main() -> int:
             json.dumps(
                 {
                     "version": APP_VERSION,
-                    "max_selected_files": MAX_SELECTED_FILES,
+                    "unlimited_file_selection": True,
+                    "unlimited_candidate_collection": True,
                     "reviewable_extensions": len(REVIEWABLE_EXTENSIONS),
                     "excel_password_prompt_supported": True,
                     "secrets_serialized": False,

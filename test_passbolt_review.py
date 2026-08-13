@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
 
-from passbolt_review import MAX_SELECTED_FILES, ReviewError, analyze_files
+from passbolt_review import analyze_files
 
 
 def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
@@ -328,7 +328,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(len(result.warnings), 2)
         self.assertFalse(any("outside-secret" in warning for warning in result.warnings))
 
-    def test_file_size_and_selection_limits(self) -> None:
+    def test_file_size_limit_and_unlimited_file_selection(self) -> None:
         source = self.root / "Cliente Alfa" / "grande.txt"
         source.write_text("password=secret", encoding="utf-8")
 
@@ -337,11 +337,34 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(result.analyzed_files, 0)
         self.assertIn("limite", result.warnings[0])
 
-        with self.assertRaisesRegex(ReviewError, "massimo"):
-            analyze_files(
-                self.root,
-                [f"file-{index}.txt" for index in range(MAX_SELECTED_FILES + 1)],
+        selected_files = []
+        for index in range(60):
+            relative_path = f"Cliente Alfa/accesso-{index}.txt"
+            selected_files.append(relative_path)
+            (self.root / relative_path).write_text(
+                f"Titolo: Accesso {index}\n"
+                f"Utente: utente-{index}\n"
+                f"Password: segreto-{index}\n",
+                encoding="utf-8",
             )
+        result = analyze_files(self.root, selected_files)
+        self.assertEqual(result.analyzed_files, 60)
+        self.assertEqual(result.candidate_count, 60)
+
+    def test_candidate_collection_exceeds_previous_aggregate_cap(self) -> None:
+        source = self.root / "Cliente Alfa" / "lotto-esteso.csv"
+        rows = ["nome,username,password,url"]
+        rows.extend(
+            f"Accesso {index},utente-{index},segreto-{index},https://host-{index}.test"
+            for index in range(2_001)
+        )
+        source.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        result = analyze_files(self.root, ["Cliente Alfa/lotto-esteso.csv"])
+
+        self.assertEqual(result.analyzed_files, 1)
+        self.assertEqual(result.candidate_count, 2_001)
+        self.assertEqual(len(result.candidates), 2_001)
 
     def test_xml_dtd_is_rejected_without_entity_expansion(self) -> None:
         source = self.root / "Cliente Alfa" / "malevolo.xml"

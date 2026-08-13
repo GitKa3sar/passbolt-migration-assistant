@@ -94,6 +94,41 @@ class ReconciliationJournalTests(unittest.TestCase):
             ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"],
         )
 
+    def test_large_candidate_manifest_is_chunked_without_a_numeric_batch_cap(self) -> None:
+        candidates = tuple(
+            CandidateProof(f"{index:016x}", f"{index:064x}")
+            for index in range(600)
+        )
+        journal = ReconciliationJournal.create(
+            app_version="0.19.1",
+            server_origin="https://passbolt.example.test/",
+            server_fingerprint="0123456789ABCDEF0123456789ABCDEF01234567",
+            user_id_hash=hash_user_identifier(self.user_id),
+            plan_digest="a" * 64,
+            resource_format="v5",
+            folder_format="v5",
+            destination_mode="root",
+            destination_folder_id=None,
+            candidates=candidates,
+            root=self.root,
+        )
+
+        snapshot = read_journal(journal.path)
+        self.assertNotIn("candidates", snapshot.events[0]["payload"])
+        manifests = [
+            event for event in snapshot.events if event["event_type"] == "candidate_manifest"
+        ]
+        self.assertEqual(len(manifests), 3)
+        self.assertEqual([len(event["payload"]["candidates"]) for event in manifests], [200, 200, 200])
+
+        details = describe_reconciliation_batch(journal.batch_id, self.root)
+        self.assertEqual(details.candidate_count, 600)
+        self.assertEqual(len(details.candidate_ids), 600)
+        recovery_state = build_recovery_state(snapshot)
+        self.assertEqual(recovery_state["candidate_count"], 600)
+        self.assertEqual(len(recovery_state["candidates"]), 600)
+        self.assertEqual(recovery_state["candidates"][-1]["candidate_id"], "0000000000000257")
+
     def test_journal_contains_no_identity_or_secret_values(self) -> None:
         journal = self.create_journal()
         raw = journal.path.read_text(encoding="utf-8")

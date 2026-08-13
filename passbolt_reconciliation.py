@@ -22,11 +22,10 @@ from urllib.parse import urlsplit
 
 
 SCHEMA_VERSION = 1
-MAX_JOURNAL_BYTES = 16 * 1024 * 1024
+MAX_JOURNAL_BYTES = 256 * 1024 * 1024
 MAX_EVENT_BYTES = 64 * 1024
-MAX_EVENTS = 10_000
-MAX_CANDIDATES = 5_000
 MAX_JOURNALS = 2_000
+CANDIDATE_MANIFEST_CHUNK_SIZE = 200
 
 _JOURNAL_NAME = re.compile(
     r"^batch-(?P<batch_id>[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
@@ -69,7 +68,6 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "destination_mode",
                 "destination_folder_id",
                 "candidate_count",
-                "candidates",
             }
         ),
         frozenset(
@@ -77,8 +75,13 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "destination_mapping_hash",
                 "permission_mode",
                 "permission_configuration_hash",
+                "candidates",
             }
         ),
+    ),
+    "candidate_manifest": (
+        frozenset({"chunk_index", "candidates"}),
+        frozenset(),
     ),
     "operation_intent": (
         frozenset({"operation_id", "object_type", "action"}),
@@ -310,7 +313,7 @@ def hash_client_destination_mapping(value: object) -> str:
 
     if value is None:
         entries: list[dict[str, str | None]] = []
-    elif isinstance(value, (list, tuple)) and len(value) <= MAX_CANDIDATES:
+    elif isinstance(value, (list, tuple)):
         entries = []
         seen: set[str] = set()
         for item in value:
@@ -457,6 +460,12 @@ def _count(value: object, label: str) -> int:
     return value
 
 
+def _nonnegative_integer(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ReconciliationJournalError(f"{label} non valido.")
+    return value
+
+
 def _server_origin(value: object) -> str:
     raw = str(value).strip()
     try:
@@ -508,7 +517,7 @@ def _reject_sensitive_value(value: object) -> None:
 
 
 def _candidate_payload(value: object) -> list[dict[str, str]]:
-    if not isinstance(value, (list, tuple)) or len(value) > MAX_CANDIDATES:
+    if not isinstance(value, (list, tuple)):
         raise ReconciliationJournalError("Elenco candidati del registro non valido.")
     normalized: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -546,9 +555,13 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
         version = str(data["app_version"]).strip()
         if not _APP_VERSION.fullmatch(version):
             raise ReconciliationJournalError("Versione applicazione non valida.")
-        candidates = _candidate_payload(data["candidates"])
-        candidate_count = _count(data["candidate_count"], "Numero candidati")
-        if candidate_count != len(candidates):
+        candidate_count = _nonnegative_integer(data["candidate_count"], "Numero candidati")
+        candidates = (
+            _candidate_payload(data["candidates"])
+            if "candidates" in data
+            else None
+        )
+        if candidates is not None and candidate_count != len(candidates):
             raise ReconciliationJournalError("Numero candidati incoerente.")
         resource_format = str(data["resource_format"]).strip().lower()
         folder_format = str(data["folder_format"]).strip().lower()
@@ -612,6 +625,17 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
             ),
             **permission_payload,
             "candidate_count": candidate_count,
+            **({"candidates": candidates} if candidates is not None else {}),
+        }
+
+    if event_type == "candidate_manifest":
+        candidates = _candidate_payload(data["candidates"])
+        if not candidates or len(candidates) > CANDIDATE_MANIFEST_CHUNK_SIZE:
+            raise ReconciliationJournalError("Blocco del manifesto candidati non valido.")
+        return {
+            "chunk_index": _nonnegative_integer(
+                data["chunk_index"], "Indice del manifesto candidati"
+            ),
             "candidates": candidates,
         }
 
@@ -756,10 +780,56 @@ def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
     completed_recoveries: set[str] = set()
     folder_actions = {"create_folder", "share_folder", "reconcile_folder"}
     resource_actions = {"create_resource", "share_resource"}
+    expected_candidate_count = 0
+    manifested_candidate_count = 0
+    manifested_candidate_ids: set[str] = set()
+    next_manifest_index = 0
+    manifest_closed = False
+    inline_manifest = False
+
+    if events:
+        header_payload = events[0]["payload"]
+        expected_candidate_count = int(header_payload["candidate_count"])
+        inline_candidates = header_payload.get("candidates")
+        if inline_candidates is not None:
+            inline_manifest = True
+            manifested_candidate_count = len(inline_candidates)
+            manifested_candidate_ids.update(
+                str(candidate["candidate_id"]) for candidate in inline_candidates
+            )
 
     for event in events:
         event_type = str(event["event_type"])
         payload = event["payload"]
+        if event_type == "batch_started":
+            continue
+
+        if event_type == "candidate_manifest":
+            if inline_manifest or manifest_closed:
+                raise ReconciliationJournalError(
+                    "Manifesto candidati fuori posizione nel registro."
+                )
+            if payload["chunk_index"] != next_manifest_index:
+                raise ReconciliationJournalError(
+                    "Sequenza del manifesto candidati non valida."
+                )
+            for candidate in payload["candidates"]:
+                candidate_id = str(candidate["candidate_id"])
+                if candidate_id in manifested_candidate_ids:
+                    raise ReconciliationJournalError(
+                        "Il manifesto contiene candidati duplicati."
+                    )
+                manifested_candidate_ids.add(candidate_id)
+            manifested_candidate_count += len(payload["candidates"])
+            if manifested_candidate_count > expected_candidate_count:
+                raise ReconciliationJournalError("Numero candidati incoerente.")
+            next_manifest_index += 1
+            continue
+
+        manifest_closed = True
+        if manifested_candidate_count != expected_candidate_count:
+            raise ReconciliationJournalError("Manifesto candidati incompleto.")
+
         if event_type == "operation_intent":
             operation_id = str(payload["operation_id"])
             if operation_id in operations:
@@ -901,6 +971,9 @@ def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
                     "Il lotto non può chiudersi con operazioni aperte."
                 )
 
+    if manifested_candidate_count != expected_candidate_count:
+        raise ReconciliationJournalError("Manifesto candidati incompleto.")
+
 
 def _encoded_record(record: Mapping[str, Any]) -> bytes:
     encoded = _canonical_json(record) + b"\n"
@@ -1003,9 +1076,6 @@ def _decode_journal(path: Path, raw: bytes) -> JournalSnapshot:
         lines = lines[:-1]
     if not lines:
         raise ReconciliationJournalCorrupt("Intestazione del registro incompleta.")
-    if len(lines) > MAX_EVENTS:
-        raise ReconciliationJournalCorrupt("Il registro contiene troppi eventi.")
-
     events: list[dict[str, Any]] = []
     previous_hash: str | None = None
     terminal_seen = False
@@ -1255,7 +1325,7 @@ def describe_reconciliation_batch(
     header = snapshot.events[0]
     payload = header["payload"]
     candidate_ids = tuple(
-        str(candidate["candidate_id"]) for candidate in payload["candidates"]
+        str(candidate["candidate_id"]) for candidate in _snapshot_candidates(snapshot)
     )
     return ReconciliationBatchDetails(
         batch_id=snapshot.batch_id,
@@ -1350,6 +1420,24 @@ def archive_reconciliation_batch(
     )
 
 
+def _snapshot_candidates(snapshot: JournalSnapshot) -> list[dict[str, str]]:
+    if not snapshot.events or snapshot.events[0]["event_type"] != "batch_started":
+        raise ReconciliationJournalCorrupt("Intestazione del registro mancante.")
+    header = snapshot.events[0]["payload"]
+    if "candidates" in header:
+        candidates = list(header["candidates"])
+    else:
+        candidates = [
+            candidate
+            for event in snapshot.events[1:]
+            if event["event_type"] == "candidate_manifest"
+            for candidate in event["payload"]["candidates"]
+        ]
+    if len(candidates) != header["candidate_count"]:
+        raise ReconciliationJournalCorrupt("Manifesto candidati incompleto.")
+    return candidates
+
+
 def build_recovery_state(snapshot: JournalSnapshot) -> dict[str, Any]:
     """Build the bounded, secret-free technical state sent to the Node bridge."""
 
@@ -1420,7 +1508,7 @@ def build_recovery_state(snapshot: JournalSnapshot) -> dict[str, Any]:
             else {}
         ),
         "candidate_count": header["candidate_count"],
-        "candidates": list(header["candidates"]),
+        "candidates": _snapshot_candidates(snapshot),
         "operations": list(operations.values()),
         "duplicate_candidates": duplicate_candidates,
     }
@@ -1456,6 +1544,7 @@ class ReconciliationJournal:
         _prepare_root(journal_root)
         batch_id = str(uuid.uuid4())
         path = journal_root / f"batch-{batch_id}.jsonl"
+        normalized_candidates = _candidate_payload(candidates)
         payload = {
             "app_version": app_version,
             "server_origin": server_origin,
@@ -1480,23 +1569,49 @@ class ReconciliationJournal:
                 or permission_configuration_hash is not None
                 else {}
             ),
-            "candidate_count": len(candidates),
-            "candidates": list(candidates),
+            "candidate_count": len(normalized_candidates),
+            **(
+                {"candidates": normalized_candidates}
+                if len(normalized_candidates) <= CANDIDATE_MANIFEST_CHUNK_SIZE
+                else {}
+            ),
         }
-        record = _make_record(
+        records = [_make_record(
             batch_id=batch_id,
             sequence=0,
             event_type="batch_started",
             payload=payload,
             previous_hash=None,
-        )
+        )]
+        if "candidates" not in payload:
+            for chunk_index, offset in enumerate(
+                range(0, len(normalized_candidates), CANDIDATE_MANIFEST_CHUNK_SIZE)
+            ):
+                records.append(
+                    _make_record(
+                        batch_id=batch_id,
+                        sequence=len(records),
+                        event_type="candidate_manifest",
+                        payload={
+                            "chunk_index": chunk_index,
+                            "candidates": normalized_candidates[
+                                offset : offset + CANDIDATE_MANIFEST_CHUNK_SIZE
+                            ],
+                        },
+                        previous_hash=records[-1]["record_hash"],
+                    )
+                )
+        _validate_event_flow(records)
+        encoded_records = b"".join(_encoded_record(record) for record in records)
+        if len(encoded_records) > MAX_JOURNAL_BYTES:
+            raise ReconciliationJournalError("Registro troppo grande.")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_BINARY"):
             flags |= os.O_BINARY
         try:
             descriptor = os.open(path, flags, 0o600)
             try:
-                _write_all(descriptor, _encoded_record(record))
+                _write_all(descriptor, encoded_records)
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)

@@ -2,6 +2,20 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.1 - 2026-08-13
+
+### Changed
+
+- rimossi i massimi applicativi di 50 file per revisione, 2.000 candidati raccolti e 25 credenziali per lotto;
+- estesa a 64 MiB la capacità dei messaggi locali tra WPF, Python e Node per gestire selezioni più grandi;
+- introdotto un manifesto concatenato a blocchi per conservare nel journal le prove tecniche di lotti estesi senza perdere integrità o recuperabilità;
+- aggiunti test di regressione con 60 file, 2.001 credenziali rilevate, 64 selezionate e 600 prove candidate nel journal.
+
+### Security
+
+- mantenuti i limiti per singolo documento, espansione Office, record, pagine PDF, campi, messaggi in byte ed estensione totale del journal;
+- mantenuti la validazione canonica, il rilevamento dei duplicati e il concatenamento SHA-256 anche per i manifesti suddivisi.
+
 ## 0.19.0 - 2026-08-13
 
 ### Added

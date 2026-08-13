@@ -21,6 +21,7 @@ from passbolt_import import (
     _reconciliation_archive_result,
     _reconciliation_describe_result,
     _reconciliation_list_result,
+    _selected_candidates,
     _session_bridge_request,
     execute_import,
     extract_resources,
@@ -97,6 +98,18 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(result["verified_candidate_count"], 1)
         self.assertFalse(result["secrets_serialized"])
         self.assertNotIn(self.secret, json.dumps(result))
+
+    def test_candidate_selection_exceeds_previous_batch_cap(self) -> None:
+        requests = []
+        for index in range(64):
+            candidate = dict(self.request)
+            candidate["candidate_id"] = f"{index:016x}"
+            requests.append(candidate)
+
+        selected = _selected_candidates(requests)
+
+        self.assertEqual(len(selected), 64)
+        self.assertEqual(selected[-1].candidate_id, "000000000000003f")
 
     def test_invalid_progress_terminates_bridge_before_a_final_response(self) -> None:
         progress = {
