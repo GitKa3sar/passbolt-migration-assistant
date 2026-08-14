@@ -2,6 +2,23 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.20.0 - 2026-08-14
+
+### Changed
+
+- introdotto un design system WPF moderno ispirato alle interfacce Apple, con palette chiara, gerarchia tipografica, superfici leggere, spaziature coerenti e angoli arrotondati;
+- ridisegnati sidebar, indicatore delle quattro fasi, marchio Passbolt, badge di stato, pulsanti, campi, checkbox, menu a discesa, tab e tabelle;
+- resa più compatta la fase 04 tramite due sezioni affiancate per sessione sicura e destinazione/formato, lasciando più spazio al piano di importazione;
+- applicato lo stesso tema agli editor WPF secondari senza cambiare i relativi controlli o flussi;
+- aumentate la dimensione iniziale e la dimensione minima della finestra per supportare la nuova densità visiva mantenendo il ridimensionamento;
+- aggiunta la modalità locale `-RenderPreviewPath` con selezione `-RenderPreviewPage` per generare anteprime PNG delle quattro fasi senza aprire documenti o contattare Passbolt.
+
+### Security
+
+- mantenuti invariati mascheramento delle password, conferme esplicite, sessione in memoria, dry-run e controlli fail-closed;
+- il rendering delle anteprime usa esclusivamente lo stato iniziale privo di credenziali e non esegue richieste di rete;
+- nessun nuovo dato sensibile viene conservato, serializzato o mostrato dalla nuova interfaccia.
+
 ## 0.19.2 - 2026-08-14
 
 ### Changed

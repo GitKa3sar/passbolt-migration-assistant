@@ -1,5 +1,8 @@
 param(
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    [string]$RenderPreviewPath = "",
+    [ValidateSet("Configuration", "Inventory", "Review", "Import")]
+    [string]$RenderPreviewPage = "Configuration"
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,145 +42,427 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.19.2"
-        Width="1240" Height="800" MinWidth="1080" MinHeight="700"
-        WindowStartupLocation="CenterScreen" Background="#F4F6F8"
-        FontFamily="Segoe UI">
+        Title="Passbolt Migration Assistant - v0.20.0"
+        Width="1360" Height="860" MinWidth="1160" MinHeight="740"
+        WindowStartupLocation="CenterScreen" Background="#F5F5F7"
+        FontFamily="Segoe UI Variable Text, Segoe UI"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
     <Window.Resources>
-        <SolidColorBrush x:Key="TextBrush" Color="#1F2933" />
-        <SolidColorBrush x:Key="MutedBrush" Color="#66737F" />
+        <SolidColorBrush x:Key="TextBrush" Color="#1D1D1F" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#6E6E73" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#007AFF" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="CanvasBrush" Color="#F5F5F7" />
+        <SolidColorBrush x:Key="SeparatorBrush" Color="#E5E5EA" />
+        <SolidColorBrush x:Key="SoftAccentBrush" Color="#EAF3FF" />
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style x:Key="PageTitle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe UI Variable Display, Segoe UI" />
+            <Setter Property="FontSize" Value="30" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style x:Key="PageSubtitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="Margin" Value="0,5,0,0" />
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+        </Style>
+        <Style x:Key="StatusPill" TargetType="Border">
+            <Setter Property="Background" Value="#EAF8F0" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="13,7" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="InfoBanner" TargetType="Border">
+            <Setter Property="Background" Value="#EEF6FF" />
+            <Setter Property="BorderBrush" Value="#C7DEFA" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="14,11" />
+        </Style>
+        <Style x:Key="WarningBanner" TargetType="Border">
+            <Setter Property="Background" Value="#FFF8E1" />
+            <Setter Property="BorderBrush" Value="#F2C94C" />
+            <Setter Property="BorderThickness" Value="0,1,0,0" />
+            <Setter Property="Padding" Value="14,10" />
+        </Style>
         <Style x:Key="PrimaryButton" TargetType="Button">
-            <Setter Property="Background" Value="#2878D0" />
+            <Setter Property="Background" Value="#007AFF" />
             <Setter Property="Foreground" Value="White" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Padding" Value="18,10" />
-            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="18,9" />
+            <Setter Property="BorderBrush" Value="#007AFF" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="ButtonChrome" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#1D63AE" /></Trigger>
-                <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#A9BAC9" /></Trigger>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#1687FF" /><Setter Property="BorderBrush" Value="#1687FF" /></Trigger>
+                <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#0066D6" /><Setter Property="BorderBrush" Value="#0066D6" /></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#D1D1D6" /><Setter Property="BorderBrush" Value="#D1D1D6" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
             </Style.Triggers>
         </Style>
         <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
-            <Setter Property="Background" Value="#EAF0F5" />
-            <Setter Property="Foreground" Value="#1F2933" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="#D1D1D6" />
+            <Setter Property="Foreground" Value="#1D1D1F" />
             <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#DDE8F0" /></Trigger>
-                <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#EDF1F4" /><Setter Property="Foreground" Value="#98A5B1" /></Trigger>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#F2F2F7" /><Setter Property="BorderBrush" Value="#C7C7CC" /></Trigger>
+                <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#E5E5EA" /><Setter Property="BorderBrush" Value="#AEAEB2" /></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#F5F5F7" /><Setter Property="BorderBrush" Value="#E5E5EA" /><Setter Property="Foreground" Value="#AEAEB2" /></Trigger>
             </Style.Triggers>
         </Style>
+        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}" />
         <Style x:Key="Card" TargetType="Border">
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#DDE3E8" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="#E5E5EA" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="5" />
-            <Setter Property="Padding" Value="20,16" />
-            <Setter Property="Margin" Value="0,0,0,12" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="22,18" />
+            <Setter Property="Margin" Value="0,0,0,14" />
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="2" Opacity="0.07" />
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style TargetType="TextBox">
-            <Setter Property="BorderBrush" Value="#C9D3DB" />
+            <Setter Property="BorderBrush" Value="#D1D1D6" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="10,8" />
-            <Setter Property="Background" Value="#FAFBFC" />
-            <Setter Property="Foreground" Value="#1F2933" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="#1D1D1F" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="CaretBrush" Value="#007AFF" />
+            <Setter Property="SelectionBrush" Value="#B7D8FF" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="InputChrome" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="#007AFF" /></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="#AEAEB2" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="InputChrome" Property="Background" Value="#F2F2F7" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style TargetType="PasswordBox">
-            <Setter Property="BorderBrush" Value="#C9D3DB" />
+            <Setter Property="BorderBrush" Value="#D1D1D6" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="10,8" />
-            <Setter Property="Background" Value="#FAFBFC" />
-            <Setter Property="Foreground" Value="#1F2933" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="#1D1D1F" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="CaretBrush" Value="#007AFF" />
+            <Setter Property="SelectionBrush" Value="#B7D8FF" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="PasswordBox">
+                        <Border x:Name="PasswordChrome" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="PasswordChrome" Property="BorderBrush" Value="#007AFF" /></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="PasswordChrome" Property="BorderBrush" Value="#AEAEB2" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="PasswordChrome" Property="Background" Value="#F2F2F7" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style TargetType="ComboBox">
-            <Setter Property="BorderBrush" Value="#C9D3DB" />
+            <Setter Property="BorderBrush" Value="#D1D1D6" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="8,7" />
-            <Setter Property="Background" Value="#FAFBFC" />
-            <Setter Property="Foreground" Value="#1F2933" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="#1D1D1F" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource AncestorType=ComboBox}}"
+                                                CornerRadius="10" />
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Margin="12,0,36,0" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                              IsHitTestVisible="False" />
+                            <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#6E6E73" StrokeThickness="1.5"
+                                  HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,14,0" IsHitTestVisible="False" />
+                            <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                                <Border Background="#FFFFFF" BorderBrush="#D1D1D6" BorderThickness="1" CornerRadius="10" Padding="4" Margin="0,4,0,0">
+                                    <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="4" Opacity="0.14" /></Border.Effect>
+                                    <ScrollViewer MaxHeight="300" CanContentScroll="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="#007AFF" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#F2F2F7" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Padding" Value="11,8" />
+            <Setter Property="Margin" Value="0,1" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="ItemChrome" Background="Transparent" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemChrome" Property="Background" Value="#F2F2F7" /></Trigger>
+                            <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemChrome" Property="Background" Value="#EAF3FF" /><Setter Property="Foreground" Value="#0066D6" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal">
+                            <Border x:Name="CheckChrome" Width="19" Height="19" CornerRadius="5" Background="#FFFFFF" BorderBrush="#C7C7CC" BorderThickness="1">
+                                <TextBlock x:Name="CheckMark" Text="&#x2713;" Foreground="White" FontSize="13" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="CheckChrome" Property="Background" Value="#007AFF" /><Setter TargetName="CheckChrome" Property="BorderBrush" Value="#007AFF" /><Setter TargetName="CheckMark" Property="Visibility" Value="Visible" /></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CheckChrome" Property="BorderBrush" Value="#007AFF" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.68" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ToggleButton">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="#1D1D1F" />
+            <Setter Property="BorderBrush" Value="#D1D1D6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="ToggleChrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ToggleChrome" Property="Background" Value="#F2F2F7" /></Trigger>
+                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="ToggleChrome" Property="Background" Value="#EAF3FF" /><Setter TargetName="ToggleChrome" Property="BorderBrush" Value="#8FC2FF" /><Setter Property="Foreground" Value="#0066D6" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style TargetType="DataGrid">
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="#DDE3E8" />
-            <Setter Property="RowBackground" Value="White" />
-            <Setter Property="AlternatingRowBackground" Value="#F8FAFB" />
-            <Setter Property="HorizontalGridLinesBrush" Value="#E8EDF1" />
-            <Setter Property="VerticalGridLinesBrush" Value="#E8EDF1" />
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="#1D1D1F" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="RowBackground" Value="#FFFFFF" />
+            <Setter Property="AlternatingRowBackground" Value="#FBFBFD" />
+            <Setter Property="HorizontalGridLinesBrush" Value="#EFEFF1" />
+            <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
+            <Setter Property="GridLinesVisibility" Value="Horizontal" />
             <Setter Property="HeadersVisibility" Value="Column" />
+            <Setter Property="RowHeight" Value="42" />
+            <Setter Property="ColumnHeaderHeight" Value="42" />
+            <Setter Property="RowHeaderWidth" Value="0" />
             <Setter Property="CanUserAddRows" Value="False" />
             <Setter Property="CanUserDeleteRows" Value="False" />
+            <Setter Property="CanUserResizeRows" Value="False" />
             <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto" />
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#F8F8FA" />
+            <Setter Property="Foreground" Value="#6E6E73" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="BorderBrush" Value="#E5E5EA" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+        <Style TargetType="DataGridCell">
+            <Setter Property="Padding" Value="11,0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        </Style>
+        <Style TargetType="DataGridRow">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#F2F7FF" /></Trigger>
+                <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#DCEBFF" /><Setter Property="Foreground" Value="#1D1D1F" /></Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Border Background="#E9E9EE" CornerRadius="12" Padding="3" HorizontalAlignment="Left">
+                                <TabPanel x:Name="HeaderPanel" IsItemsHost="True" Background="Transparent" />
+                            </Border>
+                            <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" Margin="0,12,0,0"
+                                              Content="{TemplateBinding SelectedContent}"
+                                              ContentTemplate="{TemplateBinding SelectedContentTemplate}"
+                                              ContentStringFormat="{TemplateBinding SelectedContentStringFormat}"
+                                              HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="#6E6E73" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="TabChrome" Background="Transparent" CornerRadius="9" Padding="16,8" Margin="1">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="TabChrome" Property="Background" Value="#F2F2F7" /></Trigger>
+                            <Trigger Property="IsSelected" Value="True"><Setter TargetName="TabChrome" Property="Background" Value="#FFFFFF" /><Setter Property="Foreground" Value="#1D1D1F" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="226" />
+            <ColumnDefinition Width="244" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Grid Grid.Column="0" Background="#18212A">
+        <Grid Grid.Column="0" Background="#F2F2F7">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <StackPanel Margin="22,26,22,32">
-                <TextBlock Text="Passbolt" Foreground="White" FontSize="25" FontWeight="Bold" />
-                <TextBlock Text="Migration Assistant" Foreground="#AEB8C2" FontSize="12" Margin="0,2,0,0" />
-            </StackPanel>
+            <Border Grid.RowSpan="3" HorizontalAlignment="Right" Width="1" Background="#E5E5EA" />
+            <Grid Margin="20,24,18,30">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Width="38" Height="38" Background="#007AFF" CornerRadius="11" VerticalAlignment="Center">
+                    <TextBlock Text="P" Foreground="White" FontSize="21" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="4,0,0,0">
+                    <TextBlock Text="Passbolt" Foreground="#1D1D1F" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="21" FontWeight="SemiBold" />
+                    <TextBlock Text="Migration Assistant" Foreground="#8E8E93" FontSize="11" Margin="0,1,0,0" />
+                </StackPanel>
+            </Grid>
             <StackPanel Grid.Row="1" Margin="10,0">
-                <Border x:Name="StepConfiguration" Background="#263746" CornerRadius="4" Padding="14,12" Margin="0,2" Cursor="Hand">
-                    <StackPanel Orientation="Horizontal"><TextBlock x:Name="StepConfigurationNumber" Text="01" Foreground="#62A8EA" FontWeight="Bold" Width="32" /><TextBlock x:Name="StepConfigurationText" Text="Configurazione" Foreground="White" FontWeight="SemiBold" /></StackPanel>
+                <Border x:Name="StepConfiguration" Background="#FFFFFF" CornerRadius="12" Padding="10,9" Margin="0,3" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#EAF3FF" CornerRadius="9"><TextBlock x:Name="StepConfigurationNumber" Text="01" Foreground="#007AFF" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepConfigurationText" Grid.Column="1" Text="Configurazione" Foreground="#1D1D1F" FontWeight="SemiBold" VerticalAlignment="Center" /></Grid>
                 </Border>
-                <Border x:Name="StepInventory" Padding="14,12" Margin="0,2" CornerRadius="4" Cursor="Hand">
-                    <StackPanel Orientation="Horizontal"><TextBlock x:Name="StepInventoryNumber" Text="02" Foreground="#667683" FontWeight="Bold" Width="32" /><TextBlock x:Name="StepInventoryText" Text="Inventario file" Foreground="#8795A1" /></StackPanel>
+                <Border x:Name="StepInventory" Padding="10,9" Margin="0,3" CornerRadius="12" Cursor="Hand">
+                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepInventoryNumber" Text="02" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepInventoryText" Grid.Column="1" Text="Inventario file" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid>
                 </Border>
-                <Border x:Name="StepReview" Padding="14,12" Margin="0,2" CornerRadius="4" Cursor="Hand"><StackPanel Orientation="Horizontal"><TextBlock x:Name="StepReviewNumber" Text="03" Foreground="#667683" FontWeight="Bold" Width="32" /><TextBlock x:Name="StepReviewText" Text="Revisione" Foreground="#667683" /></StackPanel></Border>
-                <Border x:Name="StepImport" Padding="14,12" Margin="0,2" CornerRadius="4" Cursor="Hand"><StackPanel Orientation="Horizontal"><TextBlock x:Name="StepImportNumber" Text="04" Foreground="#667683" FontWeight="Bold" Width="32" /><TextBlock x:Name="StepImportText" Text="Importazione" Foreground="#667683" /></StackPanel></Border>
+                <Border x:Name="StepReview" Padding="10,9" Margin="0,3" CornerRadius="12" Cursor="Hand"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepReviewNumber" Text="03" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepReviewText" Grid.Column="1" Text="Revisione" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid></Border>
+                <Border x:Name="StepImport" Padding="10,9" Margin="0,3" CornerRadius="12" Cursor="Hand"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepImportNumber" Text="04" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepImportText" Grid.Column="1" Text="Importazione" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid></Border>
             </StackPanel>
-            <Border Grid.Row="2" Background="#202C36" CornerRadius="5" Padding="14" Margin="14,18">
+            <Border Grid.Row="2" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="14" Padding="16" Margin="14,18">
                 <StackPanel>
-                    <TextBlock Text="MODALIT&#xC0; SICURA" Foreground="#72D6B0" FontSize="11" FontWeight="Bold" />
-                    <TextBlock x:Name="SafeModeText" Text="L&#x2019;inventario usa soltanto metadati. Il contenuto dei documenti non viene aperto." Foreground="#D6DEE5" FontSize="11" TextWrapping="Wrap" Margin="0,5,0,0" />
+                    <TextBlock Text="PROTEZIONE ATTIVA" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
+                    <TextBlock x:Name="SafeModeText" Text="L&#x2019;inventario usa soltanto metadati. Il contenuto dei documenti non viene aperto." Foreground="#3A3A3C" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" LineHeight="16" />
                 </StackPanel>
             </Border>
         </Grid>
 
-        <Grid Grid.Column="1">
+        <Grid Grid.Column="1" Background="#F5F5F7">
             <ScrollViewer x:Name="ConfigurationPage" VerticalScrollBarVisibility="Auto">
-                <Grid Margin="32,28">
+                <Grid Margin="38,32">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Grid Grid.Row="0" Margin="0,0,0,22">
+                    <Grid Grid.Row="0" Margin="0,0,0,24">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="Configurazione" FontSize="27" FontWeight="Bold" Foreground="#1F2933" />
-                            <TextBlock Text="Verifica l&#x2019;istanza Passbolt e indica la cartella principale dei documenti clienti." Foreground="#66737F" FontSize="13" Margin="0,4,0,0" />
+                            <TextBlock Text="Configurazione" Style="{StaticResource PageTitle}" />
+                            <TextBlock Text="Verifica l&#x2019;istanza Passbolt e indica la cartella principale dei documenti clienti." Style="{StaticResource PageSubtitle}" />
                         </StackPanel>
-                        <Border Grid.Column="1" Background="#E5F6EF" CornerRadius="4" Padding="12,7" VerticalAlignment="Center">
-                            <TextBlock Text="DRY-RUN ATTIVO" Foreground="#16875D" FontSize="11" FontWeight="Bold" />
+                        <Border Grid.Column="1" Style="{StaticResource StatusPill}">
+                            <TextBlock Text="DRY-RUN ATTIVO" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
                         </Border>
                     </Grid>
 
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="24,20">
                         <StackPanel>
-                            <TextBlock Text="1. Connessione Passbolt" FontSize="16" FontWeight="SemiBold" Foreground="#1F2933" />
-                            <TextBlock Text="Inserisci l'URL. L'app rileva la fingerprint OpenPGP del server e ne richiede la conferma prima di procedere; il controllo pubblico non esegue alcun login." Foreground="#66737F" Margin="0,4,0,14" TextWrapping="Wrap" />
+                            <TextBlock Text="1. Connessione Passbolt" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="Inserisci l'URL. L'app rileva la fingerprint OpenPGP del server e ne richiede la conferma prima di procedere; il controllo pubblico non esegue alcun login." Foreground="{StaticResource MutedBrush}" Margin="0,5,0,16" TextWrapping="Wrap" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBox x:Name="PassboltUrl" ToolTip="URL base HTTPS, ad esempio https://passbolt.example.com" />
@@ -185,22 +470,22 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                             </Grid>
                             <Grid Margin="0,10,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="Fingerprint rilevata" Foreground="#66737F" VerticalAlignment="Center" />
-                                <Border Grid.Column="1" Background="#F3F6F8" BorderBrush="#D7DEE4" BorderThickness="1" CornerRadius="4" Padding="10,7">
-                                    <TextBlock x:Name="DetectedFingerprint" Text="Non ancora rilevata" Foreground="#43515D" FontFamily="Consolas" TextWrapping="Wrap" />
+                                <TextBlock Text="Fingerprint rilevata" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                                <Border Grid.Column="1" Background="#F5F5F7" BorderBrush="#E5E5EA" BorderThickness="1" CornerRadius="10" Padding="12,9">
+                                    <TextBlock x:Name="DetectedFingerprint" Text="Non ancora rilevata" Foreground="#3A3A3C" FontFamily="Cascadia Mono, Consolas" FontSize="11" TextWrapping="Wrap" />
                                 </Border>
                             </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                 <Ellipse x:Name="ConnectionDot" Width="9" Height="9" Fill="#98A5B1" Margin="0,0,7,0" />
-                                <TextBlock x:Name="ConnectionStatus" Text="Non verificata" Foreground="#66737F" />
+                                <TextBlock x:Name="ConnectionStatus" Text="Non verificata" Foreground="{StaticResource MutedBrush}" />
                             </StackPanel>
                         </StackPanel>
                     </Border>
 
                     <Border Grid.Row="2" Style="{StaticResource Card}" Padding="24,20">
                         <StackPanel>
-                            <TextBlock Text="2. Cartella documenti clienti" FontSize="16" FontWeight="SemiBold" Foreground="#1F2933" />
-                            <TextBlock Text="Ogni cartella di primo livello viene considerata un cliente. I file nella radice restano separati." Foreground="#66737F" Margin="0,4,0,14" />
+                            <TextBlock Text="2. Cartella documenti clienti" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="Ogni cartella di primo livello viene considerata un cliente. I file nella radice restano separati." Foreground="{StaticResource MutedBrush}" Margin="0,5,0,16" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBox x:Name="ClientFolder" />
@@ -208,7 +493,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                             </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                 <Ellipse x:Name="FolderDot" Width="9" Height="9" Fill="#98A5B1" Margin="0,0,7,0" />
-                                <TextBlock x:Name="FolderStatus" Text="Nessuna cartella selezionata" Foreground="#66737F" />
+                                <TextBlock x:Name="FolderStatus" Text="Nessuna cartella selezionata" Foreground="{StaticResource MutedBrush}" />
                             </StackPanel>
                         </StackPanel>
                     </Border>
@@ -217,14 +502,14 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel VerticalAlignment="Center">
                             <CheckBox Content="Modalit&#xE0; simulazione obbligatoria" IsChecked="True" IsEnabled="False" />
-                            <TextBlock Text="La fase successiva raccoglie esclusivamente metadati dei file." Foreground="#66737F" FontSize="11" Margin="0,4,0,0" />
+                            <TextBlock Text="La fase successiva raccoglie esclusivamente metadati dei file." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="27,4,0,0" />
                         </StackPanel>
                         <Button x:Name="ContinueButton" Grid.Column="1" Content="Continua all&#x2019;inventario  &#x2192;" Style="{StaticResource PrimaryButton}" IsEnabled="False" Padding="22,12" />
                     </Grid>
                 </Grid>
             </ScrollViewer>
 
-            <Grid x:Name="InventoryPage" Visibility="Collapsed" Margin="28,22,28,22">
+            <Grid x:Name="InventoryPage" Visibility="Collapsed" Margin="34,28,34,26">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -236,8 +521,8 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <Grid Grid.Row="0" Margin="0,0,0,16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel>
-                        <TextBlock Text="Inventario file" FontSize="27" FontWeight="Bold" Foreground="#1F2933" />
-                        <TextBlock x:Name="InventoryRoot" Text="Inventario non ancora eseguito" Foreground="#66737F" FontSize="12" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="Inventario file" Style="{StaticResource PageTitle}" />
+                        <TextBlock x:Name="InventoryRoot" Text="Inventario non ancora eseguito" Style="{StaticResource PageSubtitle}" FontSize="12" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <Button x:Name="RefreshButton" Grid.Column="1" Content="Aggiorna inventario" Style="{StaticResource SecondaryButton}" VerticalAlignment="Center" />
                     <Button x:Name="ExportButton" Grid.Column="2" Content="Esporta CSV" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" VerticalAlignment="Center" IsEnabled="False" />
@@ -268,15 +553,15 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                         <DataGrid x:Name="FilesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" ToolTip="Seleziona pi&#xF9; file con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Cliente" Binding="{Binding Client}" Width="145" />
-                                <DataGridTextColumn Header="Percorso relativo" Binding="{Binding RelativePath}" Width="*" />
+                                <DataGridTextColumn Header="Percorso relativo" Binding="{Binding RelativePath}" Width="*" MinWidth="360" />
                                 <DataGridTextColumn Header="Formato" Binding="{Binding Extension}" Width="78" />
                                 <DataGridTextColumn Header="Categoria" Binding="{Binding Category}" Width="118" />
                                 <DataGridTextColumn Header="Dimensione" Binding="{Binding Size}" Width="92" />
                                 <DataGridTextColumn Header="Modificato" Binding="{Binding Modified}" Width="132" />
                             </DataGrid.Columns>
                         </DataGrid>
-                        <Border x:Name="WarningsPanel" Grid.Row="1" Background="#FFF8E7" BorderBrush="#E5C36A" BorderThickness="0,1,0,0" Padding="12,8" Visibility="Collapsed">
-                            <TextBlock x:Name="WarningsText" Foreground="#765B17" FontSize="11" TextWrapping="Wrap" />
+                        <Border x:Name="WarningsPanel" Grid.Row="1" Style="{StaticResource WarningBanner}" Visibility="Collapsed">
+                            <TextBlock x:Name="WarningsText" Foreground="#8A5A00" FontSize="11" TextWrapping="Wrap" />
                         </Border>
                     </Grid>
                 </Border>
@@ -284,11 +569,11 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <Grid Grid.Row="4" Margin="0,12,0,0">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <Button x:Name="BackButton" Content="&#x2190;  Torna alla configurazione" Style="{StaticResource SecondaryButton}" />
-                    <TextBox x:Name="ActivityLog" Grid.Column="1" Margin="12,0,0,0" Height="42" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="10" Background="#EEF2F5" BorderThickness="0" />
+                    <TextBox x:Name="ActivityLog" Grid.Column="1" Margin="12,0,0,0" Height="42" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas" FontSize="10" Background="#F2F2F7" BorderBrush="#E5E5EA" />
                 </Grid>
             </Grid>
 
-            <Grid x:Name="ReviewPage" Visibility="Collapsed" Margin="28,22,28,22">
+            <Grid x:Name="ReviewPage" Visibility="Collapsed" Margin="34,28,34,26">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -300,11 +585,11 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <Grid Grid.Row="0" Margin="0,0,0,16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel>
-                        <TextBlock Text="Revisione controllata" FontSize="27" FontWeight="Bold" Foreground="#1F2933" />
-                        <TextBlock x:Name="ReviewSummary" Text="Nessuna revisione eseguita" Foreground="#66737F" FontSize="12" Margin="0,4,0,0" />
+                        <TextBlock Text="Revisione controllata" Style="{StaticResource PageTitle}" />
+                        <TextBlock x:Name="ReviewSummary" Text="Nessuna revisione eseguita" Style="{StaticResource PageSubtitle}" FontSize="12" />
                     </StackPanel>
-                    <Border Grid.Column="1" Background="#E5F6EF" CornerRadius="4" Padding="12,7" VerticalAlignment="Center">
-                        <TextBlock x:Name="ReviewPasswordState" Text="PASSWORD MASCHERATE" Foreground="#16875D" FontSize="11" FontWeight="Bold" />
+                    <Border Grid.Column="1" Style="{StaticResource StatusPill}">
+                        <TextBlock x:Name="ReviewPasswordState" Text="PASSWORD MASCHERATE" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
                     </Border>
                 </Grid>
 
@@ -336,13 +621,13 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                 <DataGridTextColumn Header="Cliente" Binding="{Binding Client}" Width="125" />
                                 <DataGridTextColumn Header="Titolo" Binding="{Binding Title}" Width="150" />
                                 <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="135" />
-                                <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" />
+                                <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" MinWidth="180" />
                                 <DataGridTextColumn Header="Password" Binding="{Binding SecretDisplay}" Width="130" />
                                 <DataGridTextColumn Header="Origine" Binding="{Binding Source}" Width="180" />
                             </DataGrid.Columns>
                         </DataGrid>
-                        <Border x:Name="ReviewWarningsPanel" Grid.Row="1" Background="#FFF8E7" BorderBrush="#E5C36A" BorderThickness="0,1,0,0" Padding="12,8" Visibility="Collapsed">
-                            <TextBlock x:Name="ReviewWarningsText" Foreground="#765B17" FontSize="11" TextWrapping="Wrap" MaxHeight="62" />
+                        <Border x:Name="ReviewWarningsPanel" Grid.Row="1" Style="{StaticResource WarningBanner}" Visibility="Collapsed">
+                            <TextBlock x:Name="ReviewWarningsText" Foreground="#8A5A00" FontSize="11" TextWrapping="Wrap" MaxHeight="62" />
                         </Border>
                     </Grid>
                 </Border>
@@ -355,7 +640,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 </Grid>
             </Grid>
 
-            <Grid x:Name="ImportPage" Visibility="Collapsed" Margin="28,22,28,22">
+            <Grid x:Name="ImportPage" Visibility="Collapsed" Margin="34,28,34,26">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -367,59 +652,70 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                 <Grid Grid.Row="0" Margin="0,0,0,14">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel>
-                        <TextBlock Text="Importazione controllata" FontSize="27" FontWeight="Bold" Foreground="#1F2933" />
-                        <TextBlock x:Name="ImportSummary" Text="Prepara i candidati dalla revisione" Foreground="#66737F" FontSize="12" Margin="0,4,0,0" />
+                        <TextBlock Text="Importazione controllata" Style="{StaticResource PageTitle}" />
+                        <TextBlock x:Name="ImportSummary" Text="Prepara i candidati dalla revisione" Style="{StaticResource PageSubtitle}" FontSize="12" />
                     </StackPanel>
-                    <Border Grid.Column="1" Background="#E5F6EF" CornerRadius="4" Padding="12,7" VerticalAlignment="Center">
-                        <TextBlock Text="GPGAuth + OPENPGP LOCALE" Foreground="#16875D" FontSize="11" FontWeight="Bold" />
+                    <Border Grid.Column="1" Style="{StaticResource StatusPill}">
+                        <TextBlock Text="GPGAuth + OPENPGP LOCALE" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
                     </Border>
                 </Grid>
 
-                <Border Grid.Row="1" Background="#EAF4FE" BorderBrush="#A8C9EA" BorderThickness="1" CornerRadius="5" Padding="14,10" Margin="0,0,0,12">
-                    <TextBlock Text="Avvia la sessione una sola volta con chiave privata, passphrase e MFA. L'identita OpenPGP e la sessione Passbolt restano esclusivamente in memoria e vengono riutilizzate per dry-run e importazioni successive; si chiudono su richiesta, alla chiusura dell'app o dopo 30 minuti di inattivita." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                <Border Grid.Row="1" Style="{StaticResource InfoBanner}" Margin="0,0,0,14">
+                    <TextBlock Text="Avvia la sessione una sola volta con chiave privata, passphrase e MFA. L'identita OpenPGP e la sessione Passbolt restano esclusivamente in memoria e vengono riutilizzate per dry-run e importazioni successive; si chiudono su richiesta, alla chiusura dell'app o dopo 30 minuti di inattivita." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" LineHeight="17" />
                 </Border>
 
-                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,14">
+                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,16">
                     <Grid>
-                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Identit&#xE0; OpenPGP" FontSize="15" FontWeight="SemiBold" Foreground="#1F2933" Margin="0,0,0,10" />
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Chiave privata" Foreground="#66737F" VerticalAlignment="Center" />
-                        <TextBox x:Name="PrivateKeyPath" Grid.Row="1" Grid.Column="1" ToolTip="File ASCII-armored della chiave privata Passbolt" />
-                        <Button x:Name="BrowseKeyButton" Grid.Row="1" Grid.Column="2" Content="Scegli file" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" />
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Passphrase" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <PasswordBox x:Name="KeyPassphrase" Grid.Row="2" Grid.Column="1" Margin="0,9,0,0" ToolTip="Usata solo per aprire la sessione; non viene salvata e il campo viene subito cancellato" />
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Codice MFA (TOTP)" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <PasswordBox x:Name="MfaTotpCode" Grid.Row="3" Grid.Column="1" Margin="0,9,0,0" MaxLength="6" ToolTip="Usato solo per aprire la sessione; non viene salvato e il campo viene subito cancellato" />
-                        <Button x:Name="ImportSessionButton" Grid.Row="3" Grid.Column="2" Content="Avvia sessione" Style="{StaticResource SecondaryButton}" Margin="10,9,0,0" />
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Destinazione" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <ComboBox x:Name="DestinationMode" Grid.Row="4" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Crea o riutilizza una cartella per ogni cliente; in un contenitore condiviso eredita la maschera dei permessi verificata">
-                            <ComboBoxItem Content="Cartelle per cliente nel contenitore scelto" Tag="client_folders" />
-                            <ComboBoxItem Content="Mappatura distinta per ogni cliente" Tag="client_mapping" />
-                            <ComboBoxItem Content="Direttamente nella cartella scelta" Tag="direct_folder" />
-                            <ComboBoxItem Content="Radice personale Passbolt" Tag="root" />
-                        </ComboBox>
-                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Cartella Passbolt" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <ComboBox x:Name="DestinationFolder" Grid.Row="5" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" MaxDropDownHeight="300" ToolTip="Il primo dry-run carica le cartelle Passbolt accessibili">
-                            <ComboBoxItem Content="Radice personale Passbolt" Tag="" />
-                        </ComboBox>
-                        <Button x:Name="ConfigureClientMappingsButton" Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Content="Mappa clienti" Style="{StaticResource SecondaryButton}" Margin="0,9,0,0" IsEnabled="False" Visibility="Collapsed" />
-                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Permessi nuovi oggetti" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <TextBlock x:Name="PermissionModeStatus" Grid.Row="6" Grid.Column="1" Text="Ereditati dalla destinazione" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" TextWrapping="Wrap" ToolTip="I permessi personalizzati vengono applicati soltanto alle nuove cartelle e risorse; il proprietario autenticato resta sempre Owner" />
-                        <Button x:Name="ConfigurePermissionsButton" Grid.Row="6" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="10,9,0,0" IsEnabled="False" />
-                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Formato cartelle" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <ComboBox x:Name="FolderFormat" Grid.Row="7" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito; le nuove cartelle in un contenitore condiviso ne ereditano i permessi">
-                            <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
-                            <ComboBoxItem Content="v4 - nome in chiaro" Tag="v4" />
-                            <ComboBoxItem Content="v5 - nome cifrato" Tag="v5" />
-                        </ComboBox>
-                        <TextBlock Grid.Row="8" Grid.Column="0" Text="Formato risorse" Foreground="#66737F" VerticalAlignment="Center" Margin="0,9,0,0" />
-                        <ComboBox x:Name="ResourceFormat" Grid.Row="8" Grid.Column="1" Margin="0,9,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito dall'istanza Passbolt">
-                            <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
-                            <ComboBoxItem Content="v4 - metadati in chiaro" Tag="v4" />
-                            <ComboBoxItem Content="v5 - metadati cifrati" Tag="v5" />
-                        </ComboBox>
-                        <Button x:Name="DryRunButton" Grid.Row="8" Grid.Column="2" Content="Verifica e dry-run" Style="{StaticResource PrimaryButton}" Margin="10,9,0,0" IsEnabled="False" />
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="28" /><ColumnDefinition Width="1.08*" /></Grid.ColumnDefinitions>
+                        <Border Grid.Column="1" Width="1" Background="#E5E5EA" HorizontalAlignment="Center" />
+
+                        <Grid Grid.Column="0">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="105" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Sessione sicura" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
+                            <TextBlock Grid.Row="1" Text="Chiave privata" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                            <TextBox x:Name="PrivateKeyPath" Grid.Row="1" Grid.Column="1" ToolTip="File ASCII-armored della chiave privata Passbolt" />
+                            <Button x:Name="BrowseKeyButton" Grid.Row="1" Grid.Column="2" Content="Scegli file" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" />
+                            <TextBlock Grid.Row="2" Text="Passphrase" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <PasswordBox x:Name="KeyPassphrase" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" ToolTip="Usata solo per aprire la sessione; non viene salvata e il campo viene subito cancellato" />
+                            <TextBlock Grid.Row="3" Text="MFA (TOTP)" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <PasswordBox x:Name="MfaTotpCode" Grid.Row="3" Grid.Column="1" Margin="0,8,0,0" MaxLength="6" ToolTip="Usato solo per aprire la sessione; non viene salvato e il campo viene subito cancellato" />
+                            <Button x:Name="ImportSessionButton" Grid.Row="3" Grid.Column="2" Content="Avvia sessione" Style="{StaticResource SecondaryButton}" Margin="8,8,0,0" />
+                        </Grid>
+
+                        <Grid Grid.Column="2">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="135" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Destinazione e formato" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
+                            <TextBlock Grid.Row="1" Text="Destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                            <ComboBox x:Name="DestinationMode" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" SelectedIndex="0" ToolTip="Crea o riutilizza una cartella per ogni cliente; in un contenitore condiviso eredita la maschera dei permessi verificata">
+                                <ComboBoxItem Content="Cartelle per cliente nel contenitore scelto" Tag="client_folders" />
+                                <ComboBoxItem Content="Mappatura distinta per ogni cliente" Tag="client_mapping" />
+                                <ComboBoxItem Content="Direttamente nella cartella scelta" Tag="direct_folder" />
+                                <ComboBoxItem Content="Radice personale Passbolt" Tag="root" />
+                            </ComboBox>
+                            <TextBlock Grid.Row="2" Text="Cartella Passbolt" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <ComboBox x:Name="DestinationFolder" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" SelectedIndex="0" MaxDropDownHeight="300" ToolTip="Il primo dry-run carica le cartelle Passbolt accessibili">
+                                <ComboBoxItem Content="Radice personale Passbolt" Tag="" />
+                            </ComboBox>
+                            <Button x:Name="ConfigureClientMappingsButton" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Content="Mappa clienti" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" Visibility="Collapsed" />
+                            <TextBlock Grid.Row="3" Text="Permessi" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <TextBlock x:Name="PermissionModeStatus" Grid.Row="3" Grid.Column="1" Text="Ereditati dalla destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,8,0" TextWrapping="Wrap" ToolTip="I permessi personalizzati vengono applicati soltanto alle nuove cartelle e risorse; il proprietario autenticato resta sempre Owner" />
+                            <Button x:Name="ConfigurePermissionsButton" Grid.Row="3" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" />
+                            <TextBlock Grid.Row="4" Text="Formato cartelle" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <ComboBox x:Name="FolderFormat" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito; le nuove cartelle in un contenitore condiviso ne ereditano i permessi">
+                                <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
+                                <ComboBoxItem Content="v4 - nome in chiaro" Tag="v4" />
+                                <ComboBoxItem Content="v5 - nome cifrato" Tag="v5" />
+                            </ComboBox>
+                            <TextBlock Grid.Row="5" Text="Formato risorse" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <ComboBox x:Name="ResourceFormat" Grid.Row="5" Grid.Column="1" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito dall'istanza Passbolt">
+                                <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
+                                <ComboBoxItem Content="v4 - metadati in chiaro" Tag="v4" />
+                                <ComboBoxItem Content="v5 - metadati cifrati" Tag="v5" />
+                            </ComboBox>
+                            <Button x:Name="DryRunButton" Grid.Row="5" Grid.Column="2" Content="Verifica e dry-run" Style="{StaticResource PrimaryButton}" Margin="8,8,0,0" IsEnabled="False" />
+                        </Grid>
                     </Grid>
                 </Border>
 
@@ -437,7 +733,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                             <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0" Padding="0">
                                 <Grid>
                                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                    <Border Grid.Row="0" Background="#F8FAFB" BorderBrush="#E3E8EC" BorderThickness="0,0,0,1" Padding="12,9">
+                                    <Border Grid.Row="0" Background="#F8F8FA" BorderBrush="#E5E5EA" BorderThickness="0,0,0,1" Padding="14,10">
                                         <TextBlock x:Name="ImportIdentity" Text="Eseguire il dry-run per verificare identit&#xE0; e piano." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
                                     </Border>
                                     <DataGrid x:Name="ImportPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
@@ -446,11 +742,11 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                             <DataGridTextColumn Header="Destinazione" Binding="{Binding Destination}" Width="190" />
                                             <DataGridTextColumn Header="Titolo" Binding="{Binding Title}" Width="165" />
                                             <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="150" />
-                                            <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" />
+                                            <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" MinWidth="180" />
                                         </DataGrid.Columns>
                                     </DataGrid>
-                                    <Border Grid.Row="2" Background="#FFF8E7" BorderBrush="#E5C36A" BorderThickness="0,1,0,0" Padding="12,8">
-                                        <TextBlock x:Name="ImportPlanStatus" Text="Nessuna richiesta sar&#xE0; inviata finch&#xE9; non viene avviato il dry-run." Foreground="#765B17" FontSize="11" TextWrapping="Wrap" />
+                                    <Border Grid.Row="2" Style="{StaticResource WarningBanner}">
+                                        <TextBlock x:Name="ImportPlanStatus" Text="Nessuna richiesta sar&#xE0; inviata finch&#xE9; non viene avviato il dry-run." Foreground="#8A5A00" FontSize="11" TextWrapping="Wrap" />
                                     </Border>
                                 </Grid>
                             </Border>
@@ -466,12 +762,12 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                     <TabItem Header="Recupero import interrotto">
                         <Grid Margin="8,10,8,8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <Border Grid.Row="0" Background="#EAF4FE" BorderBrush="#A8C9EA" BorderThickness="1" CornerRadius="5" Padding="12,9">
+                            <Border Grid.Row="0" Style="{StaticResource InfoBanner}">
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="Registri locali di riconciliazione" FontWeight="SemiBold" Foreground="#1F2933" />
-                                        <TextBlock Text="Seleziona un lotto; l'app lo associa ai candidati riletti dalla cartella corrente prima di qualunque verifica remota." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                                        <TextBlock Text="Registri locali di riconciliazione" FontWeight="SemiBold" Foreground="#1D1D1F" />
+                                        <TextBlock Text="Seleziona un lotto; l'app lo associa ai candidati riletti dalla cartella corrente prima di qualunque verifica remota." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <Button x:Name="RefreshRecoveryButton" Grid.Column="1" Content="Aggiorna lotti" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" />
                                     <Button x:Name="ArchiveRecoveryButton" Grid.Column="2" Content="Archivia..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" />
@@ -485,7 +781,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                             <DataGridTextColumn Header="Stato" Binding="{Binding StatusLabel}" Width="155" />
                                             <DataGridTextColumn Header="Registrato" Binding="{Binding RecordedAtLabel}" Width="145" />
                                             <DataGridTextColumn Header="Candidati" Binding="{Binding CandidateCountLabel}" Width="80" />
-                                            <DataGridTextColumn Header="ID lotto" Binding="{Binding BatchId}" Width="*" />
+                                            <DataGridTextColumn Header="ID lotto" Binding="{Binding BatchId}" Width="*" MinWidth="200" />
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </Border>
@@ -502,8 +798,8 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                         <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,5,5,0"><StackPanel><TextBlock Text="Da applicare" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricNotApplied" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
                                         <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Margin="5,5,0,0"><StackPanel><TextBlock Text="Conflitti" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricConflicts" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#C43D4B" /></StackPanel></Border>
                                     </Grid>
-                                    <Border Grid.Row="2" Background="#E5F6EF" BorderBrush="#A7DCC9" BorderThickness="1" CornerRadius="5" Padding="12,9" Margin="0,10,0,0">
-                                        <TextBlock x:Name="RecoverySafetyStatus" Text="Nessuna cancellazione, spostamento o sovrascrittura viene pianificata dal recupero." Foreground="#16875D" FontSize="11" TextWrapping="Wrap" />
+                                    <Border Grid.Row="2" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="12" Padding="14,10" Margin="0,10,0,0">
+                                        <TextBlock x:Name="RecoverySafetyStatus" Text="Nessuna cancellazione, spostamento o sovrascrittura viene pianificata dal recupero." Foreground="#248A3D" FontSize="11" TextWrapping="Wrap" />
                                     </Border>
                                 </Grid>
                             </Grid>
@@ -520,12 +816,12 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                     <TabItem Header="Permessi esistenti">
                         <Grid Margin="8,10,8,8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <Border Grid.Row="0" Background="#EAF4FE" BorderBrush="#A8C9EA" BorderThickness="1" CornerRadius="5" Padding="12,9">
+                            <Border Grid.Row="0" Style="{StaticResource InfoBanner}">
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="150" /><ColumnDefinition Width="240" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="Permessi degli oggetti esistenti" FontWeight="SemiBold" Foreground="#1F2933" />
-                                        <TextBlock Text="Consulta, simula e applica una ACL desiderata. Riduzioni e revoche richiedono una conferma rafforzata e il controllo degli utenti effettivamente coinvolti." Foreground="#284F75" FontSize="11" TextWrapping="Wrap" />
+                                        <TextBlock Text="Permessi degli oggetti esistenti" FontWeight="SemiBold" Foreground="#1D1D1F" />
+                                        <TextBlock Text="Consulta, simula e applica una ACL desiderata. Riduzioni e revoche richiedono una conferma rafforzata e il controllo degli utenti effettivamente coinvolti." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <ComboBox x:Name="AclTypeFilter" Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0" ToolTip="Filtra per tipo di oggetto">
                                         <ComboBoxItem Content="Tutti gli oggetti" Tag="all" />
@@ -542,7 +838,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                     <DataGrid x:Name="AclObjectsGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Tipo" Binding="{Binding ObjectTypeLabel}" Width="80" />
-                                            <DataGridTextColumn Header="Percorso" Binding="{Binding Path}" Width="*" />
+                                            <DataGridTextColumn Header="Percorso" Binding="{Binding Path}" Width="*" MinWidth="100" />
                                             <DataGridTextColumn Header="Accesso" Binding="{Binding CurrentAccessLabel}" Width="105" />
                                             <DataGridTextColumn Header="Condivisione" Binding="{Binding SharingLabel}" Width="100" />
                                             <DataGridTextColumn Header="ACL" Binding="{Binding StatusLabel}" Width="115" />
@@ -560,7 +856,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                                 <DataGrid x:Name="AclPermissionsGrid" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                                     <DataGrid.Columns>
                                                         <DataGridTextColumn Header="Origine" Binding="{Binding SubjectType}" Width="105" />
-                                                        <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" />
+                                                        <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" MinWidth="90" />
                                                         <DataGridTextColumn Header="Livello" Binding="{Binding PermissionLabel}" Width="105" />
                                                         <DataGridTextColumn Header="Verifica" Binding="{Binding VerificationLabel}" Width="125" />
                                                         <DataGridTextColumn Header="Dest." Binding="{Binding RecipientCount}" Width="55" />
@@ -574,7 +870,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
                                                     <DataGrid x:Name="AclPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" SelectionUnit="FullRow" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                                         <DataGrid.Columns>
                                                             <DataGridTextColumn Header="Azione" Binding="{Binding ActionLabel}" Width="115" />
-                                                            <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" />
+                                                            <DataGridTextColumn Header="Soggetto" Binding="{Binding DisplayName}" Width="*" MinWidth="60" />
                                                             <DataGridTextColumn Header="Prima" Binding="{Binding BeforeLabel}" Width="105" />
                                                             <DataGridTextColumn Header="Dopo" Binding="{Binding AfterLabel}" Width="105" />
                                                             <DataGridTextColumn Header="Impatto" Binding="{Binding ImpactLabel}" Width="110" />
@@ -780,6 +1076,14 @@ $script:CurrentPage = "Configuration"
 
 function Get-Brush([string]$Color) {
     return [Windows.Media.BrushConverter]::new().ConvertFromString($Color)
+}
+
+function Initialize-ModernDialog([System.Windows.Window]$Dialog) {
+    $Dialog.Background = Get-Brush "#F5F5F7"
+    $Dialog.FontFamily = $Window.FontFamily
+    $Dialog.UseLayoutRounding = $true
+    $Dialog.SnapsToDevicePixels = $true
+    $Dialog.Resources.MergedDictionaries.Add($Window.Resources)
 }
 
 function Add-Activity([string]$Message) {
@@ -1250,7 +1554,7 @@ function Reset-RecoveryPlan([string]$Status = "Seleziona un lotto recuperabile e
     $RecoveryMetricNotApplied.Text = [string][char]0x2014
     $RecoveryMetricConflicts.Text = [string][char]0x2014
     $RecoverySafetyStatus.Text = "Nessuna cancellazione, spostamento o sovrascrittura viene pianificata dal recupero."
-    $RecoverySafetyStatus.Foreground = Get-Brush "#16875D"
+    $RecoverySafetyStatus.Foreground = Get-Brush "#248A3D"
     $RecoveryConfirmation.Text = ""
     $RecoveryConfirmation.IsEnabled = $false
     $RecoveryConfirmationHint.Text = "Prima esegui la verifica autenticata del lotto."
@@ -1317,14 +1621,14 @@ function Set-RecoveryBatchSelection {
     if ($Status -eq "truncated") {
         $RecoveryStatus.Text = "L'ultima scrittura del registro e' troncata: il recupero automatico resta bloccato. Verificare manualmente Passbolt oppure archiviare il lotto come abbandonato."
         $RecoverySafetyStatus.Text = "Fail-closed: nessuna richiesta remota verra' inviata per questo registro troncato."
-        $RecoverySafetyStatus.Foreground = Get-Brush "#B7791F"
+        $RecoverySafetyStatus.Foreground = Get-Brush "#C77D00"
         Update-ImportSessionState
         return
     }
     if ($Status -eq "corrupt") {
         $RecoveryStatus.Text = "L'integrita' del registro non e' verificabile: il recupero automatico resta bloccato. Verificare manualmente Passbolt oppure archiviare il lotto come abbandonato."
         $RecoverySafetyStatus.Text = "Fail-closed: nessuna richiesta remota verra' inviata per questo registro corrotto."
-        $RecoverySafetyStatus.Foreground = Get-Brush "#C43D4B"
+        $RecoverySafetyStatus.Foreground = Get-Brush "#D70015"
         Update-ImportSessionState
         return
     }
@@ -1543,10 +1847,10 @@ function Update-PermissionEditorState {
     $ConfigurePermissionsButton.IsEnabled = Test-ImportSessionActive
     if ($script:PermissionMode -eq "custom") {
         $PermissionModeStatus.Text = "Personalizzati: $(@($script:PermissionTemplate).Count) utenti/gruppi + proprietario autenticato"
-        $PermissionModeStatus.Foreground = Get-Brush "#16875D"
+        $PermissionModeStatus.Foreground = Get-Brush "#248A3D"
     } else {
         $PermissionModeStatus.Text = "Ereditati dalla destinazione"
-        $PermissionModeStatus.Foreground = Get-Brush "#66737F"
+        $PermissionModeStatus.Foreground = Get-Brush "#6E6E73"
     }
 }
 
@@ -1624,8 +1928,7 @@ function Show-PermissionEditor(
     $Dialog.MinHeight = 520
     $Dialog.WindowStartupLocation = "CenterOwner"
     if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
-    $Dialog.Background = Get-Brush "#F4F6F8"
-    $Dialog.FontFamily = "Segoe UI"
+    Initialize-ModernDialog $Dialog
 
     $Layout = New-Object System.Windows.Controls.Grid
     $Layout.Margin = [System.Windows.Thickness]::new(20)
@@ -1816,7 +2119,7 @@ function Show-PermissionEditor(
     $SaveButton = New-Object System.Windows.Controls.Button
     $SaveButton.Content = if ($AclPlanMode) { "Calcola dry-run" } else { "Salva permessi" }
     $SaveButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
-    $SaveButton.Background = Get-Brush "#2878D0"
+    $SaveButton.Style = $Window.FindResource("PrimaryButton")
     $SaveButton.Foreground = Get-Brush "#FFFFFF"
     $SaveButton.BorderThickness = [System.Windows.Thickness]::new(0)
     $SaveButton.Add_Click({
@@ -2882,8 +3185,7 @@ function Show-ClientDestinationMappingDialog([switch]$BuildOnly) {
     $Dialog.MinHeight = 320
     $Dialog.WindowStartupLocation = "CenterOwner"
     if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
-    $Dialog.Background = Get-Brush "#F4F6F8"
-    $Dialog.FontFamily = "Segoe UI"
+    Initialize-ModernDialog $Dialog
 
     $Layout = New-Object System.Windows.Controls.Grid
     $Layout.Margin = [System.Windows.Thickness]::new(20)
@@ -2997,7 +3299,7 @@ function Show-ClientDestinationMappingDialog([switch]$BuildOnly) {
     $SaveButton = New-Object System.Windows.Controls.Button
     $SaveButton.Content = "Salva mappatura"
     $SaveButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
-    $SaveButton.Background = Get-Brush "#2878D0"
+    $SaveButton.Style = $Window.FindResource("PrimaryButton")
     $SaveButton.Foreground = Get-Brush "#FFFFFF"
     $SaveButton.BorderThickness = [System.Windows.Thickness]::new(0)
     $SaveButton.Add_Click({
@@ -3039,8 +3341,8 @@ function Reset-ImportWorkflow {
     $ImportSummary.Text = "Prepara i candidati dalla revisione"
     Reset-ImportPlan
     Reset-RecoveryPlan "Rivedi i documenti sorgente, quindi seleziona il lotto da associare."
-    $StepImportNumber.Foreground = Get-Brush "#667683"
-    $StepImportText.Foreground = Get-Brush "#667683"
+    $StepImportNumber.Foreground = Get-Brush "#8E8E93"
+    $StepImportText.Foreground = Get-Brush "#8E8E93"
     Update-ClientMappingButtonState
     Update-ImportSessionState
 }
@@ -3236,7 +3538,7 @@ function Set-ReviewPasswordsVisible([bool]$Visible, [switch]$SkipPrompt) {
 
     foreach ($Row in $script:AllReviewRows) { Update-ReviewRowState $Row }
     $ReviewPasswordState.Text = if ($script:ReviewPasswordsVisible) { "PASSWORD VISIBILI" } else { "PASSWORD MASCHERATE" }
-    $ReviewPasswordState.Foreground = if ($script:ReviewPasswordsVisible) { Get-Brush "#B42318" } else { Get-Brush "#16875D" }
+    $ReviewPasswordState.Foreground = if ($script:ReviewPasswordsVisible) { Get-Brush "#D70015" } else { Get-Brush "#248A3D" }
     $ReviewPasswordToggle.Content = if ($script:ReviewPasswordsVisible) { "Nascondi password" } else { "Mostra password" }
     if ([bool]$ReviewPasswordToggle.IsChecked -ne $script:ReviewPasswordsVisible) {
         $script:UpdatingReviewPasswordToggle = $true
@@ -3268,8 +3570,7 @@ function Show-ReviewCandidateEditor($Row = $null, [switch]$BuildOnly) {
     $Dialog.MinHeight = 480
     $Dialog.WindowStartupLocation = "CenterOwner"
     if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
-    $Dialog.Background = Get-Brush "#F4F6F8"
-    $Dialog.FontFamily = "Segoe UI"
+    Initialize-ModernDialog $Dialog
 
     $Layout = New-Object System.Windows.Controls.Grid
     $Layout.Margin = [System.Windows.Thickness]::new(22)
@@ -3406,7 +3707,7 @@ function Show-ReviewCandidateEditor($Row = $null, [switch]$BuildOnly) {
     $SaveButton = New-Object System.Windows.Controls.Button
     $SaveButton.Content = "Salva modifiche"
     $SaveButton.Padding = [System.Windows.Thickness]::new(18, 8, 18, 8)
-    $SaveButton.Background = Get-Brush "#2878D0"
+    $SaveButton.Style = $Window.FindResource("PrimaryButton")
     $SaveButton.Foreground = Get-Brush "#FFFFFF"
     $SaveButton.BorderThickness = [System.Windows.Thickness]::new(0)
     $SaveButton.Add_Click({
@@ -3536,8 +3837,8 @@ function Open-ImportPreparation {
         "Candidati preparati. Selezionare la chiave privata, inserire passphrase e MFA, quindi avviare la sessione."
     }
     Reset-ImportPlan $PreparationStatus
-    $StepImportNumber.Foreground = Get-Brush "#62A8EA"
-    $StepImportText.Foreground = Get-Brush "#D6DEE5"
+    $StepImportNumber.Foreground = Get-Brush "#007AFF"
+    $StepImportText.Foreground = Get-Brush "#3A3A3C"
     Add-Activity "Preparazione importazione: $($script:ImportCandidates.Count) candidati, nessun segreto registrato."
     Update-ImportSessionState
     $ImportModeTabs.SelectedIndex = 0
@@ -3844,7 +4145,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.19.2", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.20.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -3918,7 +4219,7 @@ function Invoke-RecoveryReadiness {
         $RecoveryMetricNotApplied.Text = [string]$Result.not_applied_count
         $RecoveryMetricConflicts.Text = [string]$Result.conflict_count
         $RecoverySafetyStatus.Text = "Piano verificato: nessuna azione distruttiva. Le operazioni gia' riuscite saranno riconciliate; saranno ripetute soltanto $([int]$Result.retry_action_count) azioni dimostrate come non applicate."
-        $RecoverySafetyStatus.Foreground = Get-Brush "#16875D"
+        $RecoverySafetyStatus.Foreground = Get-Brush "#248A3D"
         $RecoveryStatus.Text = "Verifica completata: $([int]$Result.remote_success_count) operazioni gia' riuscite, $([int]$Result.not_applied_count) non applicate, $([int]$Result.conflict_count) conflitti. Il lotto e' bloccato a questo piano fino al recupero o alla chiusura della sessione."
         $RecoveryConfirmationHint.Text = "Digita: $([string]$Result.confirmation_required)"
         $RecoveryConfirmation.IsEnabled = $true
@@ -4057,27 +4358,27 @@ function Test-SelectedFolder {
 function Update-ConfigurationState {
     $FolderIsValid = Test-SelectedFolder
     if ($FolderIsValid) {
-        $FolderDot.Fill = Get-Brush "#16875D"
+        $FolderDot.Fill = Get-Brush "#248A3D"
         $FolderStatus.Text = "Cartella valida e accessibile"
-        $FolderStatus.Foreground = Get-Brush "#16875D"
+        $FolderStatus.Foreground = Get-Brush "#248A3D"
     } elseif ($ClientFolder.Text.Trim()) {
-        $FolderDot.Fill = Get-Brush "#C43D4B"
+        $FolderDot.Fill = Get-Brush "#D70015"
         $FolderStatus.Text = "Cartella non trovata o non accessibile"
-        $FolderStatus.Foreground = Get-Brush "#C43D4B"
+        $FolderStatus.Foreground = Get-Brush "#D70015"
     } else {
-        $FolderDot.Fill = Get-Brush "#98A5B1"
+        $FolderDot.Fill = Get-Brush "#AEAEB2"
         $FolderStatus.Text = "Nessuna cartella selezionata"
-        $FolderStatus.Foreground = Get-Brush "#66737F"
+        $FolderStatus.Foreground = Get-Brush "#6E6E73"
     }
 
     $CanContinue = $script:ConnectionVerified -and $FolderIsValid
     $ContinueButton.IsEnabled = $CanContinue
     if ($CanContinue) {
-        $StepInventoryNumber.Foreground = Get-Brush "#62A8EA"
-        $StepInventoryText.Foreground = Get-Brush "#D6DEE5"
+        $StepInventoryNumber.Foreground = Get-Brush "#007AFF"
+        $StepInventoryText.Foreground = Get-Brush "#3A3A3C"
     } elseif ($script:CurrentPage -ne "Inventory") {
-        $StepInventoryNumber.Foreground = Get-Brush "#667683"
-        $StepInventoryText.Foreground = Get-Brush "#8795A1"
+        $StepInventoryNumber.Foreground = Get-Brush "#8E8E93"
+        $StepInventoryText.Foreground = Get-Brush "#8E8E93"
     }
 }
 
@@ -4091,7 +4392,7 @@ function Show-Page([ValidateSet("Configuration", "Inventory", "Review", "Import"
     $ReviewPage.Visibility = "Collapsed"
     $ImportPage.Visibility = "Collapsed"
     foreach ($Step in @($StepConfiguration, $StepInventory, $StepReview, $StepImport)) {
-        $Step.Background = Get-Brush "#18212A"
+        $Step.Background = Get-Brush "#F2F2F7"
     }
     $StepConfigurationText.FontWeight = "Normal"
     $StepInventoryText.FontWeight = "Normal"
@@ -4100,62 +4401,62 @@ function Show-Page([ValidateSet("Configuration", "Inventory", "Review", "Import"
 
     if ($Page -eq "Configuration") {
         $ConfigurationPage.Visibility = "Visible"
-        $StepConfiguration.Background = Get-Brush "#263746"
-        $StepConfigurationNumber.Foreground = Get-Brush "#62A8EA"
-        $StepConfigurationText.Foreground = Get-Brush "#FFFFFF"
+        $StepConfiguration.Background = Get-Brush "#FFFFFF"
+        $StepConfigurationNumber.Foreground = Get-Brush "#007AFF"
+        $StepConfigurationText.Foreground = Get-Brush "#1D1D1F"
         $StepConfigurationText.FontWeight = "SemiBold"
         $SafeModeText.Text = "Configurazione e inventario non aprono il contenuto dei documenti."
     } elseif ($Page -eq "Inventory") {
         $InventoryPage.Visibility = "Visible"
-        $StepConfigurationNumber.Foreground = Get-Brush "#AEB8C2"
-        $StepConfigurationText.Foreground = Get-Brush "#D6DEE5"
-        $StepInventory.Background = Get-Brush "#263746"
-        $StepInventoryNumber.Foreground = Get-Brush "#62A8EA"
-        $StepInventoryText.Foreground = Get-Brush "#FFFFFF"
+        $StepConfigurationNumber.Foreground = Get-Brush "#007AFF"
+        $StepConfigurationText.Foreground = Get-Brush "#3A3A3C"
+        $StepInventory.Background = Get-Brush "#FFFFFF"
+        $StepInventoryNumber.Foreground = Get-Brush "#007AFF"
+        $StepInventoryText.Foreground = Get-Brush "#1D1D1F"
         $StepInventoryText.FontWeight = "SemiBold"
         $SafeModeText.Text = "L'inventario usa soltanto metadati. Seleziona i file da autorizzare per la revisione."
     } elseif ($Page -eq "Review") {
         $ReviewPage.Visibility = "Visible"
-        $StepConfigurationNumber.Foreground = Get-Brush "#AEB8C2"
-        $StepConfigurationText.Foreground = Get-Brush "#D6DEE5"
-        $StepInventoryNumber.Foreground = Get-Brush "#AEB8C2"
-        $StepInventoryText.Foreground = Get-Brush "#D6DEE5"
-        $StepReview.Background = Get-Brush "#263746"
-        $StepReviewNumber.Foreground = Get-Brush "#62A8EA"
-        $StepReviewText.Foreground = Get-Brush "#FFFFFF"
+        $StepConfigurationNumber.Foreground = Get-Brush "#007AFF"
+        $StepConfigurationText.Foreground = Get-Brush "#3A3A3C"
+        $StepInventoryNumber.Foreground = Get-Brush "#007AFF"
+        $StepInventoryText.Foreground = Get-Brush "#3A3A3C"
+        $StepReview.Background = Get-Brush "#FFFFFF"
+        $StepReviewNumber.Foreground = Get-Brush "#007AFF"
+        $StepReviewText.Foreground = Get-Brush "#1D1D1F"
         $StepReviewText.FontWeight = "SemiBold"
         $SafeModeText.Text = "Le password sono mascherate per impostazione predefinita e visibili soltanto su richiesta; le modifiche restano in memoria."
     } else {
         $ImportPage.Visibility = "Visible"
-        $StepConfigurationNumber.Foreground = Get-Brush "#AEB8C2"
-        $StepConfigurationText.Foreground = Get-Brush "#D6DEE5"
-        $StepInventoryNumber.Foreground = Get-Brush "#AEB8C2"
-        $StepInventoryText.Foreground = Get-Brush "#D6DEE5"
-        $StepReviewNumber.Foreground = Get-Brush "#AEB8C2"
-        $StepReviewText.Foreground = Get-Brush "#D6DEE5"
-        $StepImport.Background = Get-Brush "#263746"
-        $StepImportNumber.Foreground = Get-Brush "#62A8EA"
-        $StepImportText.Foreground = Get-Brush "#FFFFFF"
+        $StepConfigurationNumber.Foreground = Get-Brush "#007AFF"
+        $StepConfigurationText.Foreground = Get-Brush "#3A3A3C"
+        $StepInventoryNumber.Foreground = Get-Brush "#007AFF"
+        $StepInventoryText.Foreground = Get-Brush "#3A3A3C"
+        $StepReviewNumber.Foreground = Get-Brush "#007AFF"
+        $StepReviewText.Foreground = Get-Brush "#3A3A3C"
+        $StepImport.Background = Get-Brush "#FFFFFF"
+        $StepImportNumber.Foreground = Get-Brush "#007AFF"
+        $StepImportText.Foreground = Get-Brush "#1D1D1F"
         $StepImportText.FontWeight = "SemiBold"
         $SafeModeText.Text = "GPGAuth e OpenPGP vengono eseguiti localmente. Ogni scrittura richiede dry-run e conferma esplicita."
     }
 
     if ($Page -ne "Review") {
         if ($null -ne $script:ReviewResult) {
-            $StepReviewNumber.Foreground = Get-Brush "#62A8EA"
-            $StepReviewText.Foreground = Get-Brush "#D6DEE5"
+            $StepReviewNumber.Foreground = Get-Brush "#007AFF"
+            $StepReviewText.Foreground = Get-Brush "#3A3A3C"
         } else {
-            $StepReviewNumber.Foreground = Get-Brush "#667683"
-            $StepReviewText.Foreground = Get-Brush "#667683"
+            $StepReviewNumber.Foreground = Get-Brush "#8E8E93"
+            $StepReviewText.Foreground = Get-Brush "#8E8E93"
         }
     }
     if ($Page -ne "Import") {
         if ($script:ImportCandidates.Count -gt 0) {
-            $StepImportNumber.Foreground = Get-Brush "#62A8EA"
-            $StepImportText.Foreground = Get-Brush "#D6DEE5"
+            $StepImportNumber.Foreground = Get-Brush "#007AFF"
+            $StepImportText.Foreground = Get-Brush "#3A3A3C"
         } else {
-            $StepImportNumber.Foreground = Get-Brush "#667683"
-            $StepImportText.Foreground = Get-Brush "#667683"
+            $StepImportNumber.Foreground = Get-Brush "#8E8E93"
+            $StepImportText.Foreground = Get-Brush "#8E8E93"
         }
     }
 }
@@ -4232,8 +4533,7 @@ function Show-ExcelPasswordDialog([string]$RelativePath, [switch]$Retry, [switch
     $Dialog.MinHeight = 280
     $Dialog.WindowStartupLocation = "CenterOwner"
     if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
-    $Dialog.Background = Get-Brush "#F4F6F8"
-    $Dialog.FontFamily = "Segoe UI"
+    Initialize-ModernDialog $Dialog
 
     $Layout = New-Object System.Windows.Controls.Grid
     $Layout.Margin = [System.Windows.Thickness]::new(22)
@@ -4301,7 +4601,7 @@ function Show-ExcelPasswordDialog([string]$RelativePath, [switch]$Retry, [switch
     $ContinueButton.Content = "Apri file Excel"
     $ContinueButton.IsDefault = $true
     $ContinueButton.Padding = [System.Windows.Thickness]::new(16, 8, 16, 8)
-    $ContinueButton.Background = Get-Brush "#2878D0"
+    $ContinueButton.Style = $Window.FindResource("PrimaryButton")
     $ContinueButton.Foreground = Get-Brush "#FFFFFF"
     $ContinueButton.BorderThickness = [System.Windows.Thickness]::new(0)
     $ContinueButton.Add_Click({
@@ -4505,8 +4805,8 @@ function Invoke-Inventory {
     $script:ReviewFilePasswords = @{}
     Reset-ImportWorkflow
     $ReviewCandidatesGrid.ItemsSource = $null
-    $StepReviewNumber.Foreground = Get-Brush "#667683"
-    $StepReviewText.Foreground = Get-Brush "#667683"
+    $StepReviewNumber.Foreground = Get-Brush "#8E8E93"
+    $StepReviewText.Foreground = Get-Brush "#8E8E93"
     $RefreshButton.IsEnabled = $false
     $ExportButton.IsEnabled = $false
     $InventoryRoot.Text = "Analisi dei metadati in corso: $Folder"
@@ -4596,18 +4896,18 @@ $PassboltUrl.Add_TextChanged({
         $script:PermissionCatalogSessionId = ""
         Update-PermissionEditorState
         Update-DestinationFolderOptions @() "" $false
-        $ConnectionDot.Fill = Get-Brush "#98A5B1"
+        $ConnectionDot.Fill = Get-Brush "#AEAEB2"
         $ConnectionStatus.Text = "URL modificato: ripetere la verifica"
-        $ConnectionStatus.Foreground = Get-Brush "#66737F"
+        $ConnectionStatus.Foreground = Get-Brush "#6E6E73"
         Update-ConfigurationState
     }
 })
 
 $VerifyButton.Add_Click({
     $VerifyButton.IsEnabled = $false
-    $ConnectionDot.Fill = Get-Brush "#B7791F"
+    $ConnectionDot.Fill = Get-Brush "#C77D00"
     $ConnectionStatus.Text = "Verifica in corso..."
-    $ConnectionStatus.Foreground = Get-Brush "#B7791F"
+    $ConnectionStatus.Foreground = Get-Brush "#C77D00"
     Add-Activity "Avvio verifica pubblica dell'istanza Passbolt."
     Update-Ui
     try {
@@ -4630,9 +4930,9 @@ $VerifyButton.Add_Click({
             Reset-ImportPlan "Fingerprint Passbolt non confermata. Ripetere la verifica."
             $script:ClientDestinationMap = @{}
             Update-DestinationFolderOptions @() "" $false
-            $ConnectionDot.Fill = Get-Brush "#B7791F"
+            $ConnectionDot.Fill = Get-Brush "#C77D00"
             $ConnectionStatus.Text = "Fingerprint rilevata ma non confermata"
-            $ConnectionStatus.Foreground = Get-Brush "#B7791F"
+            $ConnectionStatus.Foreground = Get-Brush "#C77D00"
             Add-Activity "Fingerprint Passbolt rilevata ma non confermata; connessione non autorizzata."
             return
         }
@@ -4643,9 +4943,9 @@ $VerifyButton.Add_Click({
         $script:VerifiedUrl = [string]$Result.base_url
         $script:VerifiedFingerprint = $DetectedValue
         if ($null -ne $script:ImportPlan) { Reset-ImportPlan "Connessione riverificata. Ripetere il dry-run autenticato." }
-        $ConnectionDot.Fill = Get-Brush "#16875D"
+        $ConnectionDot.Fill = Get-Brush "#248A3D"
         $ConnectionStatus.Text = "Connesso - fingerprint confermata: $DetectedValue"
-        $ConnectionStatus.Foreground = Get-Brush "#16875D"
+        $ConnectionStatus.Foreground = Get-Brush "#248A3D"
         Add-Activity "Passbolt raggiungibile; healthcheck verificato e fingerprint rilevata confermata dall'utente."
     } catch {
         $FailureMessage = [string]$_.Exception.Message
@@ -4657,9 +4957,9 @@ $VerifyButton.Add_Click({
         $script:VerifiedFingerprint = ""
         $DetectedFingerprint.Text = "Non disponibile"
         Reset-ImportPlan "Verifica pubblica non riuscita. Ripetere connessione e dry-run."
-        $ConnectionDot.Fill = Get-Brush "#C43D4B"
+        $ConnectionDot.Fill = Get-Brush "#D70015"
         $ConnectionStatus.Text = "Verifica non riuscita"
-        $ConnectionStatus.Foreground = Get-Brush "#C43D4B"
+        $ConnectionStatus.Foreground = Get-Brush "#D70015"
         Add-Activity "Verifica Passbolt non riuscita: $FailureMessage"
         [System.Windows.MessageBox]::Show($FailureMessage, "Connessione non riuscita", "OK", "Error") | Out-Null
     } finally {
@@ -4680,8 +4980,8 @@ $ClientFolder.Add_TextChanged({
         $script:ReviewResult = $null
         $script:AllReviewRows = @()
         Reset-ImportWorkflow
-        $StepReviewNumber.Foreground = Get-Brush "#667683"
-        $StepReviewText.Foreground = Get-Brush "#667683"
+        $StepReviewNumber.Foreground = Get-Brush "#8E8E93"
+        $StepReviewText.Foreground = Get-Brush "#8E8E93"
     }
 })
 
@@ -4900,12 +5200,81 @@ Update-ImportSessionState
 Add-Activity "Applicazione pronta. Nessun documento $([char]0x00E8) stato letto."
 Update-ConfigurationState
 
+if ($RenderPreviewPath) {
+    $PreviewFullPath = [IO.Path]::GetFullPath($RenderPreviewPath)
+    $PreviewDirectory = [IO.Path]::GetDirectoryName($PreviewFullPath)
+    if (-not $PreviewDirectory -or -not (Test-Path -LiteralPath $PreviewDirectory -PathType Container)) {
+        throw "La cartella di destinazione dell'anteprima UI non esiste."
+    }
+    $PreviewWidth = 1360
+    $PreviewHeight = 860
+    Show-Page $RenderPreviewPage
+    $PreviewRoot = [System.Windows.FrameworkElement]$Window.Content
+    $PreviewRoot.Measure([System.Windows.Size]::new($PreviewWidth, $PreviewHeight))
+    $PreviewRoot.Arrange([System.Windows.Rect]::new(0, 0, $PreviewWidth, $PreviewHeight))
+    $PreviewRoot.UpdateLayout()
+    $PreviewBitmap = [System.Windows.Media.Imaging.RenderTargetBitmap]::new(
+        $PreviewWidth,
+        $PreviewHeight,
+        96,
+        96,
+        [System.Windows.Media.PixelFormats]::Pbgra32
+    )
+    $PreviewBitmap.Render($PreviewRoot)
+    $PreviewEncoder = [System.Windows.Media.Imaging.PngBitmapEncoder]::new()
+    $PreviewEncoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($PreviewBitmap))
+    $PreviewStream = [IO.File]::Open($PreviewFullPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $PreviewEncoder.Save($PreviewStream)
+    } finally {
+        $PreviewStream.Dispose()
+    }
+    [pscustomobject]@{
+        app = "Passbolt Migration Assistant"
+        version = "0.20.0"
+        preview = $PreviewFullPath
+        page = $RenderPreviewPage
+        width = $PreviewWidth
+        height = $PreviewHeight
+        layout = [pscustomobject]@{
+            root_width = [math]::Round($PreviewRoot.ActualWidth, 1)
+            root_height = [math]::Round($PreviewRoot.ActualHeight, 1)
+            files_grid_width = [math]::Round($FilesGrid.ActualWidth, 1)
+            files_columns = @($FilesGrid.Columns | ForEach-Object { [math]::Round($_.ActualWidth, 1) })
+            review_grid_width = [math]::Round($ReviewCandidatesGrid.ActualWidth, 1)
+            review_columns = @($ReviewCandidatesGrid.Columns | ForEach-Object { [math]::Round($_.ActualWidth, 1) })
+            import_page_width = [math]::Round($ImportPage.ActualWidth, 1)
+            import_page_height = [math]::Round($ImportPage.ActualHeight, 1)
+            import_page_top = [math]::Round($ImportPage.TranslatePoint([System.Windows.Point]::new(0, 0), $PreviewRoot).Y, 1)
+            active_step_top = [math]::Round($StepImport.TranslatePoint([System.Windows.Point]::new(0, 0), $PreviewRoot).Y, 1)
+        }
+        status = "OK"
+    } | ConvertTo-Json
+    $Window.Close()
+    exit 0
+}
+
 if ($SelfTest) {
     $CompatibilityList = New-Object System.Collections.Generic.List[object]
     $CompatibilityList.Add([pscustomobject]@{ value = 1 })
     $CompatibilityArray = $CompatibilityList.ToArray()
     if ($CompatibilityArray.Count -ne 1) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
+    }
+    if (
+        $Window.Title -notmatch "v0\.20\.0" -or
+        $Window.MinWidth -lt 1160 -or
+        [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
+        $VerifyButton.MinHeight -lt 40 -or
+        $StepConfiguration.CornerRadius.TopLeft -lt 10 -or
+        $FilesGrid.RowHeight -lt 40 -or
+        $FilesGrid.Columns[1].MinWidth -lt 300 -or
+        $null -eq $ClientFolder.Template -or
+        $null -eq $DestinationMode.Template -or
+        $null -eq $ReviewPasswordToggle.Template -or
+        $null -eq $ImportModeTabs.Template
+    ) {
+        throw "Il design system moderno non rispetta il contratto visivo WPF."
     }
     $ArgumentProbeValue = "C:\Cartella Con Spazi\"
     $ArgumentProbeCode = "import json,sys; print(json.dumps({'ok': True, 'result': {'argument': sys.argv[1]}}))"
@@ -5153,7 +5522,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.19.2"
+        version = "0.20.0"
         ui = "WPF"
         phases = 4
         controls = 109
@@ -5185,6 +5554,8 @@ for line in sys.stdin:
         integration_matrix_backend = "OK"
         unlimited_file_and_candidate_selection = "OK"
         optimized_large_batch_processing = "OK"
+        modern_apple_ui = "OK"
+        offscreen_ui_preview = "OK"
         secrets_serialized = $false
         python = $PythonExecutable
         node = $NodeExecutable

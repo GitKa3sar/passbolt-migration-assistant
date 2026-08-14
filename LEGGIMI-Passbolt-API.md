@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.19.2` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.20.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Design system e anteprime UI 0.20.0
+
+La finestra principale usa un design system WPF centralizzato con superfici chiare, contrasto controllato, navigazione laterale, card arrotondate, input con stato di focus, tabelle senza griglie verticali e tab in forma di controllo segmentato. I nomi dei 109 controlli e i relativi handler restano invariati. Gli editor WPF creati dinamicamente riusano lo stesso dizionario di risorse, quindi campi e pulsanti conservano la stessa resa della finestra principale.
+
+La fase 04 dispone sessione sicura e opzioni di destinazione in due colonne. Non cambia l'ordine logico delle operazioni: la sessione deve essere autenticata, la destinazione e i formati devono essere validi e il dry-run rimane obbligatorio prima di qualsiasi conferma. Piano, recupero e ACL continuano a usare gli stessi backend e gli stessi digest.
+
+`-RenderPreviewPath <file.png>` esegue il layout WPF fuori schermo a 1360×860 e salva una PNG dello stato iniziale. `-RenderPreviewPage` accetta soltanto `Configuration`, `Inventory`, `Review` o `Import`. La modalità non mostra finestre, non apre documenti, non autentica l'utente e non invia richieste a Passbolt; serve esclusivamente alla verifica visuale ripetibile dell'interfaccia.
 
 ### Ottimizzazioni dei lotti estesi 0.19.2
 

@@ -6,9 +6,9 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.19.x | Sì |
-| 0.18.x | No |
-| < 0.18 | No |
+| 0.20.x | Sì |
+| 0.19.x | No |
+| < 0.19 | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultima versione pubblicata.
 
@@ -67,3 +67,5 @@ La versione 0.19.0 separa la configurazione pubblica della matrice dalle credenz
 La versione 0.19.1 rimuove i massimi numerici di file selezionati e credenziali per lotto senza rimuovere i confini di sicurezza sul contenuto. Restano i limiti per singolo file, record per documento, pagine PDF, espansione Office e lunghezza dei campi. Il protocollo locale accetta messaggi fino a 64 MiB e il journal fino a 256 MiB; per evitare eventi sovradimensionati, le sole prove tecniche dei candidati vengono concatenate in blocchi da massimo 200 elementi e verificate contro il conteggio dichiarato, la sequenza e la catena SHA-256. Questi limiti in byte proteggono memoria e parser e non costituiscono un tetto applicativo sul numero di elementi.
 
 La versione 0.19.2 introduce indici locali soltanto per confronti tecnici già esistenti: identità normalizzata delle credenziali, destinazione, UUID delle operazioni e digest delle cartelle. Gli indici non contengono nuove categorie di dati, non vengono serializzati e non sostituiscono alcuna verifica. Durante la rilettura dei sorgenti restano obbligatori gli hash SHA-256 prima e dopo il parsing, la corrispondenza di tutti i metadati revisionati e la disponibilità del segreto richiesto; il parser viene chiuso quando tutti i candidati selezionati sono stati ricostruiti. Il recovery non applica più un limite numerico separato di 10.000 operazioni, ma rimane fail-closed entro i limiti di 64 MiB del protocollo locale e 256 MiB del journal. I manifesti iniziali vengono scritti a blocchi dopo la validazione completa e sincronizzati con lo stesso `fsync`; catena SHA-256, lease, conferme e verifiche remote restano invariati.
+
+La versione 0.20.0 modifica esclusivamente presentazione e disposizione dei controlli. I campi sensibili conservano i tipi `PasswordBox`, il toggle della revisione resta disattivato per impostazione predefinita e la nuova gerarchia visiva non rende disponibili azioni prima delle condizioni già previste. Gli editor secondari riusano stili, non stato o dati della finestra principale. La modalità di anteprima riceve soltanto pagina e percorso PNG, viene eseguita prima di qualsiasi interazione e renderizza lo stato iniziale privo di credenziali; non apre sorgenti, non avvia GPGAuth e non contatta Passbolt.

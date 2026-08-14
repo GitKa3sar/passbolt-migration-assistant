@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 from passbolt_api_probe import ProbeError, normalize_base_url, normalize_fingerprint, run_probe
 
 
-APP_VERSION = "0.19.2"
+APP_VERSION = "0.20.0"
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 MAX_CONFIG_BYTES = 128 * 1024

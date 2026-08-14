@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.19.2 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.20.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -130,6 +130,15 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -
 python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py test_passbolt_acl_reconciliation.py test_passbolt_integration_matrix.py
 ```
 
+La resa delle quattro fasi può essere verificata anche senza una sessione Passbolt. Il comando seguente genera una PNG locale dello stato iniziale della pagina scelta (`Configuration`, `Inventory`, `Review` o `Import`), senza leggere documenti o eseguire richieste di rete:
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass `
+  -File .\PassboltApp.ps1 `
+  -RenderPreviewPath "$env:TEMP\passbolt-ui.png" `
+  -RenderPreviewPage Import
+```
+
 ## Matrice di integrazione v4/v5
 
 La versione 0.19.0 aggiunge un runner separato per verificare l'app contro istanze Passbolt di laboratorio reali. La configurazione contiene esclusivamente ID del profilo, URL HTTPS, fingerprint pubblica attesa e formati v4/v5: chiave privata, passphrase e TOTP non devono essere aggiunti al file.
@@ -173,6 +182,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.20.0 introduce una nuova interfaccia chiara ispirata alle applicazioni Apple, mantenendo la struttura operativa già nota. La navigazione laterale mostra sempre la fase corrente e quelle disponibili; card, campi, menu, tabelle e tab condividono ora un unico design system. Nella fase 04 sessione sicura e destinazione sono affiancate, così il piano resta visibile anche senza massimizzare la finestra. L'aggiornamento non modifica protocolli, endpoint, contenuto dei piani o conferme.
 
 La versione 0.19.2 ottimizza l'elaborazione dei lotti estesi senza modificare il flusso operativo. Destinazioni, duplicati e stati di recupero vengono indicizzati in memoria, la revisione riconosce i campi con una sola scansione per record e la verifica d'integrità associa i candidati in tempo costante, interrompendo la lettura del documento quando tutti quelli selezionati sono stati ricostruiti. La creazione iniziale del journal scrive i manifesti già validati a blocchi, evitando una seconda copia contigua dell'intero registro. Restano invariati hash prima e dopo la lettura, limiti in byte, validazione canonica, dry-run, conferme e controlli remoti.
 
