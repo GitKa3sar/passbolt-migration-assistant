@@ -99,6 +99,49 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertFalse(result["secrets_serialized"])
         self.assertNotIn(self.secret, json.dumps(result))
 
+    def test_integrity_stops_parsing_after_all_selected_candidates_are_found(self) -> None:
+        from passbolt_review import _records_for_file as real_records_for_file
+
+        self.source.write_text(
+            "Titolo: Primo accesso\n"
+            "Utente: primo-utente\n"
+            "Password: primo-segreto\n\n"
+            "Titolo: Secondo accesso\n"
+            "Utente: secondo-utente\n"
+            "Password: secondo-segreto\n",
+            encoding="utf-8",
+        )
+        review = analyze_files(self.root, ["Cliente Alfa/portale.txt"])
+        first = asdict(review.candidates[0])
+        request = {
+            key: first[key]
+            for key in (
+                "candidate_id",
+                "source_relative_path",
+                "source_sha256",
+                "client",
+                "title",
+                "username",
+                "uri",
+            )
+        }
+        request["source_at_root"] = False
+
+        def guarded_records(
+            path: Path, extension: str, *, file_password: str | None = None
+        ):
+            iterator = iter(
+                real_records_for_file(path, extension, file_password=file_password)
+            )
+            yield next(iterator)
+            raise AssertionError("Il parser ha proseguito oltre i candidati richiesti")
+
+        with mock.patch("passbolt_import._records_for_file", side_effect=guarded_records):
+            result = verify_integrity(self.root, [request])
+
+        self.assertEqual(result["verified_candidate_count"], 1)
+        self.assertEqual(result["candidate_ids"], [request["candidate_id"]])
+
     def test_candidate_selection_exceeds_previous_batch_cap(self) -> None:
         requests = []
         for index in range(64):
@@ -110,6 +153,39 @@ class ImportPreparationTests(unittest.TestCase):
 
         self.assertEqual(len(selected), 64)
         self.assertEqual(selected[-1].candidate_id, "000000000000003f")
+
+    def test_integrity_revalidates_a_large_single_file_batch(self) -> None:
+        source = self.root / "Cliente Alfa" / "lotto-indicizzato.csv"
+        rows = ["nome,username,password,url"]
+        rows.extend(
+            f"Accesso {index},utente-{index},segreto-{index},https://host-{index}.test"
+            for index in range(512)
+        )
+        source.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        review = analyze_files(self.root, ["Cliente Alfa/lotto-indicizzato.csv"])
+        requests = []
+        for reviewed in review.candidates:
+            candidate = asdict(reviewed)
+            request = {
+                key: candidate[key]
+                for key in (
+                    "candidate_id",
+                    "source_relative_path",
+                    "source_sha256",
+                    "client",
+                    "title",
+                    "username",
+                    "uri",
+                )
+            }
+            request["source_at_root"] = False
+            requests.append(request)
+
+        result = verify_integrity(self.root, requests)
+
+        self.assertEqual(result["verified_candidate_count"], 512)
+        self.assertEqual(result["verified_source_count"], 1)
+        self.assertEqual(len(result["candidate_ids"]), 512)
 
     def test_invalid_progress_terminates_bridge_before_a_final_response(self) -> None:
         progress = {

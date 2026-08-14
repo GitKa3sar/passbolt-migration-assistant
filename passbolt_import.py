@@ -64,7 +64,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.19.1"
+APP_VERSION = "0.19.2"
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 64 * 1024 * 1024
 MAX_BRIDGE_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -244,6 +244,8 @@ def _extract_resources_impl(
 
     extracted: dict[str, dict[str, str]] = {}
     for supplied_path, wanted in by_path.items():
+        wanted_by_id = {candidate.candidate_id: candidate for candidate in wanted}
+        remaining_ids = set(wanted_by_id)
         try:
             path, relative_path = _safe_selected_path(root_path, supplied_path)
             if path.stat().st_size > MAX_FILE_BYTES:
@@ -274,62 +276,68 @@ def _extract_resources_impl(
             raise ImportPreparationError(
                 "Lo stato di protezione del file Excel non corrisponde più alla revisione."
             )
-        wanted_ids = {candidate.candidate_id for candidate in wanted}
         try:
-            for location, record in _records_for_file(
+            records = _records_for_file(
                 path,
                 extension,
                 file_password=file_passwords.get(relative_path),
-            ):
-                candidate = _make_candidate(
-                    record,
-                    relative_path=relative_path,
-                    source_hash=current_hash,
-                    client=client,
-                    location=location,
-                    source_password_required=source_password_required,
-                )
-                if candidate is None or candidate.candidate_id not in wanted_ids:
-                    continue
-                request = next(
-                    item for item in wanted if item.candidate_id == candidate.candidate_id
-                )
-                if (
-                    (candidate.status != "ready" and not request.password_overridden)
-                    or candidate.client != request.reviewed_client
-                    or source_at_root != request.reviewed_source_at_root
-                    or candidate.title != request.reviewed_title
-                    or candidate.username != request.reviewed_username
-                    or candidate.uri != request.reviewed_uri
-                    or candidate.source_password_required != request.source_password_required
-                ):
-                    raise ImportPreparationError(
-                        "I metadati di un candidato non corrispondono più alla revisione."
+            )
+            try:
+                for location, record in records:
+                    candidate = _make_candidate(
+                        record,
+                        relative_path=relative_path,
+                        source_hash=current_hash,
+                        client=client,
+                        location=location,
+                        source_password_required=source_password_required,
                     )
-                resource = {
-                    "candidate_id": candidate.candidate_id,
-                    "title": request.title,
-                    "username": request.username,
-                    "uri": request.uri,
-                }
-                if include_secrets:
-                    if request.password_overridden:
-                        secret = overrides[request.candidate_id]
-                    else:
-                        secret_found, secret = _find_field(
-                            record, SECRET_KEYS, allow_prefix=True
-                        )
-                        if not secret_found or not secret:
-                            raise ImportPreparationError(
-                                "La password di un candidato pronto non è più disponibile."
-                            )
-                    if len(secret) > MAX_SECRET_CHARACTERS:
+                    if candidate is None or candidate.candidate_id not in remaining_ids:
+                        continue
+                    request = wanted_by_id[candidate.candidate_id]
+                    if (
+                        (candidate.status != "ready" and not request.password_overridden)
+                        or candidate.client != request.reviewed_client
+                        or source_at_root != request.reviewed_source_at_root
+                        or candidate.title != request.reviewed_title
+                        or candidate.username != request.reviewed_username
+                        or candidate.uri != request.reviewed_uri
+                        or candidate.source_password_required != request.source_password_required
+                    ):
                         raise ImportPreparationError(
-                            "La password di un candidato supera il limite di 65.536 caratteri."
+                            "I metadati di un candidato non corrispondono più alla revisione."
                         )
-                    resource["password"] = secret
-                    resource["description"] = ""
-                extracted[candidate.candidate_id] = resource
+                    resource = {
+                        "candidate_id": candidate.candidate_id,
+                        "title": request.title,
+                        "username": request.username,
+                        "uri": request.uri,
+                    }
+                    if include_secrets:
+                        if request.password_overridden:
+                            secret = overrides[request.candidate_id]
+                        else:
+                            secret_found, secret = _find_field(
+                                record, SECRET_KEYS, allow_prefix=True
+                            )
+                            if not secret_found or not secret:
+                                raise ImportPreparationError(
+                                    "La password di un candidato pronto non è più disponibile."
+                                )
+                        if len(secret) > MAX_SECRET_CHARACTERS:
+                            raise ImportPreparationError(
+                                "La password di un candidato supera il limite di 65.536 caratteri."
+                            )
+                        resource["password"] = secret
+                        resource["description"] = ""
+                    extracted[candidate.candidate_id] = resource
+                    remaining_ids.remove(candidate.candidate_id)
+                    if not remaining_ids:
+                        break
+            finally:
+                close_records = getattr(records, "close", None)
+                if callable(close_records):
+                    close_records()
         except ImportPreparationError:
             raise
         except (OSError, ReviewError, ValueError) as exc:
@@ -2144,6 +2152,8 @@ def main() -> int:
                 "result": {
                     "version": APP_VERSION,
                     "unlimited_candidate_selection": True,
+                    "indexed_candidate_revalidation": True,
+                    "early_parser_stop": True,
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
                     "reconciliation_progress_protocol": True,

@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.19.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.19.2 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -173,6 +173,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.19.2 ottimizza l'elaborazione dei lotti estesi senza modificare il flusso operativo. Destinazioni, duplicati e stati di recupero vengono indicizzati in memoria, la revisione riconosce i campi con una sola scansione per record e la verifica d'integrità associa i candidati in tempo costante, interrompendo la lettura del documento quando tutti quelli selezionati sono stati ricostruiti. La creazione iniziale del journal scrive i manifesti già validati a blocchi, evitando una seconda copia contigua dell'intero registro. Restano invariati hash prima e dopo la lettura, limiti in byte, validazione canonica, dry-run, conferme e controlli remoti.
 
 La versione 0.19.1 rimuove i tetti numerici dell'app sul numero di file revisionabili e di credenziali selezionabili o importabili in un lotto. Restano i limiti di sicurezza per singolo documento, le dimensioni massime dei messaggi locali e i vincoli della memoria disponibile e dell'istanza Passbolt. La versione supporta MFA TOTP; gli altri provider MFA sono intenzionalmente fuori dallo scope corrente della roadmap. Gli editor ACL usano utenti e gruppi già presenti in Passbolt e non modificano la composizione dei gruppi. Sono supportate aggiunte, aumenti, riduzioni e revoche di permessi, ma non la cancellazione, lo spostamento o la sovrascrittura degli oggetti Passbolt. L'impatto effettivo di un singolo piano ACL è limitato a 2.000 utenti. I file Excel cifrati sono supportati nel formato moderno `.xlsx`; i file legacy `.xls` devono essere convertiti prima della revisione.
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 APP_TITLE = "Passbolt Migration Assistant"
-APP_VERSION = "0.19.1"
+APP_VERSION = "0.19.2"
 ROOT_CLIENT_LABEL = "(radice)"
 
 SUPPORTED_EXTENSIONS = {
@@ -93,6 +93,7 @@ def build_inventory(root: str | Path) -> InventoryResult:
     by_client: Counter[str] = Counter()
     items: list[InventoryItem] = []
     ignored_files = 0
+    supported_bytes = 0
     access_errors: list[str] = []
     skipped_directory_links: list[str] = []
 
@@ -155,6 +156,7 @@ def build_inventory(root: str | Path) -> InventoryResult:
             by_extension[extension] += 1
             by_category[category] += 1
             by_client[client] += 1
+            supported_bytes += size_bytes
             items.append(
                 InventoryItem(
                     client=client,
@@ -175,7 +177,7 @@ def build_inventory(root: str | Path) -> InventoryResult:
         client_folders=len(client_folders),
         supported_files=len(items),
         ignored_files=ignored_files,
-        supported_bytes=sum(item.size_bytes for item in items),
+        supported_bytes=supported_bytes,
         by_extension=dict(sorted(by_extension.items())),
         by_category=dict(sorted(by_category.items())),
         by_client=dict(sorted(by_client.items(), key=lambda pair: pair[0].casefold())),

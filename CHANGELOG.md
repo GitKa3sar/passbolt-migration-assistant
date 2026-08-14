@@ -2,6 +2,23 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.2 - 2026-08-14
+
+### Changed
+
+- indicizzate destinazioni, cartelle, duplicati e classificazioni di recupero per evitare scansioni quadratiche nei lotti estesi;
+- ridotta a una sola scansione per record la ricerca dei campi titolo, username, password e URL/host;
+- indicizzati i candidati durante la nuova verifica dei sorgenti e arrestato il parser appena tutti i candidati richiesti sono stati ricostruiti;
+- scritti separatamente i blocchi già validati del manifesto iniziale del journal, evitando una seconda copia contigua dell'intero registro;
+- mantenuto incrementalmente il totale dei byte supportati durante l'inventario;
+- aggiunti test di scala per 512 candidati Python, 1.025 candidati Node e 600 prove tecniche nel journal.
+
+### Security
+
+- conservate la doppia verifica SHA-256 dei documenti, la corrispondenza completa dei metadati revisionati e l'estrazione dei segreti soltanto al momento dell'importazione;
+- mantenuti invariati validazione canonica, limiti dimensionali in byte, catena SHA-256, dry-run, conferme esplicite e ricontrolli autenticati dello stato remoto;
+- rimosso il solo tetto numerico interno di 10.000 operazioni lette nel recovery, continuando a vincolare il payload locale a 64 MiB e il journal a 256 MiB.
+
 ## 0.19.1 - 2026-08-13
 
 ### Changed

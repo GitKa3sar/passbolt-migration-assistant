@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.19.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.19.2` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Ottimizzazioni dei lotti estesi 0.19.2
+
+Il bridge Node costruisce indici in memoria per ID e percorso delle cartelle, identità normalizzata delle credenziali, destinazioni del lotto e UUID delle operazioni di recupero. La classificazione conserva l'ordine e le precedenze precedenti (`server_destination`, `batch`, `server_elsewhere`), ma evita di rileggere integralmente cataloghi e piano per ogni candidato. Anche la riconciliazione riusa mappe e insiemi per risorse, operazioni e azioni già verificate.
+
+Il backend Python indicizza per `candidate_id` le richieste relative a ciascun sorgente. Ogni candidato ricostruito continua a essere confrontato con client, posizione, titolo, username, URL/host, stato di protezione e hash osservati in revisione; quando l'ultimo candidato richiesto è stato trovato, il generatore del parser viene chiuso. La revisione normalizza ogni chiave del record una sola volta e mantiene la stessa regola del primo campo corrispondente.
+
+Il journal valida ancora l'intero flusso e la dimensione complessiva prima della creazione, quindi scrive header e blocchi del manifesto separatamente con un'unica sincronizzazione durevole. Non viene costruita una seconda stringa binaria grande quanto tutto il registro. Il limite storico di 10.000 operazioni nel solo oggetto recovery è stato rimosso; restano i limiti di 64 MiB per i messaggi locali e 256 MiB per il journal, oltre ai controlli canonici, alla catena SHA-256 e alle verifiche remote.
 
 ### Matrice di integrazione reale v4/v5 0.19.0
 

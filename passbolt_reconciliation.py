@@ -1602,8 +1602,9 @@ class ReconciliationJournal:
                     )
                 )
         _validate_event_flow(records)
-        encoded_records = b"".join(_encoded_record(record) for record in records)
-        if len(encoded_records) > MAX_JOURNAL_BYTES:
+        encoded_records = tuple(_encoded_record(record) for record in records)
+        encoded_size = sum(len(encoded) for encoded in encoded_records)
+        if encoded_size > MAX_JOURNAL_BYTES:
             raise ReconciliationJournalError("Registro troppo grande.")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_BINARY"):
@@ -1611,7 +1612,8 @@ class ReconciliationJournal:
         try:
             descriptor = os.open(path, flags, 0o600)
             try:
-                _write_all(descriptor, encoded_records)
+                for encoded in encoded_records:
+                    _write_all(descriptor, encoded)
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)

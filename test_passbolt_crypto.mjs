@@ -8,6 +8,7 @@ import {
   PersistentImportSession,
   analyzeCapabilities,
   authenticate,
+  buildCandidatePlan,
   buildFolderPayload,
   buildResourcePayload,
   classifyRecovery,
@@ -1012,6 +1013,30 @@ async function main() {
     const extendedCapabilities = await readCapabilities(session, user, extendedCandidates);
     assert.equal(extendedCapabilities.create_count, 64);
     assert.equal(extendedCapabilities.duplicate_count, 0);
+
+    const scaleCandidates = Array.from({ length: 1024 }, (_, index) => ({
+      candidate_id: `candidate-scale-${index}`,
+      title: `Accesso indicizzato ${index}`,
+      username: `indexed-user-${index}`,
+      uri: `https://indexed-${index}.example.test`,
+    }));
+    scaleCandidates.push({
+      ...scaleCandidates[700],
+      candidate_id: 'candidate-scale-batch-duplicate',
+    });
+    const scaleExistingResources = scaleCandidates.slice(0, 512).map((candidate, index) => ({
+      id: `existing-scale-${index}`,
+      name: candidate.title,
+      username: candidate.username,
+      uri: candidate.uri,
+      folder_parent_id: null,
+    }));
+    const scalePlan = buildCandidatePlan(scaleCandidates, scaleExistingResources, true);
+    assert.equal(scalePlan.length, 1025);
+    assert.equal(scalePlan.filter((item) => item.duplicate_kind === 'server_destination').length, 512);
+    assert.equal(scalePlan.filter((item) => item.action === 'create').length, 512);
+    assert.equal(scalePlan.at(-1).duplicate_kind, 'batch');
+    assert.equal(scalePlan.at(-1).duplicate_candidate_id, 'candidate-scale-700');
 
     const encryptedSecret = await encryptSecret(
       'mock-resource-password',
@@ -2534,6 +2559,7 @@ async function main() {
         mfa_reused_without_reprompt: true,
         csrf: true,
         unlimited_candidate_selection: true,
+        indexed_large_batch_planning: true,
         duplicate_detection: true,
         v4_resource_creation: true,
         v5_shared_metadata_key_verified: true,

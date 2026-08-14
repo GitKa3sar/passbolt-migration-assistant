@@ -22,6 +22,7 @@ from passbolt_reconciliation import (
     default_journal_root,
     hash_user_identifier,
     read_journal,
+    _write_all,
 )
 
 
@@ -99,19 +100,23 @@ class ReconciliationJournalTests(unittest.TestCase):
             CandidateProof(f"{index:016x}", f"{index:064x}")
             for index in range(600)
         )
-        journal = ReconciliationJournal.create(
-            app_version="0.19.1",
-            server_origin="https://passbolt.example.test/",
-            server_fingerprint="0123456789ABCDEF0123456789ABCDEF01234567",
-            user_id_hash=hash_user_identifier(self.user_id),
-            plan_digest="a" * 64,
-            resource_format="v5",
-            folder_format="v5",
-            destination_mode="root",
-            destination_folder_id=None,
-            candidates=candidates,
-            root=self.root,
-        )
+        with mock.patch(
+            "passbolt_reconciliation._write_all", wraps=_write_all
+        ) as write_all:
+            journal = ReconciliationJournal.create(
+                app_version="0.19.1",
+                server_origin="https://passbolt.example.test/",
+                server_fingerprint="0123456789ABCDEF0123456789ABCDEF01234567",
+                user_id_hash=hash_user_identifier(self.user_id),
+                plan_digest="a" * 64,
+                resource_format="v5",
+                folder_format="v5",
+                destination_mode="root",
+                destination_folder_id=None,
+                candidates=candidates,
+                root=self.root,
+            )
+        self.assertEqual(write_all.call_count, 4)
 
         snapshot = read_journal(journal.path)
         self.assertNotIn("candidates", snapshot.events[0]["payload"])

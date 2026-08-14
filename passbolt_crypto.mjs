@@ -25,7 +25,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.19.1';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.19.2';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -1350,17 +1350,21 @@ async function decryptExistingFolders(entries, user, keyMaterial, baseUrl, share
 function buildFolderCatalog(existingFolders) {
   const byId = new Map(existingFolders.map((folder) => [folder.id, folder]));
   const pathCache = new Map();
-  const resolvePath = (folder, ancestors = new Set()) => {
+  const resolving = new Set();
+  const resolvePath = (folder) => {
     if (pathCache.has(folder.id)) return pathCache.get(folder.id);
-    assert(!ancestors.has(folder.id), 'FOLDER_TREE_INVALID', 'La struttura delle cartelle Passbolt contiene un ciclo non valido.');
-    const nextAncestors = new Set(ancestors);
-    nextAncestors.add(folder.id);
-    const parent = folder.folder_parent_id ? byId.get(folder.folder_parent_id) : null;
-    const path = parent
-      ? `${resolvePath(parent, nextAncestors)} / ${folder.name}`
-      : folder.name;
-    pathCache.set(folder.id, path);
-    return path;
+    assert(!resolving.has(folder.id), 'FOLDER_TREE_INVALID', 'La struttura delle cartelle Passbolt contiene un ciclo non valido.');
+    resolving.add(folder.id);
+    try {
+      const parent = folder.folder_parent_id ? byId.get(folder.folder_parent_id) : null;
+      const path = parent
+        ? `${resolvePath(parent)} / ${folder.name}`
+        : folder.name;
+      pathCache.set(folder.id, path);
+      return path;
+    } finally {
+      resolving.delete(folder.id);
+    }
   };
   return existingFolders
     .map((folder) => ({ ...folder, path: resolvePath(folder) }))
@@ -1401,6 +1405,28 @@ function planDestinations(candidates, existingFolders, existingResources, destin
     };
   }
 
+  const foldersById = new Map();
+  const foldersByParentAndName = new Map();
+  const folderParentIds = new Set();
+  for (const folder of existingFolders) {
+    if (!foldersById.has(folder.id)) foldersById.set(folder.id, folder);
+    const childKey = JSON.stringify([
+      folder.folder_parent_id ?? null,
+      normalizeComparable(folder.name),
+    ]);
+    const siblings = foldersByParentAndName.get(childKey) ?? [];
+    siblings.push(folder);
+    foldersByParentAndName.set(childKey, siblings);
+    if (folder.folder_parent_id !== null && folder.folder_parent_id !== undefined) {
+      folderParentIds.add(folder.folder_parent_id);
+    }
+  }
+  const resourceFolderIds = new Set(
+    existingResources
+      .map((resource) => resource.folder_parent_id)
+      .filter((folderId) => folderId !== null && folderId !== undefined),
+  );
+
   if (destinationMode === 'client_mapping') {
     const mappingByClient = clientDestinationMapping?.byClient ?? new Map();
     const folderPlans = new Map();
@@ -1430,7 +1456,7 @@ function planDestinations(candidates, existingFolders, existingResources, destin
         });
         continue;
       }
-      const folder = existingFolders.find((entry) => entry.id === mapping.folder_id) ?? null;
+      const folder = foldersById.get(mapping.folder_id) ?? null;
       if (!folder) {
         if (!failure) failure = `La cartella configurata per il cliente ${candidate.client} non e piu disponibile.`;
         destinations.set(candidate.candidate_id, {
@@ -1473,7 +1499,7 @@ function planDestinations(candidates, existingFolders, existingResources, destin
   }
 
   const selectedFolder = destinationFolderId
-    ? existingFolders.find((folder) => folder.id === destinationFolderId) ?? null
+    ? foldersById.get(destinationFolderId) ?? null
     : null;
   if (destinationMode === 'direct_folder') {
     let failure = null;
@@ -1523,12 +1549,12 @@ function planDestinations(candidates, existingFolders, existingResources, destin
   const parentPath = selectedFolder?.path ?? null;
   for (const candidate of candidates) {
     if (candidate.source_at_root) continue;
-    const destinationKey = `client:${parentId ?? 'root'}:${normalizeComparable(candidate.client)}`;
+    const normalizedClient = normalizeComparable(candidate.client);
+    const destinationKey = `client:${parentId ?? 'root'}:${normalizedClient}`;
     if (folderPlans.has(destinationKey)) continue;
-    const matches = existingFolders.filter((folder) => (
-      folder.folder_parent_id === parentId
-      && normalizeComparable(folder.name) === normalizeComparable(candidate.client)
-    ));
+    const matches = foldersByParentAndName.get(
+      JSON.stringify([parentId, normalizedClient]),
+    ) ?? [];
     if (matches.length > 1) {
       const matchingIds = matches.map((folder) => folder.id).join(', ');
       failure = `Esistono ${matches.length} cartelle chiamate ${candidate.client} nello stesso contenitore Passbolt (ID: ${matchingIds}). La destinazione non e univoca: eliminare in Passbolt le copie personali vuote in eccesso, lasciarne una sola e ripetere il dry-run.`;
@@ -1536,8 +1562,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
     const match = matches.length === 1 ? matches[0] : null;
     let reconcilePersonalFolder = false;
     if (match && selectedFolder?.shared && !match.shared) {
-      const containsResources = existingResources.some((resource) => resource.folder_parent_id === match.id);
-      const containsFolders = existingFolders.some((folder) => folder.folder_parent_id === match.id);
+      const containsResources = resourceFolderIds.has(match.id);
+      const containsFolders = folderParentIds.has(match.id);
       const hasSoleVerifiedOwner = match.personal === true
         && match.permission_type === 15
         && match.raw_permission_count === 1
@@ -1601,8 +1627,33 @@ function planDestinations(candidates, existingFolders, existingResources, destin
   return { folders: [...folderPlans.values()], destinations, failure };
 }
 
+function credentialIdentityKey(title, username, uri) {
+  return JSON.stringify([
+    normalizeComparable(title),
+    normalizeComparable(username),
+    normalizeComparable(uri),
+  ]);
+}
+
+function credentialLocationKey(title, username, uri, folderParentId) {
+  return JSON.stringify([
+    credentialIdentityKey(title, username, uri),
+    folderParentId ?? null,
+  ]);
+}
+
 function buildCandidatePlan(candidates, existingResources, duplicateDetectionAvailable, destinations = null) {
   const planned = [];
+  const existingByIdentity = new Map();
+  if (duplicateDetectionAvailable) {
+    for (const resource of existingResources) {
+      const identityKey = credentialIdentityKey(resource.name, resource.username, resource.uri);
+      const matches = existingByIdentity.get(identityKey) ?? [];
+      matches.push(resource);
+      existingByIdentity.set(identityKey, matches);
+    }
+  }
+  const createdByIdentityAndDestination = new Map();
   for (const candidate of candidates) {
     const destination = destinations?.get(candidate.candidate_id) ?? {
       destination_key: 'root',
@@ -1611,36 +1662,28 @@ function buildCandidatePlan(candidates, existingResources, duplicateDetectionAva
       folder_name: null,
       folder_path: 'Radice Passbolt',
     };
-    const exactMatches = duplicateDetectionAvailable
-      ? existingResources.filter((resource) => (
-        normalizeComparable(resource.name) === normalizeComparable(candidate.title)
-        && normalizeComparable(resource.username) === normalizeComparable(candidate.username)
-        && normalizeComparable(resource.uri) === normalizeComparable(candidate.uri)
-      ))
-      : [];
+    const identityKey = credentialIdentityKey(candidate.title, candidate.username, candidate.uri);
+    const exactMatches = existingByIdentity.get(identityKey) ?? [];
     const inDestination = exactMatches.find((resource) => (
       destination.folder_action === 'root'
         ? resource.folder_parent_id === null || resource.folder_parent_id === undefined
-        : ['reuse', 'repair_share'].includes(destination.folder_action) && resource.folder_parent_id === destination.folder_id
+        : (destination.folder_action === 'reuse' || destination.folder_action === 'repair_share')
+          && resource.folder_parent_id === destination.folder_id
     ));
     const elsewhere = !inDestination ? exactMatches[0] : null;
-    const batchMatch = planned.find((item) => (
-      item.action === 'create'
-      &&
-      normalizeComparable(item.title) === normalizeComparable(candidate.title)
-      && normalizeComparable(item.username) === normalizeComparable(candidate.username)
-      && normalizeComparable(item.uri) === normalizeComparable(candidate.uri)
-      && item.destination_key === destination.destination_key
-    ));
+    const batchKey = JSON.stringify([identityKey, destination.destination_key]);
+    const batchMatch = createdByIdentityAndDestination.get(batchKey) ?? null;
     const action = inDestination || batchMatch ? 'duplicate' : elsewhere ? 'blocked' : 'create';
-    planned.push({
+    const plannedCandidate = {
       ...candidate,
       ...destination,
       action,
       duplicate_kind: inDestination ? 'server_destination' : batchMatch ? 'batch' : elsewhere ? 'server_elsewhere' : null,
       duplicate_resource_id: inDestination?.id ?? elsewhere?.id ?? null,
       duplicate_candidate_id: !inDestination && batchMatch ? batchMatch.candidate_id : null,
-    });
+    };
+    planned.push(plannedCandidate);
+    if (action === 'create') createdByIdentityAndDestination.set(batchKey, plannedCandidate);
   }
   return planned;
 }
@@ -2249,7 +2292,7 @@ function normalizeRecoveryState(value, candidates) {
     const candidateId = String(proof.candidate_id ?? '');
     assert(suppliedProofs.get(candidateId) === String(proof.source_sha256 ?? ''), 'RECOVERY_CANDIDATES_MISMATCH', 'Le prove dei candidati non corrispondono al lotto.');
   }
-  assert(Array.isArray(value.operations) && value.operations.length <= 10_000, 'RECOVERY_STATE_INVALID', 'Le operazioni del registro non sono valide.');
+  assert(Array.isArray(value.operations), 'RECOVERY_STATE_INVALID', 'Le operazioni del registro non sono valide.');
   const operationIds = new Set();
   for (const operation of value.operations) {
     assert(operation && typeof operation === 'object', 'RECOVERY_STATE_INVALID', 'Un’operazione del registro non e valida.');
@@ -2281,10 +2324,6 @@ function recordedSuccess(operation) {
 function confirmedFailure(operation) {
   return operation.recorded_outcome?.event_type === 'operation_failed'
     && operation.recorded_outcome?.outcome === 'confirmed';
-}
-
-function recoveryValueAction(recovery, operationId) {
-  return recovery.operations.find((operation) => operation.operation_id === operationId)?.action ?? null;
 }
 
 function recoveryConflict(operation, code) {
@@ -2331,6 +2370,21 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
   const candidatesById = new Map(capabilities.candidates.map((candidate) => [candidate.candidate_id, candidate]));
   const resourcesById = new Map(runtime.existingResources.map((resource) => [resource.id, resource]));
   const foldersById = new Map(runtime.existingFolders.map((folder) => [folder.id, folder]));
+  const operationsById = new Map(
+    recovery.operations.map((operation) => [operation.operation_id, operation]),
+  );
+  const resourcesByIdentityAndFolder = new Map();
+  for (const resource of runtime.existingResources) {
+    const key = credentialLocationKey(
+      resource.name,
+      resource.username,
+      resource.uri,
+      resource.folder_parent_id,
+    );
+    const matches = resourcesByIdentityAndFolder.get(key) ?? [];
+    matches.push(resource);
+    resourcesByIdentityAndFolder.set(key, matches);
+  }
   const foldersByDestinationHash = new Map();
   for (const folder of runtime.destinationFolders) {
     const key = technicalDigest(folder.destination_key);
@@ -2357,14 +2411,14 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
         conflicts.push(recoveryConflict(operation, 'RECOVERY_INTENDED_PERMISSION_CHANGED'));
         continue;
       }
-      const exactDestinationResources = runtime.existingResources.filter((resource) => (
-        normalizeComparable(resource.name) === normalizeComparable(planned.title)
-        && normalizeComparable(resource.username) === normalizeComparable(planned.username)
-        && normalizeComparable(resource.uri) === normalizeComparable(planned.uri)
-        && (planned.folder_action === 'root'
-          ? resource.folder_parent_id === null || resource.folder_parent_id === undefined
-          : resource.folder_parent_id === planned.folder_id)
-      ));
+      const exactDestinationResources = resourcesByIdentityAndFolder.get(
+        credentialLocationKey(
+          planned.title,
+          planned.username,
+          planned.uri,
+          planned.folder_action === 'root' ? null : planned.folder_id,
+        ),
+      ) ?? [];
       if (exactDestinationResources.length > 1) {
         conflicts.push(recoveryConflict(operation, 'RECOVERY_RESOURCE_DESTINATION_AMBIGUOUS'));
         continue;
@@ -2439,8 +2493,9 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
   const createOperations = recovery.operations.filter((operation) => operation.action === 'create_resource');
   const shareCandidateIds = new Set(recovery.operations.filter((operation) => operation.action === 'share_resource').map((operation) => operation.candidate_id));
   const repairResourceCandidateIds = classifications
-    .filter((item) => item.resolution === 'not_applied' && recoveryValueAction(recovery, item.operation_id) === 'share_resource')
+    .filter((item) => item.resolution === 'not_applied' && operationsById.get(item.operation_id)?.action === 'share_resource')
     .map((item) => item.candidate_id);
+  const repairResourceCandidateIdSet = new Set(repairResourceCandidateIds);
   for (const operation of createOperations) {
     const candidate = candidatesById.get(operation.candidate_id);
     if (!candidate?.shared || candidate.action !== 'duplicate' || candidate.duplicate_kind !== 'server_destination' || shareCandidateIds.has(operation.candidate_id)) continue;
@@ -2456,7 +2511,10 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     } else if (permissionMaskDigest(remote.permissions) === operation.permission_mask_hash) {
       continue;
     } else if (isSoleOwnerMask(remote.permissions, currentUserId)) {
-      if (!repairResourceCandidateIds.includes(operation.candidate_id)) repairResourceCandidateIds.push(operation.candidate_id);
+      if (!repairResourceCandidateIdSet.has(operation.candidate_id)) {
+        repairResourceCandidateIds.push(operation.candidate_id);
+        repairResourceCandidateIdSet.add(operation.candidate_id);
+      }
     } else {
       conflicts.push(recoveryConflict(operation, 'RECOVERY_PERMISSION_STATE_AMBIGUOUS'));
     }
@@ -2465,8 +2523,9 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
   const createFolderOperations = recovery.operations.filter((operation) => operation.action === 'create_folder' && operation.permission_mask_hash);
   const explicitFolderShares = new Set(recovery.operations.filter((operation) => ['share_folder', 'reconcile_folder'].includes(operation.action)).map((operation) => operation.destination_key_hash));
   const repairFolderDestinationHashes = classifications
-    .filter((item) => item.resolution === 'not_applied' && ['share_folder', 'reconcile_folder'].includes(recoveryValueAction(recovery, item.operation_id)))
+    .filter((item) => item.resolution === 'not_applied' && ['share_folder', 'reconcile_folder'].includes(operationsById.get(item.operation_id)?.action))
     .map((item) => item.destination_key_hash);
+  const repairFolderDestinationHashSet = new Set(repairFolderDestinationHashes);
   for (const operation of createFolderOperations) {
     if (explicitFolderShares.has(operation.destination_key_hash)) continue;
     const planned = foldersByDestinationHash.get(operation.destination_key_hash);
@@ -2482,7 +2541,10 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     }
     if (permissionMaskDigest(remote.permissions) === operation.permission_mask_hash) continue;
     if (isSoleOwnerMask(remote.permissions, currentUserId) && planned.action === 'repair_share') {
-      repairFolderDestinationHashes.push(operation.destination_key_hash);
+      if (!repairFolderDestinationHashSet.has(operation.destination_key_hash)) {
+        repairFolderDestinationHashes.push(operation.destination_key_hash);
+        repairFolderDestinationHashSet.add(operation.destination_key_hash);
+      }
     } else {
       conflicts.push(recoveryConflict(operation, 'RECOVERY_PERMISSION_STATE_AMBIGUOUS'));
     }
@@ -2493,7 +2555,7 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
   const folderRetryKeys = new Set(capabilities.candidates.filter((candidate) => candidate.action === 'create').map((candidate) => candidate.destination_key));
   const retryFolders = runtime.destinationFolders.filter((folder) => (
     (folder.action === 'create' && folderRetryKeys.has(folder.destination_key))
-    || (folder.action === 'repair_share' && (folderRetryKeys.has(folder.destination_key) || repairFolderDestinationHashes.includes(technicalDigest(folder.destination_key))))
+    || (folder.action === 'repair_share' && (folderRetryKeys.has(folder.destination_key) || repairFolderDestinationHashSet.has(technicalDigest(folder.destination_key))))
   ));
   const verificationDigest = digestPlan(classifications.map(({ recovery_id: ignored, ...item }) => item));
   const recoveryPlanDigest = digestPlan({
@@ -4430,12 +4492,23 @@ class PersistentImportSession {
     assert(plan.recoveryPlanDigest === saved.recoveryPlanDigest, 'RECOVERY_PLAN_CHANGED', 'Lo stato remoto e cambiato dopo la verifica; ripetere il controllo del lotto.');
     assert(canonicalJson(plan.resourceCandidateIds) === canonicalJson(saved.resourceCandidateIds), 'RECOVERY_PLAN_CHANGED', 'Le risorse richieste dal recupero sono cambiate.');
     assert(String(input.confirmation ?? '') === `RECUPERA ${plan.retryActionCount}`, 'CONFIRMATION_MISMATCH', `Conferma richiesta: RECUPERA ${plan.retryActionCount}`);
-    const recoveryCandidates = capabilities.candidates.filter((candidate) => plan.resourceCandidateIds.includes(candidate.candidate_id));
+    const resourceCandidateIdSet = new Set(plan.resourceCandidateIds);
+    const createCandidateIdSet = new Set(plan.createCandidateIds);
+    const recoveryCandidates = capabilities.candidates.filter((candidate) => resourceCandidateIdSet.has(candidate.candidate_id));
     const resources = importResources(input.resources, recoveryCandidates);
     const resourceMap = new Map(resources.map((resource) => [resource.candidate_id, resource]));
+    const plannedCandidatesById = new Map(
+      capabilities.candidates.map((candidate) => [candidate.candidate_id, candidate]),
+    );
+    const existingResourcesById = new Map(
+      runtime.existingResources.map((resource) => [resource.id, resource]),
+    );
+    const recoveryOperationsById = new Map(
+      plan.recovery.operations.map((operation) => [operation.operation_id, operation]),
+    );
     const progress = async (eventType, payload) => this.emitProgress(reconciliationBatchId, eventType, payload);
     try {
-      const createPlan = capabilities.candidates.filter((candidate) => plan.createCandidateIds.includes(candidate.candidate_id));
+      const createPlan = capabilities.candidates.filter((candidate) => createCandidateIdSet.has(candidate.candidate_id));
       const recoveryRuntime = { ...runtime, folders: plan.retryFolders };
       const { created, createdFolders, reconciledFolders } = await createPlannedContent(
         state.session,
@@ -4447,9 +4520,9 @@ class PersistentImportSession {
       );
       const repairedResources = [];
       for (const candidateId of plan.repairResourceCandidateIds) {
-        const planned = capabilities.candidates.find((candidate) => candidate.candidate_id === candidateId);
+        const planned = plannedCandidatesById.get(candidateId);
         const resource = resourceMap.get(candidateId);
-        const existing = runtime.existingResources.find((entry) => entry.id === planned?.duplicate_resource_id);
+        const existing = existingResourcesById.get(planned?.duplicate_resource_id);
         assert(planned && resource && existing?.permission, 'RECOVERY_RESOURCE_SHARE_UNAVAILABLE', 'La risorsa da riconciliare non espone un permesso proprietario valido.');
         const operationId = randomUUID();
         await progress('operation_intent', {
@@ -4484,9 +4557,18 @@ class PersistentImportSession {
           throw error;
         }
       }
-      const verifiedFolderCreates = plan.classifications.filter((item) => item.resolution === 'remote_success' && recoveryValueAction(plan.recovery, item.operation_id) === 'create_folder').length;
-      const verifiedResourceCreates = plan.classifications.filter((item) => item.resolution === 'remote_success' && recoveryValueAction(plan.recovery, item.operation_id) === 'create_resource').length;
-      const verifiedResourceShares = plan.classifications.filter((item) => item.resolution === 'remote_success' && recoveryValueAction(plan.recovery, item.operation_id) === 'share_resource').length;
+      let verifiedFolderCreates = 0;
+      let verifiedResourceCreates = 0;
+      let verifiedResourceShares = 0;
+      let remoteSuccessCount = 0;
+      for (const classification of plan.classifications) {
+        if (classification.resolution !== 'remote_success') continue;
+        remoteSuccessCount += 1;
+        const action = recoveryOperationsById.get(classification.operation_id)?.action;
+        if (action === 'create_folder') verifiedFolderCreates += 1;
+        else if (action === 'create_resource') verifiedResourceCreates += 1;
+        else if (action === 'share_resource') verifiedResourceShares += 1;
+      }
       await progress('batch_completed', {
         created_folder_count: verifiedFolderCreates + createdFolders.length,
         reconciled_folder_count: reconciledFolders.length,
@@ -4504,7 +4586,7 @@ class PersistentImportSession {
         repaired_resource_count: repairedResources.length,
         created_folder_count: createdFolders.length,
         reconciled_folder_count: reconciledFolders.length,
-        remote_success_count: plan.classifications.filter((item) => item.resolution === 'remote_success').length,
+        remote_success_count: remoteSuccessCount,
         destructive_actions_performed: false,
         complete: true,
       };
@@ -4649,6 +4731,26 @@ async function selfTest() {
     uri: `https://example.test/${index}`,
   })));
   assert(unlimitedCandidateProbe.length === 64, 'SELF_TEST_FAILED', 'La selezione senza limite numerico non e disponibile.');
+  const indexedPlanningCandidates = Array.from({ length: 512 }, (_, index) => ({
+    candidate_id: `indexed-candidate-${index}`,
+    title: `Candidato indicizzato ${index}`,
+    username: `indexed-user-${index}`,
+    uri: `https://indexed-${index}.example.test`,
+  }));
+  const indexedPlanningResources = indexedPlanningCandidates.slice(0, 256).map((candidate, index) => ({
+    id: `indexed-resource-${index}`,
+    name: candidate.title,
+    username: candidate.username,
+    uri: candidate.uri,
+    folder_parent_id: null,
+  }));
+  const indexedPlanningProbe = buildCandidatePlan(
+    indexedPlanningCandidates,
+    indexedPlanningResources,
+    true,
+  );
+  assert(indexedPlanningProbe.filter((item) => item.action === 'duplicate').length === 256, 'SELF_TEST_FAILED', 'La pianificazione indicizzata dei duplicati non e disponibile.');
+  assert(indexedPlanningProbe.filter((item) => item.action === 'create').length === 256, 'SELF_TEST_FAILED', 'La pianificazione indicizzata delle creazioni non e disponibile.');
   const generated = await openpgp.generateKey({
     type: 'ecc',
     curve: 'curve25519',
@@ -4734,6 +4836,7 @@ async function selfTest() {
     official_wrapped_gpgauth_payload_contract: true,
     official_minimal_totp_payload_contract: true,
     unlimited_candidate_selection: true,
+    indexed_large_batch_planning: true,
     passbolt_secret_schema: true,
     passbolt_string_secret_schema: true,
     duplicate_detection: true,

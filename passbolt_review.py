@@ -27,7 +27,7 @@ from typing import Iterable, Iterator, Mapping
 from xml.etree import ElementTree
 
 
-APP_VERSION = "0.19.1"
+APP_VERSION = "0.19.2"
 ROOT_CLIENT_LABEL = "(radice)"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
@@ -197,6 +197,9 @@ URI_KEYS = {
     )
 }
 ALL_CREDENTIAL_KEYS = TITLE_KEYS | USERNAME_KEYS | SECRET_KEYS | URI_KEYS
+USERNAME_PREFIX_KEYS = tuple(alias for alias in USERNAME_KEYS if len(alias) >= 4)
+SECRET_PREFIX_KEYS = tuple(alias for alias in SECRET_KEYS if len(alias) >= 4)
+URI_PREFIX_KEYS = tuple(alias for alias in URI_KEYS if len(alias) >= 4)
 
 
 def _utc_now() -> str:
@@ -211,16 +214,30 @@ def _scalar(value: object) -> str:
     return ""
 
 
-def _matches_field_key(key: object, aliases: set[str], allow_prefix: bool) -> bool:
-    normalized = _normalized_key(key)
+def _matches_normalized_field_key(
+    normalized: str, aliases: set[str], prefix_aliases: tuple[str, ...] = ()
+) -> bool:
     if normalized in aliases:
         return True
+    return normalized.endswith(prefix_aliases) if prefix_aliases else False
+
+
+def _matches_field_key(key: object, aliases: set[str], allow_prefix: bool) -> bool:
+    normalized = _normalized_key(key)
     if not allow_prefix:
-        return False
+        prefix_aliases = ()
+    elif aliases is USERNAME_KEYS:
+        prefix_aliases = USERNAME_PREFIX_KEYS
+    elif aliases is SECRET_KEYS:
+        prefix_aliases = SECRET_PREFIX_KEYS
+    elif aliases is URI_KEYS:
+        prefix_aliases = URI_PREFIX_KEYS
+    else:
+        prefix_aliases = tuple(alias for alias in aliases if len(alias) >= 4)
     # Environment/configuration files commonly use keys such as DB_PASSWORD
     # or PORTAL_USERNAME. Short aliases (for example "ip") are kept exact to
     # avoid accidental suffix matches in unrelated words.
-    return any(len(alias) >= 4 and normalized.endswith(alias) for alias in aliases)
+    return _matches_normalized_field_key(normalized, aliases, prefix_aliases)
 
 
 def _find_field(
@@ -230,6 +247,39 @@ def _find_field(
         if _matches_field_key(key, aliases, allow_prefix):
             return True, _scalar(value)
     return False, ""
+
+
+def _candidate_fields(
+    record: dict[object, object],
+) -> tuple[tuple[bool, str], tuple[bool, str], tuple[bool, str], tuple[bool, str]]:
+    title = (False, "")
+    username = (False, "")
+    secret = (False, "")
+    uri = (False, "")
+    for key, value in record.items():
+        normalized = _normalized_key(key)
+        scalar: str | None = None
+        if not title[0] and _matches_normalized_field_key(normalized, TITLE_KEYS):
+            scalar = _scalar(value)
+            title = (True, scalar)
+        if not username[0] and _matches_normalized_field_key(
+            normalized, USERNAME_KEYS, USERNAME_PREFIX_KEYS
+        ):
+            scalar = _scalar(value) if scalar is None else scalar
+            username = (True, scalar)
+        if not secret[0] and _matches_normalized_field_key(
+            normalized, SECRET_KEYS, SECRET_PREFIX_KEYS
+        ):
+            scalar = _scalar(value) if scalar is None else scalar
+            secret = (True, scalar)
+        if not uri[0] and _matches_normalized_field_key(
+            normalized, URI_KEYS, URI_PREFIX_KEYS
+        ):
+            scalar = _scalar(value) if scalar is None else scalar
+            uri = (True, scalar)
+        if title[0] and username[0] and secret[0] and uri[0]:
+            break
+    return title, username, secret, uri
 
 
 IPV4_CANDIDATE_PATTERN = re.compile(
@@ -299,10 +349,12 @@ def _make_candidate(
     location: str,
     source_password_required: bool = False,
 ) -> CredentialCandidate | None:
-    title_found, title = _find_field(record, TITLE_KEYS)
-    username_found, username = _find_field(record, USERNAME_KEYS, allow_prefix=True)
-    secret_found, secret = _find_field(record, SECRET_KEYS, allow_prefix=True)
-    uri_found, uri = _find_field(record, URI_KEYS, allow_prefix=True)
+    (
+        (title_found, title),
+        (username_found, username),
+        (secret_found, secret),
+        (uri_found, uri),
+    ) = _candidate_fields(record)
     if not uri:
         detected_ip = _find_ip_address(record)
         if detected_ip:
@@ -879,6 +931,7 @@ def main() -> int:
                     "version": APP_VERSION,
                     "unlimited_file_selection": True,
                     "unlimited_candidate_collection": True,
+                    "single_pass_field_detection": True,
                     "reviewable_extensions": len(REVIEWABLE_EXTENSIONS),
                     "excel_password_prompt_supported": True,
                     "secrets_serialized": False,
