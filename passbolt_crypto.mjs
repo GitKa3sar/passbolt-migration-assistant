@@ -109,7 +109,7 @@ async function readInput() {
   assert(size > 0, 'EMPTY_INPUT', 'Nessuna richiesta ricevuta.');
   let value;
   try {
-    value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    value = JSON.parse(stripUtf8Bom(Buffer.concat(chunks).toString('utf8')));
   } catch {
     throw new SafeError('INVALID_INPUT', 'La richiesta locale non contiene JSON valido.');
   }
@@ -424,6 +424,10 @@ function isMfaChallengeResponse(response) {
   const redirectedToMfa = response.redirects.some((redirect) => redirect.path.toLowerCase().includes('/mfa/'));
   const forbidden = response.status === 403 || (responseHeader && Number(responseHeader.code) === 403);
   return Boolean(forbidden && (response.status === 403 || redirectedToMfa || responseHeaderUrl.includes('/mfa/')));
+}
+
+function stripUtf8Bom(value) {
+  return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
 }
 
 function mfaClockSkewSeconds(response) {
@@ -4721,6 +4725,8 @@ class PersistentImportSession {
 }
 
 async function selfTest() {
+  const bomInputProbe = JSON.parse(stripUtf8Bom('\ufeff{"ok":true}'));
+  assert(bomInputProbe.ok === true, 'SELF_TEST_FAILED', 'La normalizzazione del BOM UTF-8 non e disponibile.');
   const passphrase = `self-test-${randomUUID()}`;
   const unlimitedCandidateProbe = safeCandidates(Array.from({ length: 64 }, (_, index) => ({
     candidate_id: `unlimited-candidate-${index}`,
@@ -4840,6 +4846,7 @@ async function selfTest() {
     passbolt_secret_schema: true,
     passbolt_string_secret_schema: true,
     duplicate_detection: true,
+    utf8_bom_input: true,
     persistent_session_protocol: true,
     reconciliation_progress_protocol: true,
     authenticated_recovery_protocol: true,
@@ -4918,7 +4925,7 @@ async function mainPersistentSession() {
       try {
         assert(Buffer.byteLength(line, 'utf8') <= INPUT_LIMIT, 'INPUT_TOO_LARGE', 'Richiesta della sessione locale troppo grande.');
         try {
-          input = JSON.parse(line);
+          input = JSON.parse(stripUtf8Bom(line));
         } catch {
           throw new SafeError('INVALID_INPUT', 'La richiesta della sessione locale non contiene JSON valido.');
         }

@@ -14,7 +14,7 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 ### Changed
 
-- reso deterministico il runtime del self-test WPF e tollerato il BOM UTF-8 che Windows PowerShell 5.1 puo' anteporre alla prima richiesta della sessione persistente.
+- reso deterministico il runtime del self-test WPF e tollerato, sia nel coordinatore Python sia nel bridge OpenPGP, il BOM UTF-8 che Windows PowerShell 5.1 puo' anteporre alla prima richiesta JSON.
 
 ### Security
 
