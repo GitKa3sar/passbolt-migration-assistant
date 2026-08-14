@@ -7,6 +7,7 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 ### Added
 
 - aggiunto `run_tests.ps1`, comando unico per sintassi PowerShell/Python/Node, self-test, 105 test Python, suite OpenPGP, contratto WPF, anteprime UI e controllo del diff;
+- separata in `requirements-test.txt` la dipendenza ReportLab usata esclusivamente per costruire PDF sintetici durante i test, senza ampliare le dipendenze runtime dell'app;
 - aggiunto il workflow GitHub Actions Windows con Python 3.12, Node.js 24, dipendenze bloccate, permessi `contents: read` e checkout senza credenziali persistenti;
 - estesa la modalità di anteprima con larghezza, altezza e DPI validati; il quality gate genera le quattro fasi a 1360×860 e verifica anche 1160×740 fino a 192 DPI;
 - aggiunto un test esplicito del blocco delle istanze reali negli ambienti CI.

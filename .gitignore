@@ -67,3 +67,4 @@ reconciliation/
 *.rtf
 *.txt
 !requirements.txt
+!requirements-test.txt

@@ -14,7 +14,7 @@ La versione `0.20.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro
 
 ### Quality gate Windows 0.20.1
 
-`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 105 test Python, suite OpenPGP, autoverifica dei 109 controlli WPF, rendering delle anteprime e `git diff --check`. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
+`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 105 test Python, suite OpenPGP, autoverifica dei 109 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
 
 Il workflow `.github/workflows/windows-quality.yml` esegue lo stesso comando su `windows-latest` con Python 3.12 e Node.js 24. Il token GitHub ha il solo permesso `contents: read`, le credenziali del checkout non sono persistite e pnpm installa il lockfile senza lifecycle script. Le otto PNG conservate come artefatto per sette giorni mostrano esclusivamente lo stato iniziale vuoto delle quattro fasi.
 
@@ -406,6 +406,7 @@ pnpm install --frozen-lockfile --ignore-scripts
 I backend e la UI espongono self-test locali:
 
 ```powershell
+python -m pip install --requirement requirements-test.txt
 .\run_tests.ps1
 ```
 

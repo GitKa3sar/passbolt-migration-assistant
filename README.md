@@ -121,6 +121,7 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 I test non contattano un'istanza Passbolt reale. Il test JavaScript usa esclusivamente un server simulato su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 105 test Python, suite Node/OpenPGP, contratto WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
+python -m pip install --requirement requirements-test.txt
 .\run_tests.ps1
 ```
 

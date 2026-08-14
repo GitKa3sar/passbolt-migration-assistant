@@ -17,6 +17,7 @@ Sono richiesti Windows PowerShell 5.1, Python 3.11+, Node.js 18+ e pnpm 11.19.0.
 
 ```powershell
 pnpm install --frozen-lockfile --ignore-scripts
+python -m pip install --requirement requirements-test.txt
 ```
 
 ## Verifiche richieste
