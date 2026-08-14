@@ -139,6 +139,8 @@ function Test-PngDimensions {
 
 Push-Location $ProjectRoot
 $TemporaryPreviewDirectory = $false
+$PreviousAppPython = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_PYTHON")
+$PreviousAppNode = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_NODE")
 try {
     $BundledRoot = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies"
     $PythonExecutable = Resolve-Executable `
@@ -168,6 +170,11 @@ try {
     if ([string]::IsNullOrWhiteSpace($GitExecutable)) {
         throw "Git non trovato: e necessario per il controllo del diff."
     }
+
+    if ($PythonPrefix.Count -eq 0) {
+        $env:PASSBOLT_APP_PYTHON = $PythonExecutable
+    }
+    $env:PASSBOLT_APP_NODE = $NodeExecutable
 
     if ($Ci) {
         $env:PASSBOLT_MIGRATION_CI = "1"
@@ -259,6 +266,8 @@ try {
         status = "OK"
     } | ConvertTo-Json
 } finally {
+    [Environment]::SetEnvironmentVariable("PASSBOLT_APP_PYTHON", $PreviousAppPython, [EnvironmentVariableTarget]::Process)
+    [Environment]::SetEnvironmentVariable("PASSBOLT_APP_NODE", $PreviousAppNode, [EnvironmentVariableTarget]::Process)
     Pop-Location
     if ($TemporaryPreviewDirectory -and -not [string]::IsNullOrWhiteSpace($ArtifactDirectory) -and (Test-Path -LiteralPath $ArtifactDirectory -PathType Container)) {
         $ResolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

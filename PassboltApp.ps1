@@ -26,8 +26,16 @@ $CryptoScript = Join-Path $ProjectRoot "passbolt_crypto.mjs"
 $IntegrationMatrixScript = Join-Path $ProjectRoot "passbolt_integration_matrix.py"
 $BundledPython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $BundledNode = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
+$ConfiguredPython = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_PYTHON")
+$ConfiguredNode = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_NODE")
 
-if (Test-Path -LiteralPath $BundledPython -PathType Leaf) {
+if (-not [string]::IsNullOrWhiteSpace($ConfiguredPython)) {
+    $ConfiguredPython = [IO.Path]::GetFullPath($ConfiguredPython)
+    if (-not (Test-Path -LiteralPath $ConfiguredPython -PathType Leaf)) {
+        throw "L'eseguibile Python configurato non esiste: $ConfiguredPython"
+    }
+    $PythonExecutable = $ConfiguredPython
+} elseif (Test-Path -LiteralPath $BundledPython -PathType Leaf) {
     $PythonExecutable = $BundledPython
 } elseif (Get-Command python -ErrorAction SilentlyContinue) {
     $PythonExecutable = (Get-Command python).Source
@@ -37,7 +45,13 @@ if (Test-Path -LiteralPath $BundledPython -PathType Leaf) {
     throw "Python non trovato. Installare Python 3.11 o superiore."
 }
 
-if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
+if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
+    $ConfiguredNode = [IO.Path]::GetFullPath($ConfiguredNode)
+    if (-not (Test-Path -LiteralPath $ConfiguredNode -PathType Leaf)) {
+        throw "L'eseguibile Node.js configurato non esiste: $ConfiguredNode"
+    }
+    $NodeExecutable = $ConfiguredNode
+} elseif (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
     $NodeExecutable = $BundledNode
 } elseif (Get-Command node -ErrorAction SilentlyContinue) {
     $NodeExecutable = (Get-Command node).Source
@@ -5327,7 +5341,24 @@ for line in sys.stdin:
         $script:ImportSessionProcess = $SessionProbeProcess
         $script:ImportSessionErrorTask = $SessionProbeProcess.StandardError.ReadToEndAsync()
         $script:ImportSessionId = "transport-probe"
-        $SessionProbeEnvelope = Invoke-ImportSessionJson ([pscustomobject]@{ command = "session-readiness"; session_id = "transport-probe" }) 30000
+        try {
+            $SessionProbeEnvelope = Invoke-ImportSessionJson ([pscustomobject]@{ command = "session-readiness"; session_id = "transport-probe" }) 30000
+        } catch {
+            $ProbeExitCode = "non disponibile"
+            try {
+                if ($SessionProbeProcess.HasExited) { $ProbeExitCode = [string]$SessionProbeProcess.ExitCode }
+            } catch {}
+            $ProbeErrorOutput = ""
+            try {
+                if ($null -ne $script:ImportSessionErrorTask -and $script:ImportSessionErrorTask.Wait(5000)) {
+                    $ProbeErrorOutput = [string]$script:ImportSessionErrorTask.Result
+                }
+            } catch {}
+            $ProbeErrorOutput = ($ProbeErrorOutput -replace '\s+', ' ').Trim()
+            if ([string]::IsNullOrWhiteSpace($ProbeErrorOutput)) { $ProbeErrorOutput = "nessun dettaglio" }
+            if ($ProbeErrorOutput.Length -gt 1000) { $ProbeErrorOutput = $ProbeErrorOutput.Substring(0, 1000) }
+            throw "Il test sintetico del trasporto persistente non e' riuscito (Python: $PythonExecutable; codice: $ProbeExitCode; stderr: $ProbeErrorOutput)."
+        }
         if (-not $SessionProbeEnvelope.ok -or $SessionProbeEnvelope.result.command -ne "session-readiness" -or $SessionProbeEnvelope.result.session_id -ne "transport-probe") {
             throw "Il protocollo persistente dell'interfaccia non ha restituito la risposta prevista."
         }
