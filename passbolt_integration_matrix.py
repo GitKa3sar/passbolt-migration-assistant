@@ -31,9 +31,11 @@ from typing import Any, Callable, Mapping, Sequence
 from passbolt_api_probe import ProbeError, normalize_base_url, normalize_fingerprint, run_probe
 
 
-APP_VERSION = "0.20.0"
+APP_VERSION = "0.20.1"
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
+CI_ENVIRONMENT_VARIABLES = ("CI", "GITHUB_ACTIONS", "PASSBOLT_MIGRATION_CI")
+CI_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 MAX_CONFIG_BYTES = 128 * 1024
 MAX_REPORT_BYTES = 1024 * 1024
 MAX_BRIDGE_LINE_BYTES = 8 * 1024 * 1024
@@ -797,6 +799,21 @@ def report_summary(report: Mapping[str, Any]) -> dict[str, int]:
     return counts
 
 
+def real_instance_runs_allowed(environ: Mapping[str, Any] | None = None) -> bool:
+    """Return False when a non-interactive CI environment is active.
+
+    Validation, report inspection and the self-test remain available in CI. Only
+    the command that prompts for real credentials and contacts a configured
+    Passbolt laboratory is denied.
+    """
+
+    values = os.environ if environ is None else environ
+    return not any(
+        str(values.get(name, "")).strip().lower() in CI_TRUE_VALUES
+        for name in CI_ENVIRONMENT_VARIABLES
+    )
+
+
 def self_test() -> dict[str, Any]:
     scenarios = [_passed(name, {"write_requests": 0}) for name in AUTOMATED_SCENARIOS]
     scenarios.extend(_manual_not_run(name) for name in MANUAL_SCENARIOS)
@@ -837,6 +854,7 @@ def self_test() -> dict[str, Any]:
         "automated_scenario_count": len(AUTOMATED_SCENARIOS),
         "manual_scenario_count": len(MANUAL_SCENARIOS),
         "read_only_automation": True,
+        "ci_real_instance_guard": not real_instance_runs_allowed({"CI": "true"}),
         "report_digest_valid": report["report_digest"] == calculate_report_digest(report),
         "safe_failure_projection": "secret" not in serialized and "private.invalid" not in serialized,
         "secrets_serialized": False,
@@ -892,6 +910,10 @@ def main() -> int:
             print(f"Configurazione valida: {len(profiles)} profili, {enabled} attivi.")
             return 0
         if args.action == "run":
+            if not real_instance_runs_allowed():
+                raise MatrixError(
+                    "L'esecuzione contro istanze Passbolt reali e disabilitata negli ambienti CI."
+                )
             profile = find_profile(load_config(args.config), args.instance)
             private_key = _prompt_private_key()
             passphrase = getpass.getpass("Passphrase della chiave privata: ")

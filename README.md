@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.20.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.20.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -118,25 +118,30 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. Il test JavaScript usa esclusivamente un server simulato su `127.0.0.1`.
+I test non contattano un'istanza Passbolt reale. Il test JavaScript usa esclusivamente un server simulato su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 105 test Python, suite Node/OpenPGP, contratto WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
-python .\passbolt_app.py --self-test
-python .\passbolt_review.py --self-test
-python .\passbolt_import.py --self-test
-'{"command":"self-test"}' | node .\passbolt_crypto.mjs
-node .\test_passbolt_crypto.mjs
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py test_passbolt_acl_reconciliation.py test_passbolt_integration_matrix.py
+.\run_tests.ps1
 ```
 
-La resa delle quattro fasi può essere verificata anche senza una sessione Passbolt. Il comando seguente genera una PNG locale dello stato iniziale della pagina scelta (`Configuration`, `Inventory`, `Review` o `Import`), senza leggere documenti o eseguire richieste di rete:
+Per riprodurre la modalità GitHub Actions e conservare le anteprime in una directory esplicita:
+
+```powershell
+.\run_tests.ps1 `
+  -Ci `
+  -ArtifactDirectory "$env:TEMP\passbolt-ui-previews"
+```
+
+La resa delle quattro fasi può essere verificata anche senza una sessione Passbolt. Il comando seguente genera una PNG locale dello stato iniziale della pagina scelta (`Configuration`, `Inventory`, `Review` o `Import`), senza leggere documenti o eseguire richieste di rete. Larghezza e altezza sono espresse in unità WPF; i DPI ammessi sono 96, 120, 144 e 192:
 
 ```powershell
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass `
   -File .\PassboltApp.ps1 `
   -RenderPreviewPath "$env:TEMP\passbolt-ui.png" `
-  -RenderPreviewPage Import
+  -RenderPreviewPage Import `
+  -RenderPreviewWidth 1160 `
+  -RenderPreviewHeight 740 `
+  -RenderPreviewDpi 144
 ```
 
 ## Matrice di integrazione v4/v5
@@ -182,6 +187,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.20.1 introduce il quality gate Windows riproducibile. `run_tests.ps1` è il punto di ingresso locale e la stessa procedura viene eseguita su GitHub Actions a ogni push su `main`, pull request o avvio manuale. La CI installa esclusivamente dipendenze bloccate, non conserva credenziali Git nel checkout e non può avviare la matrice contro istanze Passbolt reali. Le anteprime pubblicate come artefatti contengono soltanto lo stato iniziale vuoto dell'app.
 
 La versione 0.20.0 introduce una nuova interfaccia chiara ispirata alle applicazioni Apple, mantenendo la struttura operativa già nota. La navigazione laterale mostra sempre la fase corrente e quelle disponibili; card, campi, menu, tabelle e tab condividono ora un unico design system. Nella fase 04 sessione sicura e destinazione sono affiancate, così il piano resta visibile anche senza massimizzare la finestra. L'aggiornamento non modifica protocolli, endpoint, contenuto dei piani o conferme.
 

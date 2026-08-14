@@ -264,6 +264,13 @@ class IntegrationMatrixTests(unittest.TestCase):
             with self.assertRaises(matrix.MatrixError):
                 matrix.load_report(path)
 
+    def test_real_instance_runs_are_blocked_in_ci_only(self):
+        self.assertFalse(matrix.real_instance_runs_allowed({"CI": "true"}))
+        self.assertFalse(matrix.real_instance_runs_allowed({"GITHUB_ACTIONS": "1"}))
+        self.assertFalse(matrix.real_instance_runs_allowed({"PASSBOLT_MIGRATION_CI": "yes"}))
+        self.assertTrue(matrix.real_instance_runs_allowed({"CI": "false"}))
+        self.assertTrue(matrix.real_instance_runs_allowed({}))
+
     def test_safe_error_projection_is_enumerated(self):
         safe = matrix._safe_error(
             {

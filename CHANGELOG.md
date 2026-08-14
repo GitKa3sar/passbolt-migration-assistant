@@ -2,6 +2,22 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.20.1 - 2026-08-14
+
+### Added
+
+- aggiunto `run_tests.ps1`, comando unico per sintassi PowerShell/Python/Node, self-test, 105 test Python, suite OpenPGP, contratto WPF, anteprime UI e controllo del diff;
+- aggiunto il workflow GitHub Actions Windows con Python 3.12, Node.js 24, dipendenze bloccate, permessi `contents: read` e checkout senza credenziali persistenti;
+- estesa la modalità di anteprima con larghezza, altezza e DPI validati; il quality gate genera le quattro fasi a 1360×860 e verifica anche 1160×740 fino a 192 DPI;
+- aggiunto un test esplicito del blocco delle istanze reali negli ambienti CI.
+
+### Security
+
+- il comando `integration-matrix run` rifiuta l'esecuzione quando `CI`, `GITHUB_ACTIONS` o `PASSBOLT_MIGRATION_CI` dichiarano un ambiente non interattivo;
+- validazione locale, self-test e report sanitizzati restano disponibili in CI, ma non vengono richiesti chiave privata, passphrase o TOTP e non viene contattata alcuna istanza Passbolt;
+- le sole immagini pubblicate come artefatti sono render dello stato iniziale privo di credenziali, conservati per sette giorni;
+- l'installazione Node del workflow usa il lockfile e disabilita gli script di lifecycle.
+
 ## 0.20.0 - 2026-08-14
 
 ### Changed

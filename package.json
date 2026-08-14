@@ -1,8 +1,9 @@
 {
   "name": "passbolt-migration-assistant",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.19.0",
   "description": "Windows desktop assistant for safely inventorying, reviewing and importing credentials into Passbolt",
   "license": "AGPL-3.0-only",
   "author": "Cesare Polidoro",

@@ -13,7 +13,7 @@ Grazie per l'interesse nel progetto. Le modifiche devono preservare il principio
 
 ## Ambiente di sviluppo
 
-Sono richiesti Windows PowerShell 5.1, Python 3.11+, Node.js 18+ e pnpm.
+Sono richiesti Windows PowerShell 5.1, Python 3.11+, Node.js 18+ e pnpm 11.19.0.
 
 ```powershell
 pnpm install --frozen-lockfile --ignore-scripts
@@ -24,16 +24,10 @@ pnpm install --frozen-lockfile --ignore-scripts
 Prima di aprire una pull request esegui:
 
 ```powershell
-python .\passbolt_app.py --self-test
-python .\passbolt_review.py --self-test
-python .\passbolt_import.py --self-test
-'{"command":"self-test"}' | node .\passbolt_crypto.mjs
-node .\test_passbolt_crypto.mjs
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py test_passbolt_acl_reconciliation.py
+.\run_tests.ps1 -Ci
 ```
 
-Il test JavaScript deve restare isolato su `127.0.0.1` e non deve contattare servizi reali.
+Il test JavaScript deve restare isolato su `127.0.0.1` e non deve contattare servizi reali. La modalità CI blocca `integration-matrix run`; non rimuovere o aggirare questa protezione per eseguire prove automatiche contro un'istanza Passbolt.
 
 ## Pull request
 

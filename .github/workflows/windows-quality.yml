@@ -1,0 +1,75 @@
+name: Windows quality gate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python, Node and WPF
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      PASSBOLT_MIGRATION_CI: "1"
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          architecture: x64
+          package-manager-cache: false
+
+      - name: Install pinned Python dependencies
+        shell: pwsh
+        run: python -m pip install --requirement requirements.txt
+
+      - name: Install locked Node dependencies without lifecycle scripts
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.19.0 --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run the complete offline quality gate
+        shell: pwsh
+        run: |
+          .\run_tests.ps1 `
+            -Ci `
+            -ArtifactDirectory "$env:RUNNER_TEMP\passbolt-ui-previews"
+
+      - name: Upload secret-free UI previews
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: passbolt-ui-previews-${{ github.run_id }}
+          path: ${{ runner.temp }}\passbolt-ui-previews\*.png
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 6
+          include-hidden-files: false

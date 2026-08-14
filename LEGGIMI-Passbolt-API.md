@@ -10,7 +10,13 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.20.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.20.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Quality gate Windows 0.20.1
+
+`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 105 test Python, suite OpenPGP, autoverifica dei 109 controlli WPF, rendering delle anteprime e `git diff --check`. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
+
+Il workflow `.github/workflows/windows-quality.yml` esegue lo stesso comando su `windows-latest` con Python 3.12 e Node.js 24. Il token GitHub ha il solo permesso `contents: read`, le credenziali del checkout non sono persistite e pnpm installa il lockfile senza lifecycle script. Le otto PNG conservate come artefatto per sette giorni mostrano esclusivamente lo stato iniziale vuoto delle quattro fasi.
 
 ### Design system e anteprime UI 0.20.0
 
@@ -18,7 +24,7 @@ La finestra principale usa un design system WPF centralizzato con superfici chia
 
 La fase 04 dispone sessione sicura e opzioni di destinazione in due colonne. Non cambia l'ordine logico delle operazioni: la sessione deve essere autenticata, la destinazione e i formati devono essere validi e il dry-run rimane obbligatorio prima di qualsiasi conferma. Piano, recupero e ACL continuano a usare gli stessi backend e gli stessi digest.
 
-`-RenderPreviewPath <file.png>` esegue il layout WPF fuori schermo a 1360×860 e salva una PNG dello stato iniziale. `-RenderPreviewPage` accetta soltanto `Configuration`, `Inventory`, `Review` o `Import`. La modalità non mostra finestre, non apre documenti, non autentica l'utente e non invia richieste a Passbolt; serve esclusivamente alla verifica visuale ripetibile dell'interfaccia.
+`-RenderPreviewPath <file.png>` esegue il layout WPF fuori schermo e salva una PNG dello stato iniziale. `-RenderPreviewPage` accetta soltanto `Configuration`, `Inventory`, `Review` o `Import`; `-RenderPreviewWidth` e `-RenderPreviewHeight` sono limitati rispettivamente a 1160–3840 e 740–2160; `-RenderPreviewDpi` accetta 96, 120, 144 o 192. La modalità non mostra finestre, non apre documenti, non autentica l'utente e non invia richieste a Passbolt; serve esclusivamente alla verifica visuale ripetibile dell'interfaccia.
 
 ### Ottimizzazioni dei lotti estesi 0.19.2
 
@@ -400,13 +406,7 @@ pnpm install --frozen-lockfile --ignore-scripts
 I backend e la UI espongono self-test locali:
 
 ```powershell
-python .\passbolt_app.py --self-test
-python .\passbolt_review.py --self-test
-python .\passbolt_import.py --self-test
-'{"command":"self-test"}' | node .\passbolt_crypto.mjs
-node .\test_passbolt_crypto.mjs
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\PassboltApp.ps1 -SelfTest
-python -m unittest -v test_passbolt_api_probe.py test_passbolt_app.py test_passbolt_review.py test_passbolt_import.py test_passbolt_reconciliation.py test_passbolt_acl_reconciliation.py
+.\run_tests.ps1
 ```
 
 `test_passbolt_crypto.mjs` avvia un server simulato soltanto su `127.0.0.1` e verifica end-to-end GPGAuth stage 0/1/2, redirect interni, blocco dei redirect esterni, TOTP mancante, TOTP rifiutato, TOTP valido, cookie di sessione e MFA, riuso della sessione per due dry-run senza un secondo login o un secondo TOTP, CSRF, piano duplicati v4/v5, chiave metadati personale, chiave metadati condivisa verificata, catalogo gerarchico delle cartelle, contenitore padre selezionato, destinazione diretta, mappature distinte v4/v5, destinazione radice per singolo cliente, rifiuto delle destinazioni incomplete o in sola lettura, lettura e creazione cartelle v4/v5, ereditarieta User/Group per nuove sottocartelle condivise, digest della maschera, applicazione diretta dei permessi cartella, simulazione prima della condivisione delle risorse, chiave condivisa per i metadati v5, assegnazione di `folder_parent_id`, envelope di intenzione/esito/completamento privi di segreti, classificazione autenticata del recupero, blocco dei conflitti, ripresa di richieste non applicate, blocco dei duplicati presenti altrove, riconciliazione dei fallimenti parziali e creazione risorse v4/v5 con segreti e metadati OpenPGP cifrati. Non contatta l'istanza Passbolt reale.

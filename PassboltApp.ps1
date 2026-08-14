@@ -2,7 +2,13 @@ param(
     [switch]$SelfTest,
     [string]$RenderPreviewPath = "",
     [ValidateSet("Configuration", "Inventory", "Review", "Import")]
-    [string]$RenderPreviewPage = "Configuration"
+    [string]$RenderPreviewPage = "Configuration",
+    [ValidateRange(1160, 3840)]
+    [int]$RenderPreviewWidth = 1360,
+    [ValidateRange(740, 2160)]
+    [int]$RenderPreviewHeight = 860,
+    [ValidateSet(96, 120, 144, 192)]
+    [int]$RenderPreviewDpi = 96
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,7 +48,7 @@ if (Test-Path -LiteralPath $BundledNode -PathType Leaf) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.20.0"
+        Title="Passbolt Migration Assistant - v0.20.1"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -4145,7 +4151,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.20.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.20.1", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -5206,18 +5212,20 @@ if ($RenderPreviewPath) {
     if (-not $PreviewDirectory -or -not (Test-Path -LiteralPath $PreviewDirectory -PathType Container)) {
         throw "La cartella di destinazione dell'anteprima UI non esiste."
     }
-    $PreviewWidth = 1360
-    $PreviewHeight = 860
+    $PreviewWidth = $RenderPreviewWidth
+    $PreviewHeight = $RenderPreviewHeight
+    $PreviewPixelWidth = [int][math]::Ceiling($PreviewWidth * $RenderPreviewDpi / 96.0)
+    $PreviewPixelHeight = [int][math]::Ceiling($PreviewHeight * $RenderPreviewDpi / 96.0)
     Show-Page $RenderPreviewPage
     $PreviewRoot = [System.Windows.FrameworkElement]$Window.Content
     $PreviewRoot.Measure([System.Windows.Size]::new($PreviewWidth, $PreviewHeight))
     $PreviewRoot.Arrange([System.Windows.Rect]::new(0, 0, $PreviewWidth, $PreviewHeight))
     $PreviewRoot.UpdateLayout()
     $PreviewBitmap = [System.Windows.Media.Imaging.RenderTargetBitmap]::new(
-        $PreviewWidth,
-        $PreviewHeight,
-        96,
-        96,
+        $PreviewPixelWidth,
+        $PreviewPixelHeight,
+        $RenderPreviewDpi,
+        $RenderPreviewDpi,
         [System.Windows.Media.PixelFormats]::Pbgra32
     )
     $PreviewBitmap.Render($PreviewRoot)
@@ -5231,11 +5239,14 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.20.0"
+        version = "0.20.1"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         width = $PreviewWidth
         height = $PreviewHeight
+        pixel_width = $PreviewPixelWidth
+        pixel_height = $PreviewPixelHeight
+        dpi = $RenderPreviewDpi
         layout = [pscustomobject]@{
             root_width = [math]::Round($PreviewRoot.ActualWidth, 1)
             root_height = [math]::Round($PreviewRoot.ActualHeight, 1)
@@ -5262,8 +5273,9 @@ if ($SelfTest) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
     }
     if (
-        $Window.Title -notmatch "v0\.20\.0" -or
+        $Window.Title -notmatch "v0\.20\.1" -or
         $Window.MinWidth -lt 1160 -or
+        $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
         $VerifyButton.MinHeight -lt 40 -or
         $StepConfiguration.CornerRadius.TopLeft -lt 10 -or
@@ -5329,7 +5341,7 @@ for line in sys.stdin:
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
-    if (-not $IntegrationMatrixTest.ok -or $IntegrationMatrixTest.result.secrets_serialized -or -not $IntegrationMatrixTest.result.read_only_automation -or -not $IntegrationMatrixTest.result.report_digest_valid -or -not $IntegrationMatrixTest.result.safe_failure_projection -or $IntegrationMatrixTest.result.automated_scenario_count -ne 7 -or $IntegrationMatrixTest.result.manual_scenario_count -ne 9) {
+    if (-not $IntegrationMatrixTest.ok -or $IntegrationMatrixTest.result.secrets_serialized -or -not $IntegrationMatrixTest.result.read_only_automation -or -not $IntegrationMatrixTest.result.ci_real_instance_guard -or -not $IntegrationMatrixTest.result.report_digest_valid -or -not $IntegrationMatrixTest.result.safe_failure_projection -or $IntegrationMatrixTest.result.automated_scenario_count -ne 7 -or $IntegrationMatrixTest.result.manual_scenario_count -ne 9) {
         throw "La matrice di integrazione non rispetta il contratto di sicurezza."
     }
     $LoginDiagnosticProbe = Get-SecureErrorMessage ([pscustomobject]@{
@@ -5522,7 +5534,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.20.0"
+        version = "0.20.1"
         ui = "WPF"
         phases = 4
         controls = 109
@@ -5556,6 +5568,7 @@ for line in sys.stdin:
         optimized_large_batch_processing = "OK"
         modern_apple_ui = "OK"
         offscreen_ui_preview = "OK"
+        ci_real_instance_guard = "OK"
         secrets_serialized = $false
         python = $PythonExecutable
         node = $NodeExecutable
