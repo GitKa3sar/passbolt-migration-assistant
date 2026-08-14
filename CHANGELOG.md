@@ -12,6 +12,10 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 - estesa la modalità di anteprima con larghezza, altezza e DPI validati; il quality gate genera le quattro fasi a 1360×860 e verifica anche 1160×740 fino a 192 DPI;
 - aggiunto un test esplicito del blocco delle istanze reali negli ambienti CI.
 
+### Changed
+
+- reso deterministico il runtime del self-test WPF e tollerato il BOM UTF-8 che Windows PowerShell 5.1 puo' anteporre alla prima richiesta della sessione persistente.
+
 ### Security
 
 - il comando `integration-matrix run` rifiuta l'esecuzione quando `CI`, `GITHUB_ACTIONS` o `PASSBOLT_MIGRATION_CI` dichiarano un ambiente non interattivo;

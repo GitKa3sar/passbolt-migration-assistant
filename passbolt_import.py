@@ -1802,7 +1802,10 @@ def run_import_session(
             resources: list[dict[str, Any]] = []
             command = ""
             try:
-                document = json.loads(raw.decode("utf-8"))
+                # Windows PowerShell 5.1 can prepend one UTF-8 BOM to the
+                # redirected stdin stream. utf-8-sig accepts that first-line
+                # preamble while behaving exactly like utf-8 for later lines.
+                document = json.loads(raw.decode("utf-8-sig"))
                 if not isinstance(document, dict):
                     raise ImportPreparationError(
                         "La richiesta della sessione deve essere un oggetto JSON."

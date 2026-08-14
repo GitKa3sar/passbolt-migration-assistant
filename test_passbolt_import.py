@@ -728,7 +728,7 @@ for raw in sys.stdin:
             },
             {"command": "session-close", "session_id": "test-session-id"},
         ]
-        session_input = "".join(
+        session_input = b"\xef\xbb\xbf" + "".join(
             json.dumps(request, separators=(",", ":")) + "\n" for request in requests
         ).encode("utf-8")
         completed = subprocess.run(

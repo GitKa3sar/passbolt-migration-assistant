@@ -5313,7 +5313,7 @@ import json
 import sys
 
 for line in sys.stdin:
-    request = json.loads(line)
+    request = json.loads(line.lstrip("\ufeff"))
     print(json.dumps({"ok": True, "result": {"command": request.get("command"), "session_id": request.get("session_id")}}), flush=True)
     if request.get("command") == "session-close":
         break
