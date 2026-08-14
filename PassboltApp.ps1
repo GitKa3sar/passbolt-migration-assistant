@@ -5304,9 +5304,15 @@ for line in sys.stdin:
     if request.get("command") == "session-close":
         break
 '@
+    $SessionProbePath = Join-Path ([IO.Path]::GetTempPath()) ("passbolt-session-transport-" + [guid]::NewGuid().ToString("N") + ".py")
+    [IO.File]::WriteAllText(
+        $SessionProbePath,
+        $SessionProbeCode,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
     $SessionProbeStartInfo = New-Object System.Diagnostics.ProcessStartInfo
     $SessionProbeStartInfo.FileName = $PythonExecutable
-    $SessionProbeStartInfo.Arguments = (@("-u", "-c", $SessionProbeCode) | ForEach-Object { ConvertTo-ProcessArgument ([string]$_) }) -join ' '
+    $SessionProbeStartInfo.Arguments = (@("-u", $SessionProbePath) | ForEach-Object { ConvertTo-ProcessArgument ([string]$_) }) -join ' '
     $SessionProbeStartInfo.UseShellExecute = $false
     $SessionProbeStartInfo.CreateNoWindow = $true
     $SessionProbeStartInfo.RedirectStandardInput = $true
@@ -5327,6 +5333,9 @@ for line in sys.stdin:
         }
     } finally {
         Stop-ImportSession "" $false
+        if (Test-Path -LiteralPath $SessionProbePath -PathType Leaf) {
+            Remove-Item -LiteralPath $SessionProbePath -Force
+        }
     }
     $ReviewBackendTest = Invoke-PythonJson $ReviewScript @("--self-test")
     if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported -or -not $ReviewBackendTest.unlimited_file_selection -or -not $ReviewBackendTest.unlimited_candidate_collection -or -not $ReviewBackendTest.single_pass_field_detection) {
