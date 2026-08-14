@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 from passbolt_api_probe import ProbeError, normalize_base_url, normalize_fingerprint, run_probe
 
 
-APP_VERSION = "0.20.1"
+APP_VERSION = "0.21.0"
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 CI_ENVIRONMENT_VARIABLES = ("CI", "GITHUB_ACTIONS", "PASSBOLT_MIGRATION_CI")
@@ -461,7 +461,8 @@ def _evaluate_readiness(
     if payload is None:
         return _failed(name, "READINESS_FAILED", envelope)
     resource_format = str(payload.get("resource_format_selected", ""))
-    folder_format = str(payload.get("folder_format_selected", ""))
+    raw_folder_format = payload.get("folder_format_selected")
+    folder_format = "" if raw_folder_format is None else str(raw_folder_format)
     can_import = payload.get("can_import") is True
     create_count = payload.get("create_count") if type(payload.get("create_count")) is int else -1
     blocked_count = payload.get("blocked_count") if type(payload.get("blocked_count")) is int else -1

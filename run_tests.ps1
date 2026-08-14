@@ -15,6 +15,8 @@ $PythonFiles = @(
     "passbolt_app.py",
     "passbolt_import.py",
     "passbolt_integration_matrix.py",
+    "offline_lab_setup.py",
+    "offline_lab_smoke.py",
     "passbolt_reconciliation.py",
     "passbolt_review.py",
     "test_passbolt_acl_reconciliation.py",
@@ -22,6 +24,7 @@ $PythonFiles = @(
     "test_passbolt_app.py",
     "test_passbolt_import.py",
     "test_passbolt_integration_matrix.py",
+    "test_offline_lab.py",
     "test_passbolt_reconciliation.py",
     "test_passbolt_review.py"
 )
@@ -30,6 +33,7 @@ $UnitTestFiles = @(
     "test_passbolt_app.py",
     "test_passbolt_import.py",
     "test_passbolt_integration_matrix.py",
+    "test_offline_lab.py",
     "test_passbolt_reconciliation.py",
     "test_passbolt_review.py",
     "test_passbolt_acl_reconciliation.py"
@@ -70,7 +74,7 @@ function Invoke-Checked {
 
     Write-Host ""
     Write-Host "== $Label ==" -ForegroundColor Cyan
-    if ($null -eq $StandardInput) {
+    if (-not $PSBoundParameters.ContainsKey("StandardInput")) {
         & $FilePath @Arguments
         $ExitCode = $LASTEXITCODE
     } else {
@@ -187,20 +191,39 @@ try {
         "run_passbolt_app.ps1",
         "run_passbolt_probe.ps1",
         "run_passbolt_integration_matrix.ps1",
+        "run_offline_lab.ps1",
         "run_tests.ps1"
     )
     Invoke-Checked "Sintassi Python" $PythonExecutable ($PythonPrefix + @("-m", "py_compile") + $PythonFiles)
     Invoke-Checked "Sintassi bridge OpenPGP" $NodeExecutable @("--check", "passbolt_crypto.mjs")
     Invoke-Checked "Sintassi test OpenPGP" $NodeExecutable @("--check", "test_passbolt_crypto.mjs")
+    Invoke-Checked "Sintassi server laboratorio offline" $NodeExecutable @("--check", "offline_lab_server.mjs")
 
     Invoke-Checked "Self-test inventario" $PythonExecutable ($PythonPrefix + @("passbolt_app.py", "--self-test"))
     Invoke-Checked "Self-test revisione" $PythonExecutable ($PythonPrefix + @("passbolt_review.py", "--self-test"))
     Invoke-Checked "Self-test importazione" $PythonExecutable ($PythonPrefix + @("passbolt_import.py", "--self-test"))
     Invoke-Checked "Self-test matrice integrazione" $PythonExecutable ($PythonPrefix + @("passbolt_integration_matrix.py", "self-test"))
     Invoke-Checked "Self-test bridge OpenPGP" $NodeExecutable @("passbolt_crypto.mjs") '{"command":"self-test"}'
+    Invoke-Checked "Self-test server laboratorio offline" $NodeExecutable @("offline_lab_server.mjs", "--self-test")
 
     Invoke-Checked "Suite Python" $PythonExecutable ($PythonPrefix + @("-m", "unittest") + $UnitTestFiles)
     Invoke-Checked "Suite Node/OpenPGP" $NodeExecutable @("test_passbolt_crypto.mjs")
+    Invoke-Checked "Laboratorio offline Passbolt v4" "powershell.exe" @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
+        "-Profile", "v4",
+        "-Scenario", "healthy",
+        "-SelfTest"
+    )
+    Invoke-Checked "Laboratorio offline Passbolt v5" "powershell.exe" @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
+        "-Profile", "v5",
+        "-Scenario", "healthy",
+        "-SelfTest"
+    )
     Invoke-Checked "Self-test WPF" "powershell.exe" @(
         "-NoProfile",
         "-STA",
@@ -255,9 +278,9 @@ try {
     Write-Host ""
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.20.1"
+        version = "0.21.0"
         ci_mode = [bool]$Ci
-        python_tests = 105
+        python_tests = 109
         node_suite = "OK"
         wpf_controls = 109
         ui_preview_count = $(if ($SkipUiPreviews) { 0 } else { 8 })

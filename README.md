@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.20.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.21.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -33,6 +33,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
 - matrice di integrazione ripetibile per laboratori Passbolt v4/v5, con sette prove automatizzate in sola lettura, nove attestazioni operative e report sanitizzati con digest;
+- laboratorio HTTPS locale e stateful per esercitare l'app senza un'istanza Passbolt disponibile, con identità, MFA, documenti e credenziali esclusivamente sintetici;
 - nessun caricamento dei documenti sorgente su servizi esterni.
 
 ## Requisiti
@@ -118,7 +119,7 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. Il test JavaScript usa esclusivamente un server simulato su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 105 test Python, suite Node/OpenPGP, contratto WPF, otto anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 109 test Python, suite Node/OpenPGP, matrici offline v4/v5, contratto WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -144,6 +145,44 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass `
   -RenderPreviewHeight 740 `
   -RenderPreviewDpi 144
 ```
+
+## Laboratorio Passbolt offline v4/v5
+
+La versione 0.21.0 consente di provare il workflow anche quando non è disponibile un server Passbolt. Il runner prepara sotto `%TEMP%` un certificato TLS autofirmato, un'identità OpenPGP con passphrase e TOTP casuali, un piccolo archivio di documenti sintetici e un server HTTPS stateful in ascolto esclusivamente su `127.0.0.1`. Il trust TLS viene applicato soltanto ai processi avviati dal runner: l'archivio certificati di Windows non viene modificato.
+
+Per aprire l'app con un laboratorio v4 o v5:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v4
+.\run_offline_lab.ps1 -Profile v5
+```
+
+Il terminale mostra URL, fingerprint, percorso della chiave privata, passphrase, TOTP e cartella dei documenti da inserire nell'app. Ogni password sintetica contiene il marcatore `LAB-ONLY-NOT-A-REAL-SECRET`. Alla chiusura dell'app il server viene arrestato e il workspace temporaneo viene cancellato. `-KeepWorkspace` ne impedisce la rimozione soltanto per una diagnosi esplicita; il contenuto resta materiale di laboratorio e deve comunque essere eliminato dopo l'uso.
+
+Sono disponibili scenari di autenticazione negativa:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Scenario mfa-rejected
+.\run_offline_lab.ps1 -Profile v5 -Scenario session-expired
+```
+
+Le fault injection monouso consentono inoltre di simulare una risposta HTTP 500 alla prossima creazione di risorsa, cartella o condivisione, oppure la scadenza della sessione:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-500
+.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-500
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-500
+.\run_offline_lab.ps1 -Profile v5 -Fault expire-session
+```
+
+Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le sette prove della matrice e verifica che non restino oggetti nel simulatore:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v4 -SelfTest
+.\run_offline_lab.ps1 -Profile v5 -SelfTest
+```
+
+Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
 ## Matrice di integrazione v4/v5
 
@@ -189,6 +228,8 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
+La versione 0.21.0 introduce un laboratorio Passbolt offline, effimero e ripetibile per i profili v4/v5. La matrice automatica verifica entrambi i profili a ogni quality gate; scenari negativi e fault injection consentono di riprodurre errori di autenticazione o scrittura senza accesso al server reale. Il simulatore non sostituisce la validazione di compatibilità su istanze Passbolt dedicate.
+
 La versione 0.20.1 introduce il quality gate Windows riproducibile. `run_tests.ps1` è il punto di ingresso locale e la stessa procedura viene eseguita su GitHub Actions a ogni push su `main`, pull request o avvio manuale. La CI installa esclusivamente dipendenze bloccate, non conserva credenziali Git nel checkout e non può avviare la matrice contro istanze Passbolt reali. Le anteprime pubblicate come artefatti contengono soltanto lo stato iniziale vuoto dell'app.
 
 La versione 0.20.0 introduce una nuova interfaccia chiara ispirata alle applicazioni Apple, mantenendo la struttura operativa già nota. La navigazione laterale mostra sempre la fase corrente e quelle disponibili; card, campi, menu, tabelle e tab condividono ora un unico design system. Nella fase 04 sessione sicura e destinazione sono affiancate, così il piano resta visibile anche senza massimizzare la finestra. L'aggiornamento non modifica protocolli, endpoint, contenuto dei piani o conferme.
@@ -221,7 +262,7 @@ La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella des
 
 I registri attivi sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. L'archiviazione li sposta sotto `Reconciliation\Archive\<stato>` e non elimina l'evidenza. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali.
 
-La prossima fase della roadmap eseguirà e chiuderà la matrice 0.19.0 su due istanze di laboratorio reali, una v4 e una v5, conservando soltanto i report sanitizzati fuori dal repository. Dopo il completamento di tutti i sedici scenari per entrambi i profili seguirà la preparazione della distribuzione Windows, inclusi pacchetto riproducibile, firma/verifica degli artefatti e guida di aggiornamento. Il supporto ad altri provider MFA resta saltato come scelta di scope.
+Finché le istanze reali non sono disponibili, la roadmap prosegue estendendo le prove stateful e i percorsi di errore nel laboratorio offline. Quando tornerà disponibile l'accesso a Passbolt, verrà chiusa la matrice 0.19.0 su due istanze dedicate, una v4 e una v5, conservando soltanto i report sanitizzati fuori dal repository. Dopo il completamento dei sedici scenari per entrambi i profili seguirà la preparazione della distribuzione Windows, inclusi pacchetto riproducibile, firma/verifica degli artefatti e guida di aggiornamento. Il supporto ad altri provider MFA resta saltato come scelta di scope.
 
 ## Contribuire
 

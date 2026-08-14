@@ -28,7 +28,7 @@ Prima di aprire una pull request esegui:
 .\run_tests.ps1 -Ci
 ```
 
-Il test JavaScript deve restare isolato su `127.0.0.1` e non deve contattare servizi reali. La modalità CI blocca `integration-matrix run`; non rimuovere o aggirare questa protezione per eseguire prove automatiche contro un'istanza Passbolt.
+I server di test devono restare isolati su `127.0.0.1` e non devono contattare servizi reali. Il laboratorio offline deve usare soltanto identità e documenti sintetici, non deve registrare corpi HTTP e deve rimuovere il workspace temporaneo al termine. La modalità CI blocca `integration-matrix run`; non rimuovere o aggirare questa protezione per eseguire prove automatiche contro un'istanza Passbolt.
 
 ## Pull request
 

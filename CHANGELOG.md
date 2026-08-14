@@ -2,6 +2,25 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.21.0 - 2026-08-14
+
+### Added
+
+- aggiunto `run_offline_lab.ps1`, che genera un laboratorio HTTPS effimero su `127.0.0.1` e avvia l'app con identità OpenPGP, passphrase, TOTP e documenti esclusivamente sintetici;
+- aggiunto un simulatore stateful dei contratti Passbolt usati dall'app, con profili v4/v5, creazione di cartelle e risorse, condivisione, letture ACL, GPGAuth e MFA;
+- aggiunti gli scenari negativi `mfa-rejected` e `session-expired` e fault injection monouso per creazione risorsa, creazione cartella, condivisione e scadenza della sessione;
+- aggiunti smoke test end-to-end v4/v5 al quality gate e test Python per certificato TLS, dataset sintetico, revisione mascherata e confinamento del workspace temporaneo.
+
+### Fixed
+
+- corretto il validatore della matrice quando un dry-run verso la radice restituisce correttamente `folder_format_selected: null`.
+- corretto il runner dei test in Windows PowerShell 5.1, che poteva interpretare un input standard opzionale non fornito come stringa vuota e promuovere l'output di `unittest` a errore nativo.
+
+### Security
+
+- il laboratorio accetta connessioni soltanto sul loopback, non registra i corpi delle richieste, non modifica il trust store di Windows e cancella automaticamente chiavi, certificati, credenziali e documenti sintetici alla chiusura;
+- lo smoke test usa soltanto i sette scenari read-only e verifica che il simulatore non contenga cartelle o risorse residue.
+
 ## 0.20.1 - 2026-08-14
 
 ### Added

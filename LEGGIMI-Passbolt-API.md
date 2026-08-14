@@ -10,11 +10,17 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.20.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.21.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
 
-### Quality gate Windows 0.20.1
+### Laboratorio Passbolt offline 0.21.0
 
-`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 105 test Python, suite OpenPGP, autoverifica dei 109 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
+`run_offline_lab.ps1` avvia su `127.0.0.1` un server HTTPS effimero che implementa i contratti v4/v5 esercitati dall'app: healthcheck, GPGAuth, MFA TOTP, identità, settings, resource types, directory dei destinatari, cartelle, risorse, segreti, simulazione/condivisione e logout. Lo stato remoto resta in memoria per la durata della sessione e supporta fault injection monouso; certificato, chiavi OpenPGP, passphrase, TOTP e dataset sintetico vengono generati sotto `%TEMP%` e rimossi alla chiusura.
+
+Il self-test usa la matrice read-only esistente e pretende sette scenari superati e zero oggetti remoti. Il laboratorio non è un'implementazione completa di Passbolt e non sostituisce la matrice finale su istanze reali dedicate.
+
+### Quality gate Windows 0.20.1, esteso in 0.21.0
+
+`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 109 test Python, suite OpenPGP, matrici offline v4/v5, autoverifica dei 109 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
 
 Il workflow `.github/workflows/windows-quality.yml` esegue lo stesso comando su `windows-latest` con Python 3.12 e Node.js 24. Il token GitHub ha il solo permesso `contents: read`, le credenziali del checkout non sono persistite e pnpm installa il lockfile senza lifecycle script. Le otto PNG conservate come artefatto per sette giorni mostrano esclusivamente lo stato iniziale vuoto delle quattro fasi.
 

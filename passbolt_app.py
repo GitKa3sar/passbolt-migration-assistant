@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 APP_TITLE = "Passbolt Migration Assistant"
-APP_VERSION = "0.20.1"
+APP_VERSION = "0.21.0"
 ROOT_CLIENT_LABEL = "(radice)"
 
 SUPPORTED_EXTENSIONS = {

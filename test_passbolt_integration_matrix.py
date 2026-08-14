@@ -72,6 +72,14 @@ class FakeBridge:
         raise AssertionError(command)
 
 
+class NullRootFolderFormatBridge(FakeBridge):
+    def request(self, request):
+        response = super().request(request)
+        if request["command"] == "session-readiness" and request["destination_mode"] == "root":
+            response["result"]["folder_format_selected"] = None
+        return response
+
+
 class IntegrationMatrixTests(unittest.TestCase):
     def profile(self, **overrides):
         values = {
@@ -155,6 +163,19 @@ class IntegrationMatrixTests(unittest.TestCase):
             self.assertNotIn(forbidden, serialized)
         self.assertEqual(report["remote_writes_performed"], 0)
         self.assertEqual(report["report_digest"], matrix.calculate_report_digest(report))
+
+    def test_root_readiness_accepts_null_folder_format(self):
+        report = matrix.run_instance(
+            self.profile(),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "123456",
+            probe_runner=self.probe,
+            bridge_factory=lambda: NullRootFolderFormatBridge(),
+        )
+        scenario = next(item for item in report["scenarios"] if item["name"] == "resource_root_dry_run")
+        self.assertEqual(scenario["status"], "passed")
+        self.assertIsNone(scenario["metrics"]["folder_format_selected"])
 
     def test_bridge_receives_secrets_only_in_session_open(self):
         bridge = FakeBridge()
