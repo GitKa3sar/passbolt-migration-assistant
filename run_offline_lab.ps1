@@ -7,6 +7,7 @@ param(
     [ValidateSet("none", "next-resource-create-500", "next-folder-create-500", "next-share-500", "expire-session")]
     [string]$Fault = "none",
     [switch]$SelfTest,
+    [switch]$AcceptanceTest,
     [switch]$KeepWorkspace
 )
 
@@ -17,6 +18,7 @@ $ProjectRoot = $PSScriptRoot
 $SetupScript = Join-Path $ProjectRoot "offline_lab_setup.py"
 $ServerScript = Join-Path $ProjectRoot "offline_lab_server.mjs"
 $SmokeScript = Join-Path $ProjectRoot "offline_lab_smoke.py"
+$AcceptanceScript = Join-Path $ProjectRoot "offline_lab_acceptance.py"
 $AppScript = Join-Path $ProjectRoot "PassboltApp.ps1"
 $WindowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $BundledRoot = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies"
@@ -72,7 +74,10 @@ if ([string]::IsNullOrWhiteSpace($PythonExecutable)) {
 if ([string]::IsNullOrWhiteSpace($NodeExecutable)) {
     throw "Node.js 18 o superiore non trovato."
 }
-if (-not $SelfTest -and -not (Test-Path -LiteralPath $WindowsPowerShell -PathType Leaf)) {
+if ($SelfTest -and $AcceptanceTest) {
+    throw "SelfTest e AcceptanceTest sono modalita' alternative."
+}
+if (-not $SelfTest -and -not $AcceptanceTest -and -not (Test-Path -LiteralPath $WindowsPowerShell -PathType Leaf)) {
     throw "Windows PowerShell non trovato."
 }
 
@@ -148,6 +153,16 @@ try {
             throw "Smoke test del laboratorio offline non riuscito: $SafeSmokeText"
         }
         $SmokeOutput | ForEach-Object { Write-Host ([string]$_) }
+    } elseif ($AcceptanceTest) {
+        if ($Scenario -ne "healthy" -or $Fault -ne "none") {
+            throw "AcceptanceTest richiede Scenario healthy e Fault none."
+        }
+        $AcceptanceOutput = & $PythonExecutable $AcceptanceScript --ready-file $ReadyFile 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $SafeAcceptanceText = ($AcceptanceOutput | ForEach-Object { [string]$_ }) -join "`n"
+            throw "Accettazione stateful del laboratorio offline non riuscita: $SafeAcceptanceText"
+        }
+        $AcceptanceOutput | ForEach-Object { Write-Host ([string]$_) }
     } else {
         Write-Host ""
         Write-Host "Laboratorio Passbolt offline pronto" -ForegroundColor Green

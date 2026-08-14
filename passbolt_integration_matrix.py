@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 from passbolt_api_probe import ProbeError, normalize_base_url, normalize_fingerprint, run_probe
 
 
-APP_VERSION = "0.22.0"
+APP_VERSION = "0.23.0"
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 CI_ENVIRONMENT_VARIABLES = ("CI", "GITHUB_ACTIONS", "PASSBOLT_MIGRATION_CI")
@@ -318,7 +318,12 @@ class JsonLineBridge:
         self.reader.start()
         return self
 
-    def request(self, document: Mapping[str, Any]) -> dict[str, Any]:
+    def request(
+        self,
+        document: Mapping[str, Any],
+        *,
+        progress_handler: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         process = self.process
         if process is None or process.stdin is None or process.poll() is not None:
             raise MatrixError("La sessione OpenPGP locale non è disponibile.")
@@ -347,7 +352,13 @@ class JsonLineBridge:
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise MatrixError("Il bridge OpenPGP ha restituito JSON non valido.") from exc
             if isinstance(envelope, dict) and envelope.get("type") == "progress":
-                raise MatrixError("Il bridge ha segnalato una scrittura inattesa durante una prova in sola lettura.")
+                if progress_handler is None:
+                    raise MatrixError("Il bridge ha segnalato una scrittura inattesa durante una prova in sola lettura.")
+                try:
+                    progress_handler(envelope)
+                except Exception as exc:
+                    raise MatrixError("Un avanzamento stateful del laboratorio non e' valido.") from exc
+                continue
             if not isinstance(envelope, dict) or type(envelope.get("ok")) is not bool:
                 raise MatrixError("Il bridge OpenPGP ha restituito una struttura inattesa.")
             return envelope

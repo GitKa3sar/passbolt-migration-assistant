@@ -14,7 +14,7 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.22.0';
+const APP_VERSION = '0.23.0';
 const INPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILES = new Set(['v4', 'v5']);
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
@@ -176,7 +176,7 @@ async function createLab(options) {
   const mfaCookie = randomBytes(18).toString('hex');
   const authToken = `gpgauthv1.3.0|36|${randomUUID()}|gpgauthv1.3.0`;
 
-  const [serverGenerated, userGenerated, recipientGenerated] = await Promise.all([
+  const [serverGenerated, userGenerated, recipientGenerated, metadataGenerated] = await Promise.all([
     openpgp.generateKey({
       type: 'ecc',
       curve: 'curve25519',
@@ -196,16 +196,30 @@ async function createLab(options) {
       userIDs: [{ name: 'Offline Lab Recipient', email: 'recipient@offline-lab.example.invalid' }],
       format: 'armored',
     }),
+    openpgp.generateKey({
+      type: 'ecc',
+      curve: 'curve25519',
+      userIDs: [{ name: 'Offline Lab Metadata', email: 'metadata@offline-lab.example.invalid' }],
+      format: 'armored',
+    }),
   ]);
   await writeFile(userPrivateKeyPath, userGenerated.privateKey, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 
   const serverPrivateKey = await openpgp.readPrivateKey({ armoredKey: serverGenerated.privateKey });
   const serverPublicKey = await openpgp.readKey({ armoredKey: serverGenerated.publicKey });
   const userPublicKey = await openpgp.readKey({ armoredKey: userGenerated.publicKey });
+  const userPrivateKey = await openpgp.decryptKey({
+    privateKey: await openpgp.readPrivateKey({ armoredKey: userGenerated.privateKey }),
+    passphrase: userPassphrase,
+  });
   const recipientPublicKey = await openpgp.readKey({ armoredKey: recipientGenerated.publicKey });
+  const metadataPublicKey = await openpgp.readKey({ armoredKey: metadataGenerated.publicKey });
   const serverFingerprint = serverPublicKey.getFingerprint().toUpperCase();
   const userFingerprint = userPublicKey.getFingerprint().toUpperCase();
   const recipientFingerprint = recipientPublicKey.getFingerprint().toUpperCase();
+  const metadataFingerprint = metadataPublicKey.getFingerprint().toUpperCase();
+  const metadataKeyId = '77777777-7777-4777-8777-777777777777';
+  let metadataPrivateKeyEnvelope = '';
 
   const userId = '11111111-1111-4111-8111-111111111111';
   const userGpgKeyId = '22222222-2222-4222-8222-222222222222';
@@ -226,6 +240,55 @@ async function createLab(options) {
     if (state.fault !== name) return false;
     state.fault = 'none';
     return true;
+  }
+
+  function sharedTarget(objectType, objectId) {
+    const collection = objectType === 'resource'
+      ? state.resources
+      : (objectType === 'folder' ? state.folders : null);
+    return collection?.find((item) => item.id === objectId) ?? null;
+  }
+
+  function effectiveUsers(permissions) {
+    const result = new Set();
+    for (const permission of Array.isArray(permissions) ? permissions : []) {
+      if (!permission || Number(permission.type) < 1) continue;
+      if (permission.aro === 'User' && permission.aro_foreign_key) {
+        result.add(String(permission.aro_foreign_key));
+      } else if (permission.aro === 'Group' && permission.aro_foreign_key === groupId) {
+        // The synthetic directory contains exactly one member in this group.
+        result.add(recipientId);
+      }
+    }
+    return result;
+  }
+
+  function permissionsAfterChanges(currentPermissions, rawChanges, objectType, objectId) {
+    const permissions = Array.isArray(currentPermissions)
+      ? currentPermissions.map((permission) => ({ ...permission }))
+      : [];
+    for (const change of Array.isArray(rawChanges) ? rawChanges : []) {
+      if (!change || typeof change !== 'object') continue;
+      const matchIndex = permissions.findIndex((permission) => (
+        (change.id && permission.id === change.id)
+        || (permission.aro === change.aro && permission.aro_foreign_key === change.aro_foreign_key)
+      ));
+      if (change.delete === true) {
+        if (matchIndex >= 0) permissions.splice(matchIndex, 1);
+        continue;
+      }
+      const normalized = {
+        id: matchIndex >= 0 ? permissions[matchIndex].id : randomUUID(),
+        aco: objectType === 'resource' ? 'Resource' : 'Folder',
+        aco_foreign_key: objectId,
+        aro: change.aro,
+        aro_foreign_key: change.aro_foreign_key,
+        type: Number(change.type),
+      };
+      if (matchIndex >= 0) permissions[matchIndex] = normalized;
+      else permissions.push(normalized);
+    }
+    return permissions;
   }
 
   const server = createServer({ key: tlsPrivateKey, cert: tlsCertificate }, async (request, response) => {
@@ -414,7 +477,20 @@ async function createLab(options) {
         return;
       }
       if (request.method === 'GET' && url.pathname === '/metadata/keys.json') {
-        send(response, 200, apiSuccess([]));
+        send(response, 200, apiSuccess(profile === 'v5' ? [{
+          id: metadataKeyId,
+          fingerprint: metadataFingerprint,
+          armored_key: metadataGenerated.publicKey,
+          created: '2026-01-02T00:00:00Z',
+          expired: null,
+          deleted: null,
+          metadata_private_keys: [{
+            id: '88888888-8888-4888-8888-888888888888',
+            metadata_key_id: metadataKeyId,
+            user_id: userId,
+            data: metadataPrivateKeyEnvelope,
+          }],
+        }] : []));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/resource-types.json') {
@@ -571,10 +647,31 @@ async function createLab(options) {
       }
       if (request.method === 'POST' && url.pathname.startsWith('/share/simulate/')) {
         const payload = await requestJson(request);
-        const additions = Array.isArray(payload?.permissions)
-          ? payload.permissions.filter((item) => item?.delete !== true).map((item) => ({ [item.aro]: { id: item.aro_foreign_key } }))
-          : [];
-        send(response, 200, apiSuccess({ changes: { added: additions, removed: [] } }));
+        const pathParts = url.pathname.split('/');
+        const objectType = pathParts[3];
+        const objectId = pathParts[4]?.replace(/\.json$/, '');
+        const target = sharedTarget(objectType, objectId);
+        if (!target) {
+          send(response, 404, apiError('Offline-lab simulation target not found.', 404));
+          return;
+        }
+        const before = effectiveUsers(target.permissions);
+        const simulatedPermissions = permissionsAfterChanges(
+          target.permissions,
+          payload?.permissions,
+          objectType,
+          objectId,
+        );
+        const after = effectiveUsers(simulatedPermissions);
+        const additions = [...after]
+          .filter((userIdValue) => !before.has(userIdValue))
+          .sort()
+          .map((userIdValue) => ({ User: { id: userIdValue } }));
+        const removals = [...before]
+          .filter((userIdValue) => !after.has(userIdValue))
+          .sort()
+          .map((userIdValue) => ({ User: { id: userIdValue } }));
+        send(response, 200, apiSuccess({ changes: { added: additions, removed: removals } }));
         return;
       }
       if (request.method === 'PUT' && url.pathname.startsWith('/share/')) {
@@ -586,34 +683,17 @@ async function createLab(options) {
         const pathParts = url.pathname.split('/');
         const objectType = pathParts[2];
         const objectId = pathParts[3]?.replace(/\.json$/, '');
-        const collection = objectType === 'resource' ? state.resources : (objectType === 'folder' ? state.folders : null);
-        const target = collection?.find((item) => item.id === objectId);
+        const target = sharedTarget(objectType, objectId);
         if (!target) {
           send(response, 404, apiError('Offline-lab share target not found.', 404));
           return;
         }
-        const permissions = Array.isArray(target.permissions) ? [...target.permissions] : [];
-        for (const change of Array.isArray(payload?.permissions) ? payload.permissions : []) {
-          const matchIndex = permissions.findIndex((permission) => (
-            (change.id && permission.id === change.id)
-            || (permission.aro === change.aro && permission.aro_foreign_key === change.aro_foreign_key)
-          ));
-          if (change.delete === true) {
-            if (matchIndex >= 0) permissions.splice(matchIndex, 1);
-            continue;
-          }
-          const normalized = {
-            id: matchIndex >= 0 ? permissions[matchIndex].id : randomUUID(),
-            aco: objectType === 'resource' ? 'Resource' : 'Folder',
-            aco_foreign_key: objectId,
-            aro: change.aro,
-            aro_foreign_key: change.aro_foreign_key,
-            type: Number(change.type),
-          };
-          if (matchIndex >= 0) permissions[matchIndex] = normalized;
-          else permissions.push(normalized);
-        }
-        target.permissions = permissions;
+        target.permissions = permissionsAfterChanges(
+          target.permissions,
+          payload?.permissions,
+          objectType,
+          objectId,
+        );
         if (objectType === 'resource' && Array.isArray(payload?.secrets)) {
           for (const secret of payload.secrets) {
             const existingIndex = target.secrets.findIndex((item) => item.user_id === secret.user_id);
@@ -642,6 +722,19 @@ async function createLab(options) {
   const address = server.address();
   if (!address || typeof address !== 'object') fail('Indirizzo del laboratorio non disponibile.');
   const baseUrl = `https://localhost:${address.port}`;
+  metadataPrivateKeyEnvelope = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: JSON.stringify({
+      object_type: 'PASSBOLT_METADATA_PRIVATE_KEY',
+      domain: baseUrl,
+      fingerprint: metadataFingerprint,
+      armored_key: metadataGenerated.privateKey,
+      passphrase: '',
+      signed: '2026-01-02T00:00:00Z',
+    }) }),
+    encryptionKeys: userPublicKey,
+    signingKeys: userPrivateKey,
+    format: 'armored',
+  });
   const ready = {
     schema_version: 1,
     app_version: APP_VERSION,
@@ -673,6 +766,9 @@ async function main() {
       profiles: [...PROFILES],
       scenarios: [...SCENARIOS],
       faults: [...FAULTS],
+      stateful_acceptance_scenarios: 9,
+      effective_acl_simulation: true,
+      shared_v5_metadata_key: true,
       loopback_only: true,
       request_bodies_logged: false,
       contains_real_credentials: false,

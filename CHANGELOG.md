@@ -2,6 +2,28 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.0 - 2026-08-14
+
+### Added
+
+- aggiunto `offline_lab_acceptance.py`, runner separato che esegue nel simulatore effimero tutti i nove scenari operativi della matrice: import in radice, nuova cartella cliente, destinazione esistente, duplicati, condivisione personalizzata, ACL additiva/restrittiva e recuperi import/ACL;
+- aggiunta la modalità `-AcceptanceTest` a `run_offline_lab.ps1`, disponibile per entrambi i profili v4 e v5 e incompatibile con scenari o fault iniziali diversi da quelli sicuri previsti;
+- aggiunte una chiave metadati condivisa v5 sintetica e la relativa copia privata cifrata e firmata per l'identità temporanea del laboratorio;
+- integrati nel quality gate 18 scenari stateful offline, oltre alle due matrici read-only già esistenti.
+
+### Changed
+
+- il simulatore calcola ora gli utenti effettivi prima e dopo una modifica ACL, espandendo il gruppo sintetico e restituendo insiemi `added`/`removed` esatti per aggiunte, upgrade, downgrade e revoche;
+- il bridge della matrice può inoltrare progressi a un validatore esplicito soltanto quando il chiamante stateful lo richiede; le prove read-only continuano a rifiutare qualsiasi envelope di scrittura;
+- aggiornati versione applicativa, documentazione e riepilogo del quality gate a `0.23.0` e 114 test Python.
+
+### Security
+
+- l'accettazione mutativa accetta esclusivamente un endpoint `https://localhost` proveniente dal manifesto sintetico validato, usa il certificato temporaneo dedicato e non può trasformare il risultato in un'attestazione di istanza reale;
+- passphrase, TOTP, token del laboratorio e password sintetiche vengono passati soltanto in memoria, azzerati dopo l'uso e cercati esplicitamente nel report finale, che contiene solo nomi di scenario, stati e contatori;
+- ogni envelope di avanzamento stateful è limitato, legato all'UUID del lotto e rifiutato se contiene campi sensibili come password, chiavi, dati cifrati, metadati delle credenziali o descrizioni;
+- i fault HTTP 500 sono monouso, il runner verifica che nessun fault resti attivo e il workspace temporaneo viene rimosso al termine anche in caso di errore.
+
 ## 0.22.0 - 2026-08-14
 
 ### Added

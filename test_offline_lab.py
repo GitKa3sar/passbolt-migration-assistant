@@ -11,11 +11,18 @@ from pathlib import Path
 
 from cryptography import x509
 
+from offline_lab_acceptance import (
+    OfflineAcceptanceError,
+    STATEFUL_SCENARIOS,
+    _acl_recovery_state,
+    _validate_progress,
+)
 from offline_lab_setup import (
     LAB_MARKER,
     OfflineLabSetupError,
     create_offline_lab_workspace,
 )
+from passbolt_integration_matrix import MANUAL_SCENARIOS
 from passbolt_review import analyze_files
 
 
@@ -69,6 +76,66 @@ class OfflineLabSetupTests(unittest.TestCase):
         outside = Path(__file__).resolve().parent / f"passbolt-offline-lab-{uuid.uuid4().hex}"
         with self.assertRaisesRegex(OfflineLabSetupError, "directory temporanea"):
             create_offline_lab_workspace(outside)
+
+    def test_stateful_acceptance_covers_every_real_manual_scenario(self) -> None:
+        self.assertEqual(STATEFUL_SCENARIOS, MANUAL_SCENARIOS)
+
+    def test_stateful_progress_is_bounded_and_rejects_sensitive_fields(self) -> None:
+        batch_id = "11111111-1111-4111-8111-111111111111"
+        events: list[dict[str, object]] = []
+        _validate_progress(
+            {
+                "type": "progress",
+                "batch_id": batch_id,
+                "event_type": "resource_verified",
+                "payload": {
+                    "candidate_id": "candidate-id",
+                    "resource_id": "resource-id",
+                    "metadata_match": True,
+                    "content_match": True,
+                    "destination_match": True,
+                    "acl_match": True,
+                },
+            },
+            batch_id,
+            events,  # type: ignore[arg-type]
+        )
+        self.assertEqual(len(events), 1)
+        with self.assertRaisesRegex(OfflineAcceptanceError, "sensibile"):
+            _validate_progress(
+                {
+                    "type": "progress",
+                    "batch_id": batch_id,
+                    "event_type": "resource_verified",
+                    "payload": {"password": "must-not-pass"},
+                },
+                batch_id,
+                [],
+            )
+
+    def test_acl_recovery_state_contains_only_digest_bound_plan_data(self) -> None:
+        plan = {
+            "object": {"object_type": "resource", "object_id": "resource-id"},
+            "object_state_digest": "1" * 64,
+            "desired_acl_digest": "2" * 64,
+            "plan_digest": "3" * 64,
+            "desired_permissions": [
+                {"aro": "User", "aro_foreign_key": "recipient-id", "type": 7}
+            ],
+            "change_count": 1,
+            "counts": {"add": 1, "upgrade": 0, "downgrade": 0, "revoke": 0},
+            "apply_mode": "additive",
+            "password": "must-not-pass",
+        }
+
+        state = _acl_recovery_state(
+            "22222222-2222-4222-8222-222222222222", plan
+        )
+
+        self.assertEqual(state["change_count"], 1)
+        self.assertEqual(state["add_count"], 1)
+        self.assertNotIn("password", state)
+        self.assertNotIn("must-not-pass", json.dumps(state))
 
 
 if __name__ == "__main__":
