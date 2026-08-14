@@ -2,6 +2,27 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.22.0 - 2026-08-14
+
+### Added
+
+- aggiunta nella fase 04 una dashboard operativa del lotto con avanzamento live, fase corrente, operazione corrente, risorse create e verificate, errori, tempo trascorso, stima residua e timeline limitata agli ultimi 300 eventi;
+- aggiunto il centro **Preflight**, che nella sessione autenticata verifica identità, CSRF, formati v4/v5, chiavi metadati, cataloghi remoti, directory dei permessi, diritto sulla destinazione e conflitti prima di abilitare la conferma;
+- aggiunta la verifica automatica post-importazione: ogni risorsa creata viene riletta da Passbolt, i metadati v5 e il contenuto vengono decifrati e verificati localmente, quindi cartella e ACL vengono confrontate esattamente con il piano;
+- aggiunta una scheda **Verifica finale** con l'esito separato di metadati, contenuto, cartella e ACL per ciascuna risorsa.
+
+### Changed
+
+- gli eventi di avanzamento della normale importazione vengono inoltrati alla GUI soltanto dopo essere stati validati e sincronizzati nel journal locale;
+- `batch_completed` viene emesso soltanto dopo la verifica delle risorse e include il conteggio verificato; un errore di rilettura o una difformità lascia il lotto nello stato recuperabile;
+- esteso il laboratorio offline stateful con rilettura puntuale delle risorse e applicazione persistente delle ACL, così i test coprono il ciclo scrittura-rilettura v4/v5.
+
+### Security
+
+- dashboard e journal ricevono esclusivamente identificatori tecnici, conteggi, stati e risultati booleani; password, testo decifrato, passphrase, TOTP e hash dei segreti non vengono serializzati;
+- la verifica del contenuto usa la chiave privata soltanto nel processo Node già autenticato e richiede una firma OpenPGP valida dell'utente; il testo in chiaro viene eliminato insieme alle risorse in memoria al termine del comando;
+- una verifica post-importazione incompleta non viene trasformata in successo: il journal resta privo dell'evento terminale e richiede la riconciliazione autenticata.
+
 ## 0.21.0 - 2026-08-14
 
 ### Added

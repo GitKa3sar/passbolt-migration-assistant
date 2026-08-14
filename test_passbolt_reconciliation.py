@@ -319,6 +319,83 @@ class ReconciliationJournalTests(unittest.TestCase):
                 outcome="confirmed",
             )
 
+    def test_post_import_verification_is_bound_to_created_resource(self) -> None:
+        journal = self.create_journal()
+        operation_id = str(uuid.uuid4())
+        resource_id = str(uuid.uuid4())
+        journal.append(
+            "operation_intent",
+            operation_id=operation_id,
+            object_type="resource",
+            action="create_resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+        )
+        journal.append(
+            "resource_created",
+            operation_id=operation_id,
+            resource_id=resource_id,
+            candidate_id="aaaaaaaaaaaaaaaa",
+            status="created",
+        )
+        with self.assertRaises(ReconciliationJournalError):
+            journal.append(
+                "resource_verified",
+                resource_id=str(uuid.uuid4()),
+                candidate_id="aaaaaaaaaaaaaaaa",
+                metadata_match=True,
+                content_match=True,
+                destination_match=True,
+                acl_match=True,
+            )
+        journal.append(
+            "resource_verified",
+            resource_id=resource_id,
+            candidate_id="aaaaaaaaaaaaaaaa",
+            metadata_match=True,
+            content_match=True,
+            destination_match=True,
+            acl_match=True,
+        )
+        journal.append(
+            "batch_completed",
+            created_folder_count=0,
+            reconciled_folder_count=0,
+            created_resource_count=1,
+            shared_resource_count=0,
+            skipped_duplicate_count=1,
+            verified_resource_count=1,
+        )
+        self.assertTrue(journal.read().complete)
+
+    def test_post_import_verification_rejects_partial_boolean_results(self) -> None:
+        journal = self.create_journal()
+        operation_id = str(uuid.uuid4())
+        resource_id = str(uuid.uuid4())
+        journal.append(
+            "operation_intent",
+            operation_id=operation_id,
+            object_type="resource",
+            action="create_resource",
+            candidate_id="aaaaaaaaaaaaaaaa",
+        )
+        journal.append(
+            "resource_created",
+            operation_id=operation_id,
+            resource_id=resource_id,
+            candidate_id="aaaaaaaaaaaaaaaa",
+            status="created",
+        )
+        with self.assertRaises(ReconciliationJournalError):
+            journal.append(
+                "resource_verified",
+                resource_id=resource_id,
+                candidate_id="aaaaaaaaaaaaaaaa",
+                metadata_match=True,
+                content_match=False,
+                destination_match=True,
+                acl_match=True,
+            )
+
     def test_duplicate_json_keys_are_rejected_even_when_values_match(self) -> None:
         journal = self.create_journal()
         raw = journal.path.read_bytes()

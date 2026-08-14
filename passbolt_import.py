@@ -64,7 +64,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.21.0"
+APP_VERSION = "0.22.0"
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 64 * 1024 * 1024
 MAX_BRIDGE_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -1339,6 +1339,36 @@ class _SessionReconciliationCoordinator:
                 raise ImportPreparationError(
                     "La risposta finale dell’importazione non è valida."
                 )
+            terminal_payload = snapshot.events[-1].get("payload", {})
+            if isinstance(terminal_payload, Mapping) and (
+                "verified_resource_count" in terminal_payload
+            ):
+                verified_count = terminal_payload["verified_resource_count"]
+                verification_results = result.get("verification_results")
+                if (
+                    result.get("verification_status") != "verified"
+                    or type(result.get("verified_resource_count")) is not int
+                    or result.get("verified_resource_count") != verified_count
+                    or not isinstance(verification_results, list)
+                    or len(verification_results) != verified_count
+                    or any(
+                        not isinstance(item, Mapping)
+                        or item.get("status") != "verified"
+                        or any(
+                            item.get(field) is not True
+                            for field in (
+                                "metadata_match",
+                                "content_match",
+                                "destination_match",
+                                "acl_match",
+                            )
+                        )
+                        for item in verification_results
+                    )
+                ):
+                    raise ImportPreparationError(
+                        "La risposta della verifica post-importazione non è coerente con il registro locale."
+                    )
             result["reconciliation_batch_id"] = batch_id
             result["reconciliation_status"] = "complete"
         else:
@@ -1780,6 +1810,15 @@ def run_import_session(
     opened = False
     reconciliation = _SessionReconciliationCoordinator(journal_root)
     acl_reconciliation = _SessionAclCoordinator(acl_journal_root)
+
+    def persist_and_forward_import_progress(
+        envelope: Mapping[str, Any],
+    ) -> None:
+        # The GUI only sees a progress envelope after the same event has been
+        # durably appended and validated by the local reconciliation journal.
+        reconciliation.persist_progress(envelope)
+        _write_json(dict(envelope), flush=True)
+
     try:
         while True:
             raw = sys.stdin.buffer.readline(MAX_STDIN_BYTES + 1)
@@ -1841,22 +1880,25 @@ def run_import_session(
                         process,
                         bridge_request,
                         progress_handler=(
-                            reconciliation.persist_progress
-                            if command
-                            in {
-                                "session-import",
-                                "session-recovery-readiness",
-                                "session-recovery-import",
-                            }
+                            persist_and_forward_import_progress
+                            if command == "session-import"
                             else (
-                                acl_reconciliation.persist_progress
+                                reconciliation.persist_progress
                                 if command
                                 in {
-                                    "session-acl-apply",
-                                    "session-acl-recovery-readiness",
-                                    "session-acl-recovery-apply",
+                                    "session-recovery-readiness",
+                                    "session-recovery-import",
                                 }
-                                else None
+                                else (
+                                    acl_reconciliation.persist_progress
+                                    if command
+                                    in {
+                                        "session-acl-apply",
+                                        "session-acl-recovery-readiness",
+                                        "session-acl-recovery-apply",
+                                    }
+                                    else None
+                                )
                             )
                         ),
                     )
@@ -2160,6 +2202,9 @@ def main() -> int:
                     "source_hash_required": True,
                     "persistent_session_protocol": True,
                     "reconciliation_progress_protocol": True,
+                    "dashboard_progress_forwarding": True,
+                    "authenticated_preflight_protocol": True,
+                    "post_import_verification_protocol": True,
                     "authenticated_recovery_protocol": True,
                     "recovery_management_protocol": True,
                     "recoverable_archive_protocol": True,

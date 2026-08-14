@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.21.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.22.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -29,7 +29,10 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - journal ACL dedicato e recupero idempotente delle risposte incerte, senza ripetere una scrittura quando Passbolt contiene già il risultato atteso;
 - gestione locale dei journal ACL con elenco completo degli stati attivi, filtri, dettaglio tecnico sicuro e archiviazione non distruttiva;
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
+- centro preflight autenticato con controlli espliciti di identità, CSRF, formati v4/v5, chiavi metadati, cataloghi, destinazione, directory permessi e conflitti;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
+- dashboard operativa del lotto con avanzamento live, fase e operazione correnti, contatori, tempi e timeline priva di segreti;
+- verifica automatica dopo la scrittura di metadati, contenuto cifrato, cartella e ACL, con esito per risorsa e blocco fail-closed in caso di difformità;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
 - matrice di integrazione ripetibile per laboratori Passbolt v4/v5, con sette prove automatizzate in sola lettura, nove attestazioni operative e report sanitizzati con digest;
@@ -71,6 +74,8 @@ Al primo utilizzo:
 3. leggere e confermare la fingerprint OpenPGP rilevata automaticamente, confrontandola alla prima connessione con il valore comunicato dall'amministratore tramite un canale indipendente;
 4. selezionare la cartella locale contenente i documenti da inventariare;
 5. completare revisione, mappatura delle destinazioni, eventuale configurazione dei permessi e dry-run prima di autorizzare la scrittura.
+
+Il pulsante **Preflight e dry-run** prepara il piano senza modificare Passbolt e popola la scheda **Preflight**. La conferma resta disabilitata se almeno un controllo è bloccante. Durante la scrittura, la scheda **Attività lotto** mostra soltanto eventi già registrati nel journal locale; non visualizza password, passphrase o MFA. Prima di dichiarare il successo, l'app rilegge ogni risorsa creata e confronta metadati, contenuto decifrato in memoria, cartella e ACL con il piano. La scheda **Verifica finale** conserva soltanto gli esiti booleani e i titoli già presenti nella revisione locale.
 
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
 

@@ -105,6 +105,19 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"operation_id", "resource_id", "candidate_id", "status"}),
         frozenset({"recipient_count", "permission_change_count"}),
     ),
+    "resource_verified": (
+        frozenset(
+            {
+                "resource_id",
+                "candidate_id",
+                "metadata_match",
+                "content_match",
+                "destination_match",
+                "acl_match",
+            }
+        ),
+        frozenset(),
+    ),
     "duplicate_skipped": (
         frozenset({"candidate_id", "duplicate_kind"}),
         frozenset({"resource_id"}),
@@ -156,7 +169,7 @@ _EVENT_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
                 "skipped_duplicate_count",
             }
         ),
-        frozenset(),
+        frozenset({"verified_resource_count"}),
     ),
 }
 
@@ -682,6 +695,7 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
         "verified_operation_count",
         "remote_success_count",
         "retry_count",
+        "verified_resource_count",
     ):
         if field in data:
             data[field] = _count(data[field], field.replace("_", " ").capitalize())
@@ -719,6 +733,25 @@ def _event_payload(event_type: str, value: Mapping[str, Any]) -> dict[str, Any]:
             raise ReconciliationJournalError("Stato di creazione risorsa non valido.")
         if event_type == "resource_shared" and data["status"] != "created_shared":
             raise ReconciliationJournalError("Stato di condivisione risorsa non valido.")
+    if event_type == "resource_verified":
+        for field in (
+            "metadata_match",
+            "content_match",
+            "destination_match",
+            "acl_match",
+        ):
+            if type(data[field]) is not bool:
+                raise ReconciliationJournalError("Esito della verifica risorsa non valido.")
+        if not all(
+            data[field]
+            for field in (
+                "metadata_match",
+                "content_match",
+                "destination_match",
+                "acl_match",
+            )
+        ):
+            raise ReconciliationJournalError("La verifica risorsa non e completa.")
     if event_type == "duplicate_skipped":
         data["duplicate_kind"] = str(data["duplicate_kind"]).strip().lower()
         if data["duplicate_kind"] not in _DUPLICATE_KINDS:
@@ -776,6 +809,8 @@ def _make_record(
 def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
     operations: dict[str, dict[str, Any]] = {}
     completed_operations: set[str] = set()
+    created_resources: dict[str, str] = {}
+    verified_resources: set[str] = set()
     verifications: dict[str, dict[str, dict[str, Any]]] = {}
     completed_recoveries: set[str] = set()
     folder_actions = {"create_folder", "share_folder", "reconcile_folder"}
@@ -881,7 +916,24 @@ def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
                 )
                 if payload["status"] != expected_status:
                     raise ReconciliationJournalError("Stato cartella non coerente.")
+            if event_type == "resource_created":
+                candidate_id = str(payload["candidate_id"])
+                if candidate_id in created_resources:
+                    raise ReconciliationJournalError("Risorsa creata due volte per lo stesso candidato.")
+                created_resources[candidate_id] = str(payload["resource_id"])
             completed_operations.add(operation_id)
+            continue
+
+        if event_type == "resource_verified":
+            candidate_id = str(payload["candidate_id"])
+            resource_id = str(payload["resource_id"])
+            if created_resources.get(candidate_id) != resource_id:
+                raise ReconciliationJournalError(
+                    "Verifica risorsa senza una creazione coerente nel lotto."
+                )
+            if candidate_id in verified_resources:
+                raise ReconciliationJournalError("Risorsa verificata due volte nel lotto.")
+            verified_resources.add(candidate_id)
             continue
 
         if event_type == "operation_verified":
@@ -970,6 +1022,15 @@ def _validate_event_flow(events: Sequence[Mapping[str, Any]]) -> None:
                 raise ReconciliationJournalError(
                     "Il lotto non può chiudersi con operazioni aperte."
                 )
+            if "verified_resource_count" in payload:
+                if payload["verified_resource_count"] != len(verified_resources):
+                    raise ReconciliationJournalError(
+                        "Conteggio delle risorse verificate non coerente."
+                    )
+                if set(created_resources) != verified_resources:
+                    raise ReconciliationJournalError(
+                        "Il lotto non può chiudersi con risorse non verificate."
+                    )
 
     if manifested_candidate_count != expected_candidate_count:
         raise ReconciliationJournalError("Manifesto candidati incompleto.")

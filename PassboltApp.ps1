@@ -62,7 +62,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.21.0"
+        Title="Passbolt Migration Assistant - v0.22.0"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -734,12 +734,13 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                 <ComboBoxItem Content="v4 - metadati in chiaro" Tag="v4" />
                                 <ComboBoxItem Content="v5 - metadati cifrati" Tag="v5" />
                             </ComboBox>
-                            <Button x:Name="DryRunButton" Grid.Row="5" Grid.Column="2" Content="Verifica e dry-run" Style="{StaticResource PrimaryButton}" Margin="8,8,0,0" IsEnabled="False" />
+                            <Button x:Name="DryRunButton" Grid.Row="5" Grid.Column="2" Content="Preflight e dry-run" Style="{StaticResource PrimaryButton}" Margin="8,8,0,0" IsEnabled="False" />
                         </Grid>
                     </Grid>
                 </Border>
 
-                <TabControl x:Name="ImportModeTabs" Grid.Row="3" Grid.RowSpan="2" Margin="0,12,0,0">
+                <ScrollViewer Grid.Row="3" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,12,0,0">
+                <TabControl x:Name="ImportModeTabs" MinHeight="340" Margin="0,0,4,0">
                     <TabItem Header="Nuova importazione">
                         <Grid Margin="8,10,8,8">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -750,26 +751,100 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                 <Border Grid.Column="2" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Duplicati esatti" Foreground="#66737F" /><TextBlock x:Name="ImportMetricDuplicates" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
                                 <Border Grid.Column="3" Style="{StaticResource Card}" Margin="5,0,0,0"><StackPanel><TextBlock Text="Cartelle nuove" Foreground="#66737F" /><TextBlock x:Name="ImportMetricExisting" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
                             </Grid>
-                            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0" Padding="0">
-                                <Grid>
-                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                    <Border Grid.Row="0" Background="#F8F8FA" BorderBrush="#E5E5EA" BorderThickness="0,0,0,1" Padding="14,10">
-                                        <TextBlock x:Name="ImportIdentity" Text="Eseguire il dry-run per verificare identit&#xE0; e piano." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
+                            <TabControl x:Name="ImportWorkspaceTabs" Grid.Row="1">
+                                <TabItem Header="Piano">
+                                    <Border Style="{StaticResource Card}" Margin="0" Padding="0">
+                                        <Grid>
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                            <Border Grid.Row="0" Background="#F8F8FA" BorderBrush="#E5E5EA" BorderThickness="0,0,0,1" Padding="14,10">
+                                                <TextBlock x:Name="ImportIdentity" Text="Eseguire il preflight per verificare identit&#xE0; e piano." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
+                                            </Border>
+                                            <DataGrid x:Name="ImportPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Azione" Binding="{Binding ActionLabel}" Width="205" />
+                                                    <DataGridTextColumn Header="Destinazione" Binding="{Binding Destination}" Width="190" />
+                                                    <DataGridTextColumn Header="Titolo" Binding="{Binding Title}" Width="165" />
+                                                    <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="150" />
+                                                    <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" MinWidth="180" />
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                            <Border Grid.Row="2" Style="{StaticResource WarningBanner}">
+                                                <TextBlock x:Name="ImportPlanStatus" Text="Nessuna richiesta sar&#xE0; inviata finch&#xE9; non viene avviato il preflight." Foreground="#8A5A00" FontSize="11" TextWrapping="Wrap" />
+                                            </Border>
+                                        </Grid>
                                     </Border>
-                                    <DataGrid x:Name="ImportPlanGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                                        <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Azione" Binding="{Binding ActionLabel}" Width="205" />
-                                            <DataGridTextColumn Header="Destinazione" Binding="{Binding Destination}" Width="190" />
-                                            <DataGridTextColumn Header="Titolo" Binding="{Binding Title}" Width="165" />
-                                            <DataGridTextColumn Header="Username" Binding="{Binding Username}" Width="150" />
-                                            <DataGridTextColumn Header="URL / host" Binding="{Binding Uri}" Width="*" MinWidth="180" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                    <Border Grid.Row="2" Style="{StaticResource WarningBanner}">
-                                        <TextBlock x:Name="ImportPlanStatus" Text="Nessuna richiesta sar&#xE0; inviata finch&#xE9; non viene avviato il dry-run." Foreground="#8A5A00" FontSize="11" TextWrapping="Wrap" />
+                                </TabItem>
+                                <TabItem Header="Preflight">
+                                    <Border Style="{StaticResource Card}" Margin="0" Padding="0">
+                                        <Grid>
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                            <Border Grid.Row="0" Style="{StaticResource InfoBanner}" Margin="10,10,10,6">
+                                                <TextBlock x:Name="PreflightStatus" Text="Eseguire il preflight autenticato per controllare compatibilit&#xE0;, destinazione e permessi." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
+                                            </Border>
+                                            <DataGrid x:Name="PreflightGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Controllo" Binding="{Binding CheckLabel}" Width="210" />
+                                                    <DataGridTextColumn Header="Esito" Binding="{Binding StatusLabel}" Width="125" />
+                                                    <DataGridTextColumn Header="Dettaglio" Binding="{Binding Detail}" Width="*" MinWidth="340" />
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Grid>
                                     </Border>
-                                </Grid>
-                            </Border>
+                                </TabItem>
+                                <TabItem Header="Verifica finale">
+                                    <Border Style="{StaticResource Card}" Margin="0" Padding="0">
+                                        <Grid>
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                            <Border Grid.Row="0" Style="{StaticResource InfoBanner}" Margin="10,10,10,6">
+                                                <TextBlock x:Name="VerificationStatus" Text="Dopo l'importazione, ogni risorsa verr&#xE0; riletta e confrontata senza conservare password o hash dei segreti." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
+                                            </Border>
+                                            <DataGrid x:Name="VerificationGrid" Grid.Row="1" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Risorsa" Binding="{Binding Title}" Width="*" MinWidth="190" />
+                                                    <DataGridTextColumn Header="Metadati" Binding="{Binding MetadataLabel}" Width="105" />
+                                                    <DataGridTextColumn Header="Contenuto" Binding="{Binding ContentLabel}" Width="105" />
+                                                    <DataGridTextColumn Header="Cartella" Binding="{Binding DestinationLabel}" Width="105" />
+                                                    <DataGridTextColumn Header="ACL" Binding="{Binding AclLabel}" Width="105" />
+                                                    <DataGridTextColumn Header="Esito" Binding="{Binding StatusLabel}" Width="115" />
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Grid>
+                                    </Border>
+                                </TabItem>
+                                <TabItem Header="Attivit&#xE0; lotto">
+                                    <Border Style="{StaticResource Card}" Margin="0" Padding="14,12">
+                                        <Grid>
+                                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                            <Grid Grid.Row="0">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock x:Name="BatchPhase" Text="Lotto non avviato" FontSize="14" FontWeight="SemiBold" Foreground="#1D1D1F" />
+                                                    <TextBlock x:Name="BatchCurrentOperation" Text="Gli eventi compariranno qui durante l'importazione." Foreground="#66737F" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                                <TextBlock x:Name="BatchProgressText" Grid.Column="1" Text="0%" FontSize="20" FontWeight="Bold" Foreground="#007AFF" VerticalAlignment="Center" />
+                                            </Grid>
+                                            <ProgressBar x:Name="BatchProgressBar" Grid.Row="1" Height="8" Minimum="0" Maximum="100" Value="0" Margin="0,10,0,10" Foreground="#007AFF" Background="#E5E5EA" BorderThickness="0" />
+                                            <Grid Grid.Row="2" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0"><TextBlock Text="Completate" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="BatchMetricCompleted" Text="0 / 0" FontWeight="SemiBold" /></StackPanel>
+                                                <StackPanel Grid.Column="1"><TextBlock Text="Create" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="BatchMetricCreated" Text="0" FontWeight="SemiBold" /></StackPanel>
+                                                <StackPanel Grid.Column="2"><TextBlock Text="Verificate" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="BatchMetricVerified" Text="0" FontWeight="SemiBold" Foreground="#16875D" /></StackPanel>
+                                                <StackPanel Grid.Column="3"><TextBlock Text="Errori" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="BatchMetricErrors" Text="0" FontWeight="SemiBold" Foreground="#C9342F" /></StackPanel>
+                                                <StackPanel Grid.Column="4"><TextBlock Text="Trascorso" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="BatchElapsed" Text="00:00" FontWeight="SemiBold" /></StackPanel>
+                                                <StackPanel Grid.Column="5"><TextBlock Text="Stima residua" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="BatchEta" Text="&#x2014;" FontWeight="SemiBold" /></StackPanel>
+                                            </Grid>
+                                            <DataGrid x:Name="BatchActivityGrid" Grid.Row="3" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Single" IsReadOnly="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Ora" Binding="{Binding Time}" Width="80" />
+                                                    <DataGridTextColumn Header="Fase" Binding="{Binding Phase}" Width="145" />
+                                                    <DataGridTextColumn Header="Oggetto" Binding="{Binding Object}" Width="155" />
+                                                    <DataGridTextColumn Header="Stato" Binding="{Binding Status}" Width="*" MinWidth="260" />
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Grid>
+                                    </Border>
+                                </TabItem>
+                            </TabControl>
                             <Grid Grid.Row="2" Margin="0,12,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <Button x:Name="ImportBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
@@ -915,6 +990,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                         </Grid>
                     </TabItem>
                 </TabControl>
+                </ScrollViewer>
             </Grid>
         </Grid>
     </Grid>
@@ -992,6 +1068,7 @@ $PrepareImportButton = Get-Control "PrepareImportButton"
 $ImportPage = Get-Control "ImportPage"
 $ImportSummary = Get-Control "ImportSummary"
 $ImportModeTabs = Get-Control "ImportModeTabs"
+$ImportWorkspaceTabs = Get-Control "ImportWorkspaceTabs"
 $PrivateKeyPath = Get-Control "PrivateKeyPath"
 $BrowseKeyButton = Get-Control "BrowseKeyButton"
 $KeyPassphrase = Get-Control "KeyPassphrase"
@@ -1012,6 +1089,21 @@ $ImportMetricExisting = Get-Control "ImportMetricExisting"
 $ImportIdentity = Get-Control "ImportIdentity"
 $ImportPlanGrid = Get-Control "ImportPlanGrid"
 $ImportPlanStatus = Get-Control "ImportPlanStatus"
+$PreflightStatus = Get-Control "PreflightStatus"
+$PreflightGrid = Get-Control "PreflightGrid"
+$VerificationStatus = Get-Control "VerificationStatus"
+$VerificationGrid = Get-Control "VerificationGrid"
+$BatchPhase = Get-Control "BatchPhase"
+$BatchCurrentOperation = Get-Control "BatchCurrentOperation"
+$BatchProgressText = Get-Control "BatchProgressText"
+$BatchProgressBar = Get-Control "BatchProgressBar"
+$BatchMetricCompleted = Get-Control "BatchMetricCompleted"
+$BatchMetricCreated = Get-Control "BatchMetricCreated"
+$BatchMetricVerified = Get-Control "BatchMetricVerified"
+$BatchMetricErrors = Get-Control "BatchMetricErrors"
+$BatchElapsed = Get-Control "BatchElapsed"
+$BatchEta = Get-Control "BatchEta"
+$BatchActivityGrid = Get-Control "BatchActivityGrid"
 $ImportBackButton = Get-Control "ImportBackButton"
 $ConfirmationHint = Get-Control "ConfirmationHint"
 $ImportConfirmation = Get-Control "ImportConfirmation"
@@ -1064,6 +1156,7 @@ $script:ImportSourceFilePasswords = @{}
 $script:ImportPlan = $null
 $script:ImportPlanKeyPath = ""
 $script:ImportCompleted = $false
+$script:ImportDashboard = $null
 $script:ImportSessionProcess = $null
 $script:ImportSessionErrorTask = $null
 $script:ImportSessionId = ""
@@ -1270,7 +1363,8 @@ function Start-ImportSessionProcess {
 
 function Invoke-ImportSessionJson(
     [object]$InputObject,
-    [int]$TimeoutMilliseconds = 180000
+    [int]$TimeoutMilliseconds = 180000,
+    [scriptblock]$ProgressHandler = $null
 ) {
     if (-not (Test-ImportSessionActive) -and [string]$InputObject.command -ne "session-open") {
         throw "La sessione sicura di importazione non e' attiva."
@@ -1292,28 +1386,44 @@ function Invoke-ImportSessionJson(
     }
     $PayloadBytes = $null
     try {
-        $OutputTask = $script:ImportSessionProcess.StandardOutput.ReadLineAsync()
         $PayloadBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Payload + "`n")
         $script:ImportSessionProcess.StandardInput.BaseStream.Write($PayloadBytes, 0, $PayloadBytes.Length)
         $script:ImportSessionProcess.StandardInput.BaseStream.Flush()
-        if (-not $OutputTask.Wait($TimeoutMilliseconds)) {
-            try { $script:ImportSessionProcess.Kill() } catch {}
-            throw "Timeout della sessione sicura locale."
+        $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($true) {
+            $Remaining = $TimeoutMilliseconds - [int]$Stopwatch.ElapsedMilliseconds
+            if ($Remaining -le 0) {
+                try { $script:ImportSessionProcess.Kill() } catch {}
+                throw "Timeout della sessione sicura locale."
+            }
+            $OutputTask = $script:ImportSessionProcess.StandardOutput.ReadLineAsync()
+            if (-not $OutputTask.Wait($Remaining)) {
+                try { $script:ImportSessionProcess.Kill() } catch {}
+                throw "Timeout della sessione sicura locale."
+            }
+            $Output = $OutputTask.Result
+            if ([string]::IsNullOrWhiteSpace($Output) -or $Output.Length -gt 67108864) {
+                throw "La sessione sicura locale non ha restituito un risultato valido."
+            }
+            try {
+                $Envelope = $Output | ConvertFrom-Json
+            } catch {
+                throw "La sessione sicura locale ha restituito dati non validi."
+            }
+            if ($null -ne $Envelope -and [string]$Envelope.type -eq "progress") {
+                if ($null -eq $ProgressHandler) {
+                    throw "La sessione sicura locale ha restituito un avanzamento inatteso."
+                }
+                & $ProgressHandler $Envelope
+                $script:ImportSessionLastActivityUtc = [DateTime]::UtcNow
+                continue
+            }
+            if ($null -eq $Envelope -or -not ($Envelope.PSObject.Properties.Name -contains "ok")) {
+                throw "La sessione sicura locale ha restituito una struttura inattesa."
+            }
+            $script:ImportSessionLastActivityUtc = [DateTime]::UtcNow
+            return $Envelope
         }
-        $Output = $OutputTask.Result
-        if ([string]::IsNullOrWhiteSpace($Output) -or $Output.Length -gt 67108864) {
-            throw "La sessione sicura locale non ha restituito un risultato valido."
-        }
-        try {
-            $Envelope = $Output | ConvertFrom-Json
-        } catch {
-            throw "La sessione sicura locale ha restituito dati non validi."
-        }
-        if ($null -eq $Envelope -or -not ($Envelope.PSObject.Properties.Name -contains "ok")) {
-            throw "La sessione sicura locale ha restituito una struttura inattesa."
-        }
-        $script:ImportSessionLastActivityUtc = [DateTime]::UtcNow
-        return $Envelope
     } catch {
         try {
             if ($null -ne $script:ImportSessionProcess -and -not $script:ImportSessionProcess.HasExited) {
@@ -1819,6 +1929,185 @@ function Invoke-ArchiveRecoveryBatch([switch]$AlreadyConfirmed) {
     } finally {
         Update-RecoveryActionState
     }
+}
+
+function Reset-ImportOperationalViews {
+    $script:ImportDashboard = $null
+    $PreflightGrid.ItemsSource = $null
+    $PreflightStatus.Text = "Eseguire il preflight autenticato per controllare compatibilita', destinazione e permessi."
+    $PreflightStatus.Foreground = Get-Brush "#355E85"
+    $VerificationGrid.ItemsSource = $null
+    $VerificationStatus.Text = "Dopo l'importazione, ogni risorsa verra' riletta e confrontata senza conservare password o hash dei segreti."
+    $VerificationStatus.Foreground = Get-Brush "#355E85"
+    $BatchPhase.Text = "Lotto non avviato"
+    $BatchCurrentOperation.Text = "Gli eventi compariranno qui durante l'importazione."
+    $BatchProgressText.Text = "0%"
+    $BatchProgressBar.Value = 0
+    $BatchMetricCompleted.Text = "0 / 0"
+    $BatchMetricCreated.Text = "0"
+    $BatchMetricVerified.Text = "0"
+    $BatchMetricErrors.Text = "0"
+    $BatchElapsed.Text = "00:00"
+    $BatchEta.Text = [string][char]0x2014
+    $BatchActivityGrid.ItemsSource = $null
+}
+
+function Get-ImportDurationLabel([TimeSpan]$Duration) {
+    if ($Duration.TotalHours -ge 1) { return "{0:00}:{1:00}:{2:00}" -f [int]$Duration.TotalHours, $Duration.Minutes, $Duration.Seconds }
+    return "{0:00}:{1:00}" -f $Duration.Minutes, $Duration.Seconds
+}
+
+function Update-ImportDashboardMetrics {
+    if ($null -eq $script:ImportDashboard) { return }
+    $Dashboard = $script:ImportDashboard
+    $Elapsed = [DateTime]::UtcNow - $Dashboard.StartedUtc
+    $Completed = $Dashboard.CompletedCandidateIds.Count
+    $WorkDone = $Completed + $Dashboard.CreatedCandidateIds.Count + $Dashboard.CompletedFolderIds.Count
+    $Percent = if ($Dashboard.TotalWorkUnits -gt 0) {
+        [Math]::Min(100, [Math]::Round(($WorkDone * 100.0) / $Dashboard.TotalWorkUnits))
+    } else { 0 }
+    if ($Dashboard.Finished) { $Percent = 100 }
+    $BatchProgressBar.Value = $Percent
+    $BatchProgressText.Text = "$Percent%"
+    $BatchMetricCompleted.Text = "$Completed / $($Dashboard.TotalCandidates)"
+    $BatchMetricCreated.Text = [string]$Dashboard.CreatedCandidateIds.Count
+    $BatchMetricVerified.Text = [string]$Dashboard.VerifiedCandidateIds.Count
+    $BatchMetricErrors.Text = [string]$Dashboard.ErrorCount
+    $BatchElapsed.Text = Get-ImportDurationLabel $Elapsed
+    if (-not $Dashboard.Finished -and $WorkDone -gt 0 -and $WorkDone -lt $Dashboard.TotalWorkUnits) {
+        $SecondsPerUnit = $Elapsed.TotalSeconds / $WorkDone
+        $Remaining = [TimeSpan]::FromSeconds([Math]::Max(0, $SecondsPerUnit * ($Dashboard.TotalWorkUnits - $WorkDone)))
+        $BatchEta.Text = Get-ImportDurationLabel $Remaining
+    } elseif ($Dashboard.Finished) {
+        $BatchEta.Text = "00:00"
+    } else {
+        $BatchEta.Text = [string][char]0x2014
+    }
+}
+
+function Add-ImportDashboardEvent(
+    [string]$Phase,
+    [string]$ObjectLabel,
+    [string]$Status
+) {
+    if ($null -eq $script:ImportDashboard) { return }
+    $Activity = $script:ImportDashboard.Activity
+    $Activity.Add([pscustomobject]@{
+        Time = Get-Date -Format "HH:mm:ss"
+        Phase = $Phase
+        Object = $ObjectLabel
+        Status = $Status
+    })
+    while ($Activity.Count -gt 300) { $Activity.RemoveAt(0) }
+    if ($Activity.Count -gt 0) {
+        try { $BatchActivityGrid.ScrollIntoView($Activity[$Activity.Count - 1]) } catch {}
+    }
+}
+
+function Initialize-ImportDashboard([int]$CreateCount, [int]$DuplicateCount, [int]$FolderOperationCount = 0) {
+    $TitleByCandidate = @{}
+    foreach ($Candidate in @($script:ImportCandidates)) {
+        $TitleByCandidate[[string]$Candidate.candidate_id] = [string]$Candidate.title
+    }
+    $Activity = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
+    $script:ImportDashboard = [pscustomobject]@{
+        StartedUtc = [DateTime]::UtcNow
+        TotalCandidates = $CreateCount + $DuplicateCount
+        TotalWorkUnits = ($CreateCount * 2) + $DuplicateCount + $FolderOperationCount
+        CreatedCandidateIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        VerifiedCandidateIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        CompletedCandidateIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        CompletedFolderIds = New-Object 'System.Collections.Generic.HashSet[string]'
+        TitleByCandidate = $TitleByCandidate
+        ErrorCount = 0
+        Finished = $false
+        Activity = $Activity
+    }
+    $BatchActivityGrid.ItemsSource = $Activity
+    $BatchPhase.Text = "Preparazione del lotto"
+    $BatchCurrentOperation.Text = "Il journal locale e' pronto; attesa della prima operazione Passbolt."
+    $ImportWorkspaceTabs.SelectedIndex = 3
+    Add-ImportDashboardEvent "Preparazione" "Lotto" "Avvio confermato"
+    Update-ImportDashboardMetrics
+    Update-Ui
+}
+
+function Get-ImportDashboardObjectLabel([object]$Payload) {
+    $CandidateId = [string]$Payload.candidate_id
+    if ($CandidateId -and $null -ne $script:ImportDashboard -and $script:ImportDashboard.TitleByCandidate.ContainsKey($CandidateId)) {
+        return [string]$script:ImportDashboard.TitleByCandidate[$CandidateId]
+    }
+    if ([string]$Payload.object_type -eq "folder" -or -not [string]::IsNullOrWhiteSpace([string]$Payload.folder_id)) { return "Cartella" }
+    if ([string]$Payload.object_type -eq "resource" -or -not [string]::IsNullOrWhiteSpace([string]$Payload.resource_id)) { return "Risorsa" }
+    return "Lotto"
+}
+
+function Update-ImportDashboardProgress([object]$Envelope) {
+    if ($null -eq $script:ImportDashboard -or [string]$Envelope.type -ne "progress") { return }
+    $EventType = [string]$Envelope.event_type
+    $Payload = $Envelope.payload
+    $ObjectLabel = Get-ImportDashboardObjectLabel $Payload
+    $Phase = "Scrittura"
+    $Status = $EventType
+    switch ($EventType) {
+        "operation_intent" {
+            $Phase = if ([string]$Payload.object_type -eq "folder") { "Cartelle" } else { "Risorse" }
+            $Status = switch ([string]$Payload.action) {
+                "create_folder" { "Creazione in corso" }
+                "share_folder" { "Applicazione permessi" }
+                "reconcile_folder" { "Riconciliazione permessi" }
+                "create_resource" { "Creazione in corso" }
+                "share_resource" { "Condivisione in corso" }
+                default { "Operazione in corso" }
+            }
+        }
+        "folder_created" {
+            $Phase = "Cartelle"; $Status = "Creata"
+            [void]$script:ImportDashboard.CompletedFolderIds.Add([string]$Payload.folder_id)
+        }
+        "folder_shared" {
+            $Phase = "Cartelle"; $Status = "Permessi applicati"
+            [void]$script:ImportDashboard.CompletedFolderIds.Add([string]$Payload.folder_id)
+        }
+        "resource_created" {
+            $Phase = "Risorse"; $Status = "Creata"
+            [void]$script:ImportDashboard.CreatedCandidateIds.Add([string]$Payload.candidate_id)
+        }
+        "resource_shared" { $Phase = "Risorse"; $Status = "Condivisa" }
+        "resource_verified" {
+            $Phase = "Verifica finale"; $Status = "Metadati, contenuto, cartella e ACL verificati"
+            [void]$script:ImportDashboard.VerifiedCandidateIds.Add([string]$Payload.candidate_id)
+            [void]$script:ImportDashboard.CompletedCandidateIds.Add([string]$Payload.candidate_id)
+        }
+        "duplicate_skipped" {
+            $Phase = "Duplicati"; $Status = "Saltato in sicurezza"
+            [void]$script:ImportDashboard.CompletedCandidateIds.Add([string]$Payload.candidate_id)
+        }
+        "operation_failed" {
+            $Phase = "Errore"; $Status = "Operazione non completata ($([string]$Payload.error_code))"
+            $script:ImportDashboard.ErrorCount++
+        }
+        "batch_completed" {
+            $Phase = "Completamento"; $Status = "Journal chiuso dopo la verifica"
+            $script:ImportDashboard.Finished = $true
+            $BatchPhase.Text = "Lotto completato e verificato"
+        }
+    }
+    if ($EventType -ne "batch_completed") { $BatchPhase.Text = $Phase }
+    $BatchCurrentOperation.Text = "$ObjectLabel - $Status"
+    Add-ImportDashboardEvent $Phase $ObjectLabel $Status
+    Update-ImportDashboardMetrics
+    Update-Ui
+}
+
+function Set-ImportDashboardFailure([string]$Message) {
+    if ($null -eq $script:ImportDashboard) { return }
+    if ($script:ImportDashboard.ErrorCount -eq 0) { $script:ImportDashboard.ErrorCount = 1 }
+    $BatchPhase.Text = "Lotto interrotto: verifica richiesta"
+    $BatchCurrentOperation.Text = $Message
+    Add-ImportDashboardEvent "Errore" "Lotto" "Interrotto; usare il recupero guidato"
+    Update-ImportDashboardMetrics
+    Update-Ui
 }
 
 function Reset-ImportPlan([string]$Status = "Eseguire il dry-run per preparare un nuovo piano.") {
@@ -3856,6 +4145,7 @@ function Open-ImportPreparation {
     } else {
         "Candidati preparati. Selezionare la chiave privata, inserire passphrase e MFA, quindi avviare la sessione."
     }
+    Reset-ImportOperationalViews
     Reset-ImportPlan $PreparationStatus
     $StepImportNumber.Foreground = Get-Brush "#007AFF"
     $StepImportText.Foreground = Get-Brush "#3A3A3C"
@@ -3880,7 +4170,8 @@ function Invoke-ImportReadiness {
         return
     }
 
-    Reset-ImportPlan "Controllo integrita' e dry-run nella sessione autenticata in corso..."
+    Reset-ImportOperationalViews
+    Reset-ImportPlan "Preflight autenticato e dry-run nella sessione attiva in corso..."
     $DryRunButton.IsEnabled = $false
     $ReadinessRequest = $null
     $ReadinessSourceFilePasswords = @()
@@ -3894,7 +4185,7 @@ function Invoke-ImportReadiness {
     if ($RequestedDestinationMode -notin @("client_folders", "client_mapping", "direct_folder", "root")) { $RequestedDestinationMode = "client_folders" }
     $RequestedDestinationFolderId = if ($RequestedDestinationMode -eq "client_mapping") { "" } else { Get-SelectedDestinationFolderId }
     $RequestedClientDestinationMapping = if ($RequestedDestinationMode -eq "client_mapping") { @(Get-ClientDestinationMappingPayload) } else { @() }
-    Add-Activity "Avvio dry-run nella sessione GPGAuth attiva (risorse $RequestedResourceFormat, cartelle $RequestedFolderFormat)."
+    Add-Activity "Avvio preflight e dry-run nella sessione GPGAuth attiva (risorse $RequestedResourceFormat, cartelle $RequestedFolderFormat)."
     Update-Ui
     try {
         $ReadinessSourceFilePasswords = @(Get-ImportSourceFilePasswordPayload $script:ImportCandidates)
@@ -3920,6 +4211,35 @@ function Invoke-ImportReadiness {
         $script:ImportPlan = $Result
         $script:ImportPlanKeyPath = $script:ImportSessionKeyPath
         Update-DestinationFolderOptions $Result.available_folders ([string]$Result.destination_folder_id)
+
+        $PreflightRows = New-Object System.Collections.Generic.List[object]
+        foreach ($Check in @($Result.preflight_checks)) {
+            $StatusLabel = switch ([string]$Check.status) {
+                "passed" { "Superato" }
+                "warning" { "Attenzione" }
+                "blocked" { "Bloccante" }
+                "not_required" { "Non richiesto" }
+                default { "Sconosciuto" }
+            }
+            $PreflightRows.Add([pscustomobject]@{
+                CheckId = [string]$Check.id
+                CheckLabel = [string]$Check.label
+                Status = [string]$Check.status
+                StatusLabel = $StatusLabel
+                Detail = [string]$Check.detail
+            })
+        }
+        $PreflightGrid.ItemsSource = $PreflightRows.ToArray()
+        $BlockedPreflightCount = @($PreflightRows | Where-Object { $_.Status -eq "blocked" }).Count
+        $WarningPreflightCount = @($PreflightRows | Where-Object { $_.Status -eq "warning" }).Count
+        if ([string]$Result.preflight_status -eq "passed") {
+            $PreflightStatus.Text = "Preflight superato: $($PreflightRows.Count) controlli autenticati; nessun requisito bloccante."
+            $PreflightStatus.Foreground = Get-Brush "#16875D"
+        } else {
+            $PreflightStatus.Text = "Preflight non superato: $BlockedPreflightCount controlli bloccanti e $WarningPreflightCount avvisi. Correggere i punti indicati prima dell'importazione."
+            $PreflightStatus.Foreground = Get-Brush "#C9342F"
+            $ImportWorkspaceTabs.SelectedIndex = 1
+        }
 
         $PlanRows = New-Object System.Collections.Generic.List[object]
         foreach ($Candidate in @($Result.candidates)) {
@@ -3988,10 +4308,10 @@ function Invoke-ImportReadiness {
             $SharingSummary = if ([int]$Result.shared_create_count -gt 0) {
                 " Risorse condivise: $([int]$Result.shared_create_count); copie cifrate complessive: $([int]$Result.encrypted_secret_copy_count)."
             } else { "" }
-            $ImportPlanStatus.Text = "Dry-run completato. Nessuna modifica eseguita; cartelle nuove: $($Result.create_folder_count), da riconciliare: $($Result.reconcile_shared_folder_count), cartelle riutilizzate: $($Result.reuse_folder_count).$SharedFolderSummary$ReconciledFolderSummary$SharingSummary Le cartelle Passbolt sono caricate: se cambi la destinazione, ripeti il dry-run."
+            $ImportPlanStatus.Text = "Preflight e dry-run completati. Nessuna modifica eseguita; cartelle nuove: $($Result.create_folder_count), da riconciliare: $($Result.reconcile_shared_folder_count), cartelle riutilizzate: $($Result.reuse_folder_count).$SharedFolderSummary$ReconciledFolderSummary$SharingSummary Le cartelle Passbolt sono caricate: se cambi la destinazione, ripeti il preflight."
             $ConfirmationHint.Text = "Sessione sicura attiva. Digita: $ExpectedPhrase"
             $ImportConfirmation.IsEnabled = $true
-            Add-Activity "Dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, $($Result.reconcile_shared_folder_count) cartelle da riconciliare, incluse $($Result.create_shared_folder_count) nuove condivise; $($Result.duplicate_count) duplicati nella destinazione."
+            Add-Activity "Preflight superato e dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, $($Result.reconcile_shared_folder_count) cartelle da riconciliare, incluse $($Result.create_shared_folder_count) nuove condivise; $($Result.duplicate_count) duplicati nella destinazione."
         } elseif ([bool]$Result.can_import) {
             $ImportPlanStatus.Text = "Dry-run completato: tutti i candidati selezionati risultano gia' presenti."
             $ConfirmationHint.Text = "Nessuna nuova risorsa da creare."
@@ -4097,11 +4417,15 @@ function Invoke-ConfirmedImport {
         confirmation = "IMPORTA $CreateCount"
     }
     Add-Activity "Avvio importazione confermata di $CreateCount risorse."
+    Initialize-ImportDashboard $CreateCount $DuplicateCount ($CreateFolderCount + $ReconcileSharedFolderCount)
     Update-Ui
     $Envelope = $null
     $CloseSessionForError = $false
     try {
-        $Envelope = Invoke-ImportSessionJson $ExecuteRequest
+        $Envelope = Invoke-ImportSessionJson $ExecuteRequest 3600000 {
+            param($ProgressEnvelope)
+            Update-ImportDashboardProgress $ProgressEnvelope
+        }
         if (-not [bool]$Envelope.ok) {
             $CloseSessionForError = Test-TerminalImportSessionError $Envelope
             $CreatedBeforeFailure = 0
@@ -4129,6 +4453,26 @@ function Invoke-ConfirmedImport {
             throw $Message
         }
         $Result = $Envelope.result
+        $VerificationRows = New-Object System.Collections.Generic.List[object]
+        $TitlesByCandidate = @{}
+        foreach ($Candidate in @($script:ImportCandidates)) {
+            $TitlesByCandidate[[string]$Candidate.candidate_id] = [string]$Candidate.title
+        }
+        foreach ($Verification in @($Result.verification_results)) {
+            $VerificationRows.Add([pscustomobject]@{
+                CandidateId = [string]$Verification.candidate_id
+                Title = if ($TitlesByCandidate.ContainsKey([string]$Verification.candidate_id)) { [string]$TitlesByCandidate[[string]$Verification.candidate_id] } else { "Risorsa creata" }
+                MetadataLabel = if ([bool]$Verification.metadata_match) { "Verificati" } else { "Non conformi" }
+                ContentLabel = if ([bool]$Verification.content_match) { "Verificato" } else { "Non conforme" }
+                DestinationLabel = if ([bool]$Verification.destination_match) { "Corretta" } else { "Non conforme" }
+                AclLabel = if ([bool]$Verification.acl_match) { "Corretta" } else { "Non conforme" }
+                StatusLabel = if ([string]$Verification.status -eq "verified") { "Confermata" } else { "Da verificare" }
+            })
+        }
+        $VerificationGrid.ItemsSource = $VerificationRows.ToArray()
+        $VerificationStatus.Text = "Verifica automatica completata: $([int]$Result.verified_resource_count) risorse rilette; metadati, contenuto cifrato, cartella e ACL coincidono con il piano. Nessuna password o impronta del contenuto e' stata conservata."
+        $VerificationStatus.Foreground = Get-Brush "#16875D"
+        $ImportWorkspaceTabs.SelectedIndex = 2
         $script:ImportCompleted = $true
         $script:ImportPlan = $null
         foreach ($CandidateId in $CreateCandidateIds) {
@@ -4145,27 +4489,28 @@ function Invoke-ConfirmedImport {
         Update-ReviewMetrics
         $ImportConfirmation.Text = ""
         $ImportConfirmation.IsEnabled = $false
-        $ConfirmationHint.Text = "Importazione completata. La sessione resta attiva per il prossimo lotto."
-        $ImportPlanStatus.Text = "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        $ConfirmationHint.Text = "Importazione completata e verificata. La sessione resta attiva per il prossimo lotto."
+        $ImportPlanStatus.Text = "Importazione completata e verificata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create e rilette, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
         foreach ($Row in @($ImportPlanGrid.ItemsSource)) {
             if ($Row.Action -eq "create") { $Row.ActionLabel = "Creata" }
         }
         $ImportPlanGrid.Items.Refresh()
-        Add-Activity "Importazione completata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.created_count) risorse create, incluse $($Result.shared_created_count) condivise; $($Result.skipped_duplicate_count) duplicati saltati."
+        Add-Activity "Importazione completata e verificata: $($Result.created_folder_count) cartelle create, incluse $($Result.shared_created_folder_count) condivise, $($Result.reconciled_shared_folder_count) cartelle riconciliate e $($Result.verified_resource_count) risorse rilette con esito conforme; $($Result.skipped_duplicate_count) duplicati saltati."
         if (-not [string]::IsNullOrWhiteSpace([string]$Result.reconciliation_batch_id)) {
             Add-Activity "Registro locale del lotto $([string]$Result.reconciliation_batch_id) completato."
         }
         Refresh-RecoveryBatches -Quiet
-        [System.Windows.MessageBox]::Show("Importazione completata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle personali riconciliate: $($Result.reconciled_shared_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata", "OK", "Information") | Out-Null
+        [System.Windows.MessageBox]::Show("Importazione completata e verificata correttamente.`n`nCartelle create: $($Result.created_folder_count)`nCartelle condivise create: $($Result.shared_created_folder_count)`nCartelle personali riconciliate: $($Result.reconciled_shared_folder_count)`nCartelle riutilizzate: $($Result.reused_folder_count)`nRisorse create: $($Result.created_count)`nRisorse rilette e conformi: $($Result.verified_resource_count)`nRisorse condivise: $($Result.shared_created_count)`nCopie cifrate complessive: $($Result.encrypted_secret_copy_count)`nDuplicati saltati: $($Result.skipped_duplicate_count)", "Importazione completata e verificata", "OK", "Information") | Out-Null
     } catch {
         $FailureMessage = [string]$_.Exception.Message
+        Set-ImportDashboardFailure $FailureMessage
         if ($CloseSessionForError -or -not (Test-ImportSessionActive)) {
             Stop-ImportSession "" $false
         }
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.21.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.22.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -5253,7 +5598,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.21.0"
+        version = "0.22.0"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         width = $PreviewWidth
@@ -5287,7 +5632,7 @@ if ($SelfTest) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
     }
     if (
-        $Window.Title -notmatch "v0\.21\.0" -or
+        $Window.Title -notmatch "v0\.22\.0" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -5298,7 +5643,8 @@ if ($SelfTest) {
         $null -eq $ClientFolder.Template -or
         $null -eq $DestinationMode.Template -or
         $null -eq $ReviewPasswordToggle.Template -or
-        $null -eq $ImportModeTabs.Template
+        $null -eq $ImportModeTabs.Template -or
+        $null -eq $ImportWorkspaceTabs.Template
     ) {
         throw "Il design system moderno non rispetta il contratto visivo WPF."
     }
@@ -5314,6 +5660,8 @@ import sys
 
 for line in sys.stdin:
     request = json.loads(line.lstrip("\ufeff"))
+    if request.get("command") == "session-progress-probe":
+        print(json.dumps({"type": "progress", "batch_id": "11111111-1111-4111-8111-111111111111", "event_type": "duplicate_skipped", "payload": {"candidate_id": "aaaaaaaaaaaaaaaa", "duplicate_kind": "batch"}}), flush=True)
     print(json.dumps({"ok": True, "result": {"command": request.get("command"), "session_id": request.get("session_id")}}), flush=True)
     if request.get("command") == "session-close":
         break
@@ -5362,6 +5710,16 @@ for line in sys.stdin:
         if (-not $SessionProbeEnvelope.ok -or $SessionProbeEnvelope.result.command -ne "session-readiness" -or $SessionProbeEnvelope.result.session_id -ne "transport-probe") {
             throw "Il protocollo persistente dell'interfaccia non ha restituito la risposta prevista."
         }
+        $ProgressProbeCount = 0
+        $ProgressProbeEnvelope = Invoke-ImportSessionJson ([pscustomobject]@{ command = "session-progress-probe"; session_id = "transport-probe" }) 30000 {
+            param($ProgressEnvelope)
+            if ([string]$ProgressEnvelope.event_type -eq "duplicate_skipped") { $script:ProgressProbeCount = 1 }
+        }
+        $ProgressProbeCount = [int]$script:ProgressProbeCount
+        if (-not $ProgressProbeEnvelope.ok -or $ProgressProbeCount -ne 1) {
+            throw "Il trasporto persistente non inoltra gli eventi live della dashboard."
+        }
+        Remove-Variable -Scope Script -Name ProgressProbeCount -ErrorAction SilentlyContinue
     } finally {
         Stop-ImportSession "" $false
         if (Test-Path -LiteralPath $SessionProbePath -PathType Leaf) {
@@ -5373,11 +5731,11 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
@@ -5397,9 +5755,22 @@ for line in sys.stdin:
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
     }
-    if ($ImportModeTabs.Items.Count -ne 3 -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
+    if ($ImportModeTabs.Items.Count -ne 3 -or $ImportWorkspaceTabs.Items.Count -ne 4 -or $null -eq $PreflightGrid -or $null -eq $VerificationGrid -or $null -eq $BatchActivityGrid -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
         throw "I controlli UI del recupero guidato non sono nello stato fail-closed previsto."
     }
+    $script:ImportCandidates = @(
+        [pscustomobject]@{ candidate_id = "aaaaaaaaaaaaaaaa"; title = "Risorsa dashboard" },
+        [pscustomobject]@{ candidate_id = "bbbbbbbbbbbbbbbb"; title = "Duplicato dashboard" }
+    )
+    Initialize-ImportDashboard 1 1
+    Update-ImportDashboardProgress ([pscustomobject]@{ type = "progress"; event_type = "duplicate_skipped"; payload = [pscustomobject]@{ candidate_id = "bbbbbbbbbbbbbbbb"; duplicate_kind = "batch" } })
+    Update-ImportDashboardProgress ([pscustomobject]@{ type = "progress"; event_type = "resource_created"; payload = [pscustomobject]@{ candidate_id = "aaaaaaaaaaaaaaaa"; resource_id = "11111111-1111-4111-8111-111111111111" } })
+    Update-ImportDashboardProgress ([pscustomobject]@{ type = "progress"; event_type = "resource_verified"; payload = [pscustomobject]@{ candidate_id = "aaaaaaaaaaaaaaaa"; resource_id = "11111111-1111-4111-8111-111111111111" } })
+    Update-ImportDashboardProgress ([pscustomobject]@{ type = "progress"; event_type = "batch_completed"; payload = [pscustomobject]@{ verified_resource_count = 1 } })
+    if ($BatchProgressBar.Value -ne 100 -or [string]$BatchMetricCompleted.Text -ne "2 / 2" -or [string]$BatchMetricVerified.Text -ne "1" -or $BatchActivityGrid.Items.Count -lt 5) {
+        throw "La dashboard operativa non aggiorna avanzamento, duplicati e verifica finale."
+    }
+    Reset-ImportOperationalViews
     if ($null -ne $Window.FindName("ServerFingerprint") -or [string]$DetectedFingerprint.Text -ne "Non ancora rilevata") {
         throw "La configurazione deve rilevare la fingerprint senza richiedere un inserimento manuale."
     }
@@ -5574,10 +5945,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.21.0"
+        version = "0.22.0"
         ui = "WPF"
         phases = 4
-        controls = 109
+        controls = 132
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -5597,6 +5968,9 @@ for line in sys.stdin:
         protected_excel_password_prompt = "OK"
         persistent_import_session = "OK"
         reconciliation_progress_protocol = "OK"
+        batch_dashboard = "OK"
+        authenticated_preflight = "OK"
+        post_import_verification = "OK"
         authenticated_recovery_protocol = "OK"
         guided_recovery_ui = "OK"
         recoverable_journal_archive = "OK"

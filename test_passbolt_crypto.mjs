@@ -13,6 +13,7 @@ import {
   buildResourcePayload,
   classifyRecovery,
   createPlannedContent,
+  verifyCreatedResources,
   encryptSecret,
   permissionMaskDigest,
   readCapabilities,
@@ -256,6 +257,7 @@ async function main() {
   let createdPayloadV5 = null;
   let createdFolderPayload = null;
   let createdFolderRequestCount = 0;
+  let createdResourceReadMode = 'normal';
   let metadataPrivateKeyEnvelope = null;
   let existingV5Metadata = null;
   let existingV5FolderMetadata = null;
@@ -267,6 +269,7 @@ async function main() {
   let includeDuplicatePersonalChild = false;
   let sharedSimulationPayload = null;
   let sharedApplyPayload = null;
+  let sharedApplyTargetPath = '';
   let folderShareSimulationRequestCount = 0;
   let sharedFolderApplyPayload = null;
   let resourceAclMode = 'none';
@@ -581,6 +584,58 @@ async function main() {
         }]));
         return;
       }
+      if (request.method === 'GET' && ['/resources/created-resource-id.json', '/resources/created-v5-resource-id.json'].includes(url.pathname)) {
+        const v5 = url.pathname.includes('created-v5-resource-id');
+        const id = v5 ? 'created-v5-resource-id' : 'created-resource-id';
+        const payload = v5 ? createdPayloadV5 : createdPayload;
+        if (!payload) {
+          send(response, 404, apiError('Created resource not available.'));
+          return;
+        }
+        const owner = {
+          id: v5 ? 'created-v5-resource-permission-id' : 'created-resource-permission-id',
+          aco: 'Resource',
+          aco_foreign_key: id,
+          aro: 'User',
+          aro_foreign_key: 'user-id',
+          type: 15,
+        };
+        const permissions = [owner];
+        if (sharedApplyTargetPath === `/share/resource/${id}.json`) {
+          for (const change of sharedApplyPayload?.permissions ?? []) {
+            if (change.delete === true) continue;
+            const index = permissions.findIndex((item) => item.aro === change.aro && item.aro_foreign_key === change.aro_foreign_key);
+            const applied = {
+              id: index >= 0 ? permissions[index].id : `applied-${permissions.length}`,
+              aco: 'Resource',
+              aco_foreign_key: id,
+              aro: change.aro,
+              aro_foreign_key: change.aro_foreign_key,
+              type: change.type,
+            };
+            if (index >= 0) permissions[index] = applied;
+            else permissions.push(applied);
+          }
+        }
+        send(response, 200, apiSuccess({
+          id,
+          resource_type_id: payload.resource_type_id,
+          folder_parent_id: createdResourceReadMode === 'wrong-folder' ? 'unexpected-folder-id' : (payload.folder_parent_id ?? null),
+          permission: owner,
+          permissions,
+          ...(payload.metadata ? {
+            metadata: payload.metadata,
+            metadata_key_id: payload.metadata_key_id,
+            metadata_key_type: payload.metadata_key_type,
+          } : {
+            name: payload.name,
+            username: payload.username,
+            uri: payload.uri,
+            ...(Object.hasOwn(payload, 'description') ? { description: payload.description } : {}),
+          }),
+        }));
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/secrets/resource/existing-resource-id.json') {
         existingResourceSecretReadCount += 1;
         send(response, 200, apiSuccess({
@@ -589,6 +644,18 @@ async function main() {
           resource_id: 'existing-resource-id',
           data: existingResourceSecret,
         }));
+        return;
+      }
+      if (request.method === 'GET' && ['/secrets/resource/created-resource-id.json', '/secrets/resource/created-v5-resource-id.json'].includes(url.pathname)) {
+        const v5 = url.pathname.includes('created-v5-resource-id');
+        const id = v5 ? 'created-v5-resource-id' : 'created-resource-id';
+        const payload = v5 ? createdPayloadV5 : createdPayload;
+        const data = payload?.secrets?.[0]?.data;
+        if (!data) {
+          send(response, 404, apiError('Created resource secret not available.'));
+          return;
+        }
+        send(response, 200, apiSuccess({ id: `secret-${id}`, user_id: 'user-id', resource_id: id, data }));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/folders.json') {
@@ -722,6 +789,8 @@ async function main() {
           return;
         }
         const requestPayload = await requestJson(request);
+        sharedApplyPayload = null;
+        sharedApplyTargetPath = '';
         if (resourceMode === 'v5') {
           createdPayloadV5 = requestPayload;
           assert.equal(Object.hasOwn(createdPayloadV5, 'name'), false);
@@ -873,6 +942,7 @@ async function main() {
       }
       if (request.method === 'PUT' && url.pathname.startsWith('/share/resource/')) {
         sharedApplyPayload = await requestJson(request);
+        sharedApplyTargetPath = url.pathname;
         if (shareApplyMode === 'failure') {
           send(response, 400, apiError('Mock sharing failure.'));
           return;
@@ -1259,6 +1329,8 @@ async function main() {
       'folder-readonly-id',
     );
     assert.equal(readOnlyDestination.capabilities.can_import, false);
+    assert.equal(readOnlyDestination.capabilities.preflight_status, 'blocked');
+    assert.equal(readOnlyDestination.capabilities.preflight_checks.some((check) => check.id === 'destination_access' && check.status === 'blocked'), true);
     assert.equal(readOnlyDestination.capabilities.available_folders.length, 0);
     assert.match(readOnlyDestination.capabilities.unavailable_reason, /permesso necessario/);
     const readOnlyMapping = await analyzeCapabilities(
@@ -1770,6 +1842,51 @@ async function main() {
     assert.equal(v5CreateResponse.status, 200);
     assert.equal(createdPayloadV5.metadata.includes('Nuovo portale v5'), false);
     assert.equal(createdPayloadV5.secrets[0].data.includes('mock-v5-password'), false);
+    const v5Verification = await verifyCreatedResources(
+      v5Session,
+      [{
+        candidate_id: 'candidate-v5-new',
+        resource_id: 'created-v5-resource-id',
+        folder_parent_id: null,
+        status: 'created',
+        shared: false,
+      }],
+      [v5Analysis.capabilities.candidates.find((candidate) => candidate.candidate_id === 'candidate-v5-new')],
+      [{
+        candidate_id: 'candidate-v5-new',
+        title: 'Nuovo portale v5',
+        username: 'new-v5-user',
+        uri: 'https://new-v5.example.test',
+        password: 'mock-v5-password',
+        description: 'mock v5 description',
+      }],
+      v5Analysis.runtime,
+      keyMaterial,
+      'user-id',
+    );
+    assert.equal(v5Verification[0].metadata_match, true);
+    assert.equal(v5Verification[0].content_match, true);
+    createdResourceReadMode = 'wrong-folder';
+    await assert.rejects(
+      verifyCreatedResources(
+        v5Session,
+        [{ candidate_id: 'candidate-v5-new', resource_id: 'created-v5-resource-id', folder_parent_id: null, status: 'created', shared: false }],
+        [v5Analysis.capabilities.candidates.find((candidate) => candidate.candidate_id === 'candidate-v5-new')],
+        [{
+          candidate_id: 'candidate-v5-new',
+          title: 'Nuovo portale v5',
+          username: 'new-v5-user',
+          uri: 'https://new-v5.example.test',
+          password: 'mock-v5-password',
+          description: 'mock v5 description',
+        }],
+        v5Analysis.runtime,
+        keyMaterial,
+        'user-id',
+      ),
+      (error) => error?.code === 'POST_IMPORT_VERIFICATION_FAILED' && error?.details?.cause_code === 'POST_IMPORT_DESTINATION_MISMATCH',
+    );
+    createdResourceReadMode = 'normal';
 
     personalMetadataMode = true;
     const personalV5Analysis = await analyzeCapabilities(v5Session, v5Authentication.user, v5Candidates, keyMaterial, 'v5');
@@ -2351,10 +2468,11 @@ async function main() {
       'custom',
       customPermissionTemplate,
     );
+    const customPermissionResources = [{ ...persistentCandidates[0], password: 'mock-resource-password', description: 'mock description' }];
     const customPermissionCreated = await createPlannedContent(
       mfaSession,
       customPermissionAnalysis.capabilities.candidates,
-      [{ ...persistentCandidates[0], password: 'mock-resource-password', description: 'mock description' }],
+      customPermissionResources,
       customPermissionAnalysis.runtime,
       keyMaterial,
     );
@@ -2362,6 +2480,16 @@ async function main() {
     assert.equal(customPermissionCreated.created[0].encrypted_secret_copies, 2);
     assert.equal(sharedApplyPayload.permissions.some((permission) => permission.aro === 'User' && permission.aro_foreign_key === 'direct-recipient-id' && permission.type === 7), true);
     assert.equal(JSON.stringify(sharedApplyPayload).includes('mock-resource-password'), false);
+    const customPermissionVerification = await verifyCreatedResources(
+      mfaSession,
+      customPermissionCreated.created,
+      customPermissionAnalysis.capabilities.candidates,
+      customPermissionResources,
+      customPermissionAnalysis.runtime,
+      keyMaterial,
+      'user-id',
+    );
+    assert.equal(customPermissionVerification[0].acl_match, true);
     const customFolderCandidates = [{
       ...persistentCandidates[0],
       candidate_id: 'custom-folder-permission-candidate',
@@ -2440,6 +2568,9 @@ async function main() {
     });
     assert.equal(firstPersistentReadiness.session_id, 'persistent-test-session');
     assert.equal(secondPersistentReadiness.authentication, 'GPGAuth + TOTP');
+    assert.equal(secondPersistentReadiness.preflight_status, 'passed');
+    assert.equal(secondPersistentReadiness.preflight_checks.some((check) => check.id === 'authenticated_identity' && check.status === 'passed'), true);
+    assert.equal(secondPersistentReadiness.preflight_checks.some((check) => check.id === 'resource_format' && check.status === 'passed'), true);
     assert.equal(completedLoginCount, loginCountBeforePersistentRequests);
     const persistentBatchId = 'd688ad13-eef7-4ee4-89ce-13f574fbcfaa';
     const persistentImportProgressStart = persistentProgress.length;
@@ -2462,8 +2593,11 @@ async function main() {
     assert.equal(persistentImport.complete, true);
     assert.deepEqual(
       persistentProgress.slice(persistentImportProgressStart).map((envelope) => envelope.event_type),
-      ['operation_intent', 'resource_created', 'batch_completed'],
+      ['operation_intent', 'resource_created', 'resource_verified', 'batch_completed'],
     );
+    assert.equal(persistentImport.verification_status, 'verified');
+    assert.equal(persistentImport.verified_resource_count, 1);
+    assert.equal(persistentImport.verification_results[0].content_match, true);
     assert.equal(persistentProgress.every((envelope) => envelope.type === 'progress'), true);
     assert.equal(persistentProgress.slice(persistentImportProgressStart).every((envelope) => envelope.batch_id === persistentBatchId), true);
     assert.equal(JSON.stringify(persistentProgress).includes('mock-resource-password'), false);
@@ -2554,6 +2688,9 @@ async function main() {
         official_minimal_totp_payload: officialMinimalTotpPayloadCount >= 1,
         persistent_authenticated_session: true,
         reconciliation_progress_envelopes: true,
+        batch_dashboard_progress_protocol: true,
+        authenticated_preflight_checks: true,
+        post_import_verification_v4_v5_acl: true,
         authenticated_recovery_classification: true,
         recovery_conflicts_blocked: true,
         mfa_reused_without_reprompt: true,

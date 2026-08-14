@@ -25,7 +25,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.21.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.22.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -2887,6 +2887,89 @@ async function analyzeCapabilities(
   } else if (!csrfAvailable) {
     reason = 'Il server non ha fornito il token CSRF richiesto per una scrittura sicura.';
   }
+  const permissionDirectoryRequired = permissionConfiguration.mode === 'custom'
+    || candidatePlan.some((item) => item.action === 'create' && item.shared)
+    || folderPlan.some((item) => ['create', 'repair_share'].includes(item.action) && item.shared);
+  const metadataKeyRequired = selectedFormat === 'v5' || selectedFolderFormat === 'v5';
+  const preflightChecks = [
+    {
+      id: 'authenticated_identity',
+      label: 'Identita autenticata',
+      status: 'passed',
+      detail: 'Sessione GPGAuth e identita Passbolt verificate.',
+    },
+    {
+      id: 'csrf_token',
+      label: 'Protezione CSRF',
+      status: csrfAvailable ? 'passed' : 'blocked',
+      detail: csrfAvailable ? 'Token di scrittura disponibile.' : 'Token di scrittura non disponibile.',
+    },
+    {
+      id: 'resource_format',
+      label: 'Formato risorse',
+      status: resourceType ? 'passed' : 'blocked',
+      detail: resourceType
+        ? `Formato ${selectedFormat}; tipo ${resourceType.slug}.`
+        : 'Nessun tipo password compatibile e consentito dal server.',
+    },
+    {
+      id: 'folder_format',
+      label: 'Formato cartelle',
+      status: needsClientFolderMapping ? (folderFormatAvailable ? 'passed' : 'blocked') : 'not_required',
+      detail: needsClientFolderMapping
+        ? (folderFormatAvailable ? `Formato ${selectedFolderFormat}.` : 'Nessun formato cartella compatibile disponibile.')
+        : 'Il piano non deve creare cartelle per cliente.',
+    },
+    {
+      id: 'metadata_key',
+      label: 'Chiave metadati v5',
+      status: metadataKeyRequired ? ((!metadataKeyFailure && !sharedMetadataKeyFailure) ? 'passed' : 'blocked') : 'not_required',
+      detail: metadataKeyRequired
+        ? ((!metadataKeyFailure && !sharedMetadataKeyFailure) ? 'Chiave v5 selezionata e verificata.' : (metadataKeyFailure || sharedMetadataKeyFailure))
+        : 'Il piano usa esclusivamente contenuti v4.',
+    },
+    {
+      id: 'resource_catalog',
+      label: 'Catalogo risorse',
+      status: duplicateDetectionAvailable ? 'passed' : 'blocked',
+      detail: duplicateDetectionAvailable
+        ? `${resourceEntries.length} risorse remote confrontate per i duplicati.`
+        : (duplicateFailure || 'Confronto duplicati non disponibile.'),
+    },
+    {
+      id: 'folder_catalog',
+      label: 'Catalogo cartelle',
+      status: needsFolderInventory ? (folderDetectionAvailable ? 'passed' : 'blocked') : 'not_required',
+      detail: needsFolderInventory
+        ? (folderDetectionAvailable ? `${folderEntries.length} cartelle remote verificate.` : (folderFailure || 'Catalogo cartelle non disponibile.'))
+        : 'La destinazione e la radice personale.',
+    },
+    {
+      id: 'permission_directory',
+      label: 'Directory permessi',
+      status: permissionDirectoryRequired ? (shareDirectory ? 'passed' : 'blocked') : (shareDirectory ? 'passed' : 'not_required'),
+      detail: shareDirectory
+        ? 'Utenti, gruppi e chiavi pubbliche sono disponibili.'
+        : (permissionDirectoryRequired ? 'La condivisione richiede una directory autenticata leggibile.' : 'Nessuna condivisione richiede la directory nel piano corrente.'),
+    },
+    {
+      id: 'destination_access',
+      label: 'Accesso destinazione',
+      status: destinationPlan.failure ? 'blocked' : 'passed',
+      detail: destinationPlan.failure || 'Destinazioni risolte con diritto di creazione.',
+    },
+    {
+      id: 'conflicts',
+      label: 'Conflitti e duplicati',
+      status: blockedCount > 0 ? 'blocked' : 'passed',
+      detail: blockedCount > 0
+        ? `${blockedCount} credenziali richiedono una decisione prima della scrittura.`
+        : `${candidatePlan.filter((item) => item.action === 'duplicate').length} duplicati saranno saltati in sicurezza.`,
+    },
+  ];
+  const preflightStatus = preflightChecks.some((item) => item.status === 'blocked')
+    ? 'blocked'
+    : (preflightChecks.some((item) => item.status === 'warning') ? 'warning' : 'passed');
   const digestPayload = {
     user_id: String(user.id),
     resource_format_requested: requestedFormat,
@@ -2947,6 +3030,8 @@ async function analyzeCapabilities(
     folder_detection_available: folderDetectionAvailable,
     duplicate_detection_available: duplicateDetectionAvailable,
     csrf_token_available: csrfAvailable,
+    preflight_status: preflightStatus,
+    preflight_checks: preflightChecks,
     can_import: canImport,
     unavailable_reason: reason,
     available_folders: folderCatalog.filter((folder) => folder.can_create).map((folder) => ({
@@ -3789,6 +3874,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
     const createdEntry = {
       candidate_id: resource.candidate_id,
       resource_id: resourceId,
+      folder_parent_id: folderParentId ?? null,
       status: planned.shared ? 'created_unshared' : 'created',
       shared: Boolean(planned.shared),
       share_recipient_count: Number(planned.share_recipient_count ?? 0),
@@ -3856,6 +3942,194 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
   return { created, createdFolders, reconciledFolders };
 }
 
+async function verifyCreatedResources(
+  session,
+  created,
+  createPlan,
+  resources,
+  runtime,
+  keyMaterial,
+  currentUserId,
+  progress = async () => {},
+  failureContext = {},
+) {
+  const planByCandidate = new Map(createPlan.map((item) => [item.candidate_id, item]));
+  const resourceByCandidate = new Map(resources.map((item) => [item.candidate_id, item]));
+  const results = [];
+  for (const createdEntry of created) {
+    const candidateId = String(createdEntry.candidate_id);
+    const planned = planByCandidate.get(candidateId);
+    const source = resourceByCandidate.get(candidateId);
+    try {
+      assert(planned && source, 'POST_IMPORT_PLAN_MISSING', 'La verifica finale non trova il candidato nel piano confermato.');
+      const resourceResponse = await session.request(
+        `/resources/${encodeURIComponent(createdEntry.resource_id)}.json?api-version=v2&contain[permission]=1&contain[permissions]=1`,
+        { allowError: true },
+      );
+      assert(
+        resourceResponse.status >= 200 && resourceResponse.status < 300,
+        'POST_IMPORT_RESOURCE_READ_FAILED',
+        `La risorsa appena creata non puo essere riletta (HTTP ${resourceResponse.status}).`,
+        { http_status: resourceResponse.status },
+      );
+      const remote = apiBody(resourceResponse.document);
+      assert(remote && typeof remote === 'object' && String(remote.id ?? '') === String(createdEntry.resource_id), 'POST_IMPORT_RESOURCE_ID_MISMATCH', 'La risorsa riletta non corrisponde a quella creata.');
+      assert(String(remote.resource_type_id ?? '') === String(runtime.resourceType?.id ?? ''), 'POST_IMPORT_RESOURCE_TYPE_MISMATCH', 'Il tipo della risorsa riletta non corrisponde al piano.');
+
+      let metadata;
+      if (runtime.selectedFormat === 'v5') {
+        const metadataKey = planned.shared ? runtime.sharedMetadataEncryptionKey : runtime.metadataEncryptionKey;
+        assert(metadataKey, 'POST_IMPORT_METADATA_KEY_MISSING', 'La chiave metadati della verifica finale non e disponibile.');
+        assert(
+          String(remote.metadata_key_id ?? '') === String(metadataKey.id)
+            && String(remote.metadata_key_type ?? '') === String(metadataKey.type),
+          'POST_IMPORT_METADATA_KEY_MISMATCH',
+          'La risorsa riletta usa una chiave metadati diversa dal piano.',
+        );
+        const clearMetadata = await decryptMessageText(
+          String(remote.metadata ?? ''),
+          metadataKey.type === 'user_key' ? keyMaterial.privateKey : metadataKey.privateKey,
+          keyMaterial.publicKey,
+          true,
+          'POST_IMPORT_METADATA_DECRYPT_FAILED',
+          'I metadati della risorsa appena creata non possono essere decifrati o verificati.',
+        );
+        try {
+          metadata = JSON.parse(clearMetadata);
+        } catch {
+          throw new SafeError('POST_IMPORT_METADATA_INVALID', 'I metadati riletti non contengono JSON valido.');
+        }
+        assert(metadata && typeof metadata === 'object' && metadata.object_type === RESOURCE_METADATA_OBJECT_TYPE, 'POST_IMPORT_METADATA_INVALID', 'Il tipo dei metadati riletti non e valido.');
+        assert(String(metadata.resource_type_id ?? '') === String(runtime.resourceType.id), 'POST_IMPORT_METADATA_TYPE_MISMATCH', 'Il tipo dichiarato nei metadati riletti non corrisponde al piano.');
+      } else {
+        metadata = remote;
+      }
+      const remoteUri = runtime.selectedFormat === 'v5'
+        ? (Array.isArray(metadata.uris) && typeof metadata.uris[0] === 'string' ? metadata.uris[0] : '')
+        : String(metadata.uri ?? '');
+      assert(
+        String(metadata.name ?? '') === source.title
+          && String(metadata.username ?? '') === source.username
+          && remoteUri === source.uri,
+        'POST_IMPORT_METADATA_MISMATCH',
+        'Titolo, username o URL riletti non corrispondono al piano confermato.',
+      );
+      if (resourceDescriptionIsMetadata(runtime.resourceType)) {
+        assert(String(metadata.description ?? '') === String(source.description ?? ''), 'POST_IMPORT_DESCRIPTION_MISMATCH', 'La descrizione riletta non corrisponde al piano confermato.');
+      }
+
+      const secretResponse = await session.request(
+        `/secrets/resource/${encodeURIComponent(createdEntry.resource_id)}.json?api-version=v2`,
+        { allowError: true },
+      );
+      assert(
+        secretResponse.status >= 200 && secretResponse.status < 300,
+        'POST_IMPORT_CONTENT_READ_FAILED',
+        `Il contenuto cifrato appena creato non puo essere riletto (HTTP ${secretResponse.status}).`,
+        { http_status: secretResponse.status },
+      );
+      const secretBody = apiBody(secretResponse.document);
+      const remoteSecret = Array.isArray(secretBody)
+        ? secretBody.find((entry) => (
+          String(entry?.resource_id ?? '') === String(createdEntry.resource_id)
+          && String(entry?.user_id ?? '') === String(currentUserId)
+        ))
+        : secretBody;
+      assert(
+        remoteSecret
+          && typeof remoteSecret === 'object'
+          && String(remoteSecret.resource_id ?? createdEntry.resource_id) === String(createdEntry.resource_id)
+          && String(remoteSecret.user_id ?? '') === String(currentUserId)
+          && typeof remoteSecret.data === 'string'
+          && remoteSecret.data.includes('-----BEGIN PGP MESSAGE-----'),
+        'POST_IMPORT_CONTENT_INVALID',
+        'Passbolt non ha restituito il contenuto cifrato della risorsa appena creata per l’utente autenticato.',
+      );
+      const clearContent = await decryptMessageText(
+        remoteSecret.data,
+        keyMaterial.privateKey,
+        keyMaterial.publicKey,
+        true,
+        'POST_IMPORT_CONTENT_DECRYPT_FAILED',
+        'Il contenuto della risorsa appena creata non puo essere decifrato o verificato.',
+      );
+      assert(Buffer.byteLength(clearContent, 'utf8') <= 1024 * 1024, 'POST_IMPORT_CONTENT_TOO_LARGE', 'Il contenuto riletto supera il limite sicuro di 1 MiB.');
+      if (resourceSecretIsString(runtime.resourceType)) {
+        assert(clearContent === source.password, 'POST_IMPORT_CONTENT_MISMATCH', 'Il contenuto riletto non corrisponde al valore importato.');
+      } else {
+        let contentDocument;
+        try {
+          contentDocument = JSON.parse(clearContent);
+        } catch {
+          throw new SafeError('POST_IMPORT_CONTENT_INVALID', 'Il contenuto riletto non contiene JSON valido.');
+        }
+        assert(contentDocument && typeof contentDocument === 'object', 'POST_IMPORT_CONTENT_INVALID', 'Il contenuto riletto non e valido.');
+        assert(String(contentDocument.password ?? '') === source.password, 'POST_IMPORT_CONTENT_MISMATCH', 'Il contenuto riletto non corrisponde al valore importato.');
+        if (!resourceDescriptionIsMetadata(runtime.resourceType)) {
+          assert(String(contentDocument.description ?? '') === String(source.description ?? ''), 'POST_IMPORT_DESCRIPTION_MISMATCH', 'La descrizione cifrata riletta non corrisponde al piano.');
+        }
+        if (runtime.selectedFormat === 'v5') {
+          assert(contentDocument.object_type === SECRET_DATA_OBJECT_TYPE, 'POST_IMPORT_CONTENT_TYPE_MISMATCH', 'Il tipo del contenuto v5 riletto non e valido.');
+        }
+      }
+
+      const remoteFolderParentId = typeof remote.folder_parent_id === 'string' ? remote.folder_parent_id : null;
+      assert(remoteFolderParentId === (createdEntry.folder_parent_id ?? null), 'POST_IMPORT_DESTINATION_MISMATCH', 'La risorsa riletta si trova in una cartella diversa dal piano.');
+      const expectedPermissions = planned.shared
+        ? normalizeFolderPermissions(planned.share_permissions)
+        : [{ aro: 'User', aro_foreign_key: String(currentUserId), type: 15 }];
+      const actualPermissions = normalizeFolderPermissions(remote.permissions);
+      const rawPermissionCount = Array.isArray(remote.permissions)
+        ? remote.permissions.filter((permission) => permission && typeof permission === 'object').length
+        : 0;
+      assert(
+        actualPermissions.length > 0
+          && rawPermissionCount === actualPermissions.length
+          && canonicalJson(actualPermissions) === canonicalJson(expectedPermissions),
+        'POST_IMPORT_ACL_MISMATCH',
+        'I permessi riletti non corrispondono alla maschera confermata.',
+      );
+      const effectivePermissionType = normalizePermissionType(remote.permission?.type);
+      assert(effectivePermissionType === 15, 'POST_IMPORT_OWNER_MISMATCH', 'L’utente autenticato non risulta proprietario della risorsa riletta.');
+
+      const verified = {
+        candidate_id: candidateId,
+        resource_id: String(createdEntry.resource_id),
+        status: 'verified',
+        metadata_match: true,
+        content_match: true,
+        destination_match: true,
+        acl_match: true,
+      };
+      results.push(verified);
+      await progress('resource_verified', {
+        resource_id: verified.resource_id,
+        candidate_id: candidateId,
+        metadata_match: true,
+        content_match: true,
+        destination_match: true,
+        acl_match: true,
+      });
+    } catch (error) {
+      throw new SafeError(
+        'POST_IMPORT_VERIFICATION_FAILED',
+        'La verifica automatica successiva alla scrittura non ha confermato tutte le risorse create. Il lotto richiede una riconciliazione autenticata.',
+        {
+          ...failureContext,
+          created,
+          failed_candidate_id: candidateId,
+          verified_resource_count: results.length,
+          cause_code: error instanceof SafeError ? error.code : 'INTERNAL_ERROR',
+          ...(error instanceof SafeError && Number.isInteger(error.details?.http_status)
+            ? { http_status: error.details.http_status }
+            : {}),
+        },
+      );
+    }
+  }
+  return results;
+}
+
 async function executeImport(input) {
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
@@ -3885,6 +4159,17 @@ async function executeImport(input) {
     assert(String(input.confirmation ?? '') === `IMPORTA ${createPlan.length}`, 'CONFIRMATION_MISMATCH', `Conferma richiesta: IMPORTA ${createPlan.length}`);
     const resources = importResources(input.resources, createPlan);
     const { created, createdFolders, reconciledFolders } = await createPlannedContent(session, createPlan, resources, runtime, key);
+    const verificationResults = await verifyCreatedResources(
+      session,
+      created,
+      createPlan,
+      resources,
+      runtime,
+      key,
+      String(user.id),
+      async () => {},
+      { created_folders: createdFolders, reconciled_folders: reconciledFolders },
+    );
     return {
       command: 'import',
       authentication: mfaProvider ? 'GPGAuth + TOTP' : 'GPGAuth',
@@ -3903,6 +4188,10 @@ async function executeImport(input) {
       created_folders: createdFolders,
       reconciled_folders: reconciledFolders,
       created,
+      verification_status: 'verified',
+      verified_resource_count: verificationResults.length,
+      verification_failed_count: 0,
+      verification_results: verificationResults,
       complete: true,
     };
   } finally {
@@ -4643,6 +4932,17 @@ class PersistentImportSession {
         state.key,
         progress,
       );
+      const verificationResults = await verifyCreatedResources(
+        state.session,
+        created,
+        createPlan,
+        resources,
+        runtime,
+        state.key,
+        String(state.user.id),
+        progress,
+        { created_folders: createdFolders, reconciled_folders: reconciledFolders },
+      );
       const result = {
         command: 'import',
         session_id: state.sessionId,
@@ -4662,6 +4962,10 @@ class PersistentImportSession {
         created_folders: createdFolders,
         reconciled_folders: reconciledFolders,
         created,
+        verification_status: 'verified',
+        verified_resource_count: verificationResults.length,
+        verification_failed_count: 0,
+        verification_results: verificationResults,
         complete: true,
       };
       await progress('batch_completed', {
@@ -4670,6 +4974,7 @@ class PersistentImportSession {
         created_resource_count: created.length,
         shared_resource_count: created.filter((item) => item.status === 'created_shared').length,
         skipped_duplicate_count: capabilities.duplicate_count,
+        verified_resource_count: verificationResults.length,
       });
       return result;
     } finally {
@@ -4849,6 +5154,9 @@ async function selfTest() {
     utf8_bom_input: true,
     persistent_session_protocol: true,
     reconciliation_progress_protocol: true,
+    batch_dashboard_progress_protocol: true,
+    authenticated_preflight_protocol: true,
+    post_import_verification_protocol: true,
     authenticated_recovery_protocol: true,
     permission_editor_protocol: true,
     existing_acl_viewer_protocol: true,
@@ -4971,6 +5279,7 @@ export {
   buildResourcePayload,
   classifyRecovery,
   createPlannedContent,
+  verifyCreatedResources,
   encryptSecret,
   buildAclObjectCatalog,
   buildAclChangePlan,

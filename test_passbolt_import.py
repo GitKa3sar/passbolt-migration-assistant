@@ -675,6 +675,19 @@ for raw in sys.stdin:
             {
                 "type": "progress",
                 "batch_id": batch_id,
+                "event_type": "resource_verified",
+                "payload": {
+                    "resource_id": resource_id,
+                    "candidate_id": candidate_id,
+                    "metadata_match": True,
+                    "content_match": True,
+                    "destination_match": True,
+                    "acl_match": True,
+                },
+            },
+            {
+                "type": "progress",
+                "batch_id": batch_id,
                 "event_type": "batch_completed",
                 "payload": {
                     "created_folder_count": 0,
@@ -682,12 +695,28 @@ for raw in sys.stdin:
                     "created_resource_count": 1,
                     "shared_resource_count": 0,
                     "skipped_duplicate_count": 0,
+                    "verified_resource_count": 1,
                 },
             },
         ]
         for envelope in progress:
             print(json.dumps(envelope), flush=True)
-        result = {"session_id": session_id, "command": "import", "created_count": 1}
+        result = {
+            "session_id": session_id,
+            "command": "import",
+            "created_count": 1,
+            "verification_status": "verified",
+            "verified_resource_count": 1,
+            "verification_results": [{
+                "candidate_id": candidate_id,
+                "resource_id": resource_id,
+                "status": "verified",
+                "metadata_match": True,
+                "content_match": True,
+                "destination_match": True,
+                "acl_match": True,
+            }],
+        }
     elif command == "session-close":
         result = {"session_id": session_id, "command": "session-close", "closed": True}
     else:
@@ -753,14 +782,19 @@ for raw in sys.stdin:
 
         self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
         responses = [json.loads(line) for line in completed.stdout.splitlines()]
-        self.assertEqual(len(responses), 4)
-        self.assertTrue(all(response["ok"] for response in responses))
-        self.assertEqual(responses[0]["result"]["session_id"], "test-session-id")
-        self.assertEqual(responses[2]["result"]["created_count"], 1)
+        progress_responses = [
+            response for response in responses if response.get("type") == "progress"
+        ]
+        final_responses = [response for response in responses if "ok" in response]
+        self.assertEqual(len(progress_responses), 4)
+        self.assertEqual(len(final_responses), 4)
+        self.assertTrue(all(response["ok"] for response in final_responses))
+        self.assertEqual(final_responses[0]["result"]["session_id"], "test-session-id")
+        self.assertEqual(final_responses[2]["result"]["created_count"], 1)
         self.assertEqual(
-            responses[2]["result"]["reconciliation_status"], "complete"
+            final_responses[2]["result"]["reconciliation_status"], "complete"
         )
-        batch_id = responses[2]["result"]["reconciliation_batch_id"]
+        batch_id = final_responses[2]["result"]["reconciliation_batch_id"]
         journal_files = list(
             (self.root / "localappdata" / "Passbolt Migration Assistant" / "Reconciliation").glob(
                 "batch-*.jsonl"
@@ -776,6 +810,7 @@ for raw in sys.stdin:
                 "batch_started",
                 "operation_intent",
                 "resource_created",
+                "resource_verified",
                 "batch_completed",
             ],
         )
@@ -890,11 +925,17 @@ for raw in sys.stdin:
 
         self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
         responses = [json.loads(line) for line in completed.stdout.splitlines()]
-        self.assertEqual(len(responses), 3)
-        self.assertTrue(responses[0]["ok"])
-        self.assertTrue(responses[1]["ok"])
-        self.assertFalse(responses[2]["ok"])
-        details = responses[2]["error"]["details"]
+        progress_responses = [
+            response for response in responses if response.get("type") == "progress"
+        ]
+        final_responses = [response for response in responses if "ok" in response]
+        self.assertEqual(len(progress_responses), 1)
+        self.assertEqual(progress_responses[0]["event_type"], "operation_intent")
+        self.assertEqual(len(final_responses), 3)
+        self.assertTrue(final_responses[0]["ok"])
+        self.assertTrue(final_responses[1]["ok"])
+        self.assertFalse(final_responses[2]["ok"])
+        details = final_responses[2]["error"]["details"]
         self.assertEqual(details["reconciliation_status"], "verification_required")
         journal_files = list(
             (

@@ -14,7 +14,7 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.21.0';
+const APP_VERSION = '0.22.0';
 const INPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILES = new Set(['v4', 'v5']);
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
@@ -483,6 +483,16 @@ async function createLab(options) {
         send(response, 200, apiSuccess(state.resources.map(sanitizeResource)));
         return;
       }
+      if (request.method === 'GET' && url.pathname.startsWith('/resources/') && url.pathname.endsWith('.json')) {
+        const id = url.pathname.split('/')[2]?.replace(/\.json$/, '');
+        const resource = state.resources.find((item) => item.id === id);
+        if (!resource) {
+          send(response, 404, apiError('Offline-lab resource not found.', 404));
+          return;
+        }
+        send(response, 200, apiSuccess(sanitizeResource(resource)));
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/folders.json') {
         send(response, 200, apiSuccess(state.folders.map(sanitizeFolder)));
         return;
@@ -572,7 +582,45 @@ async function createLab(options) {
           send(response, 500, apiError('Injected offline-lab sharing failure.', 500));
           return;
         }
-        await requestJson(request);
+        const payload = await requestJson(request);
+        const pathParts = url.pathname.split('/');
+        const objectType = pathParts[2];
+        const objectId = pathParts[3]?.replace(/\.json$/, '');
+        const collection = objectType === 'resource' ? state.resources : (objectType === 'folder' ? state.folders : null);
+        const target = collection?.find((item) => item.id === objectId);
+        if (!target) {
+          send(response, 404, apiError('Offline-lab share target not found.', 404));
+          return;
+        }
+        const permissions = Array.isArray(target.permissions) ? [...target.permissions] : [];
+        for (const change of Array.isArray(payload?.permissions) ? payload.permissions : []) {
+          const matchIndex = permissions.findIndex((permission) => (
+            (change.id && permission.id === change.id)
+            || (permission.aro === change.aro && permission.aro_foreign_key === change.aro_foreign_key)
+          ));
+          if (change.delete === true) {
+            if (matchIndex >= 0) permissions.splice(matchIndex, 1);
+            continue;
+          }
+          const normalized = {
+            id: matchIndex >= 0 ? permissions[matchIndex].id : randomUUID(),
+            aco: objectType === 'resource' ? 'Resource' : 'Folder',
+            aco_foreign_key: objectId,
+            aro: change.aro,
+            aro_foreign_key: change.aro_foreign_key,
+            type: Number(change.type),
+          };
+          if (matchIndex >= 0) permissions[matchIndex] = normalized;
+          else permissions.push(normalized);
+        }
+        target.permissions = permissions;
+        if (objectType === 'resource' && Array.isArray(payload?.secrets)) {
+          for (const secret of payload.secrets) {
+            const existingIndex = target.secrets.findIndex((item) => item.user_id === secret.user_id);
+            if (existingIndex >= 0) target.secrets[existingIndex] = secret;
+            else target.secrets.push(secret);
+          }
+        }
         send(response, 200, apiSuccess(null));
         return;
       }

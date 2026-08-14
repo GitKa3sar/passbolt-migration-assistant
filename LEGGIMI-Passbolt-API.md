@@ -10,7 +10,15 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.21.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.22.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Dashboard, preflight e verifica post-importazione 0.22.0
+
+La scheda **Attività lotto** riceve gli eventi della normale importazione dopo che il coordinatore Python li ha validati e sincronizzati nel journal durevole. Mostra avanzamento per candidati, create, verificate, errori, fase, operazione, tempo trascorso, stima residua e una timeline limitata. Gli envelope sono vincolati a un lotto e non contengono valori sorgente o segreti.
+
+Il comando **Preflight e dry-run** riusa la sessione GPGAuth/MFA aperta e le stesse letture che costruiscono il piano. La scheda dedicata rende espliciti i controlli su identità, CSRF, formati, chiavi v5, cataloghi risorse/cartelle, directory dei permessi, diritto di creazione e conflitti. Un controllo `blocked` mantiene la scrittura disabilitata; `not_required` indica un requisito non applicabile al piano selezionato.
+
+Dopo le `POST` e le eventuali `PUT` di condivisione, ma prima di `batch_completed`, il bridge rilegge ciascuna risorsa con permessi e segreto dell'utente autenticato. Per v5 decifra metadati e contenuto richiedendo la firma OpenPGP dell'utente; per v4 confronta i campi dichiarati e il contenuto secondo lo schema del resource type. Cartella padre e maschera ACL devono coincidere esattamente con il piano, e l'utente corrente deve restare Owner. Il risultato serializzato contiene solo quattro booleani per risorsa; una difformità lascia il journal recuperabile.
 
 ### Laboratorio Passbolt offline 0.21.0
 
@@ -20,7 +28,7 @@ Il self-test usa la matrice read-only esistente e pretende sette scenari superat
 
 ### Quality gate Windows 0.20.1, esteso in 0.21.0
 
-`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 109 test Python, suite OpenPGP, matrici offline v4/v5, autoverifica dei 109 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
+`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 111 test Python, suite OpenPGP, matrici offline v4/v5, autoverifica dei 132 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato.
 
 Il workflow `.github/workflows/windows-quality.yml` esegue lo stesso comando su `windows-latest` con Python 3.12 e Node.js 24. Il token GitHub ha il solo permesso `contents: read`, le credenziali del checkout non sono persistite e pnpm installa il lockfile senza lifecycle script. Le otto PNG conservate come artefatto per sette giorni mostrano esclusivamente lo stato iniziale vuoto delle quattro fasi.
 

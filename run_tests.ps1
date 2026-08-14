@@ -278,11 +278,11 @@ try {
     Write-Host ""
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.21.0"
+        version = "0.22.0"
         ci_mode = [bool]$Ci
-        python_tests = 109
+        python_tests = 111
         node_suite = "OK"
-        wpf_controls = 109
+        wpf_controls = 132
         ui_preview_count = $(if ($SkipUiPreviews) { 0 } else { 8 })
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })
         secrets_serialized = $false
