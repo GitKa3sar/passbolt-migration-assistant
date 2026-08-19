@@ -14,7 +14,7 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.24.0';
+const APP_VERSION = '0.25.0';
 const INPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILES = new Set(['v4', 'v5']);
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
@@ -23,6 +23,7 @@ const FAULTS = new Set([
   'next-resource-create-500',
   'next-resource-create-after-commit-500',
   'next-folder-create-500',
+  'next-folder-create-after-commit-500',
   'next-share-500',
   'next-share-after-commit-500',
   'expire-session',
@@ -600,6 +601,10 @@ async function createLab(options) {
           } : { name: String(payload?.name ?? '') }),
         });
         state.createdFolderCount += 1;
+        if (consumeFault('next-folder-create-after-commit-500')) {
+          send(response, 500, apiError('Injected offline-lab folder response failure after commit.', 500));
+          return;
+        }
         send(response, 200, apiSuccess({ id, permission }));
         return;
       }
@@ -777,7 +782,7 @@ async function main() {
       scenarios: [...SCENARIOS],
       faults: [...FAULTS],
       stateful_acceptance_scenarios: 9,
-      stateful_recovery_fault_paths: 4,
+      stateful_recovery_fault_paths: 6,
       effective_acl_simulation: true,
       shared_v5_metadata_key: true,
       loopback_only: true,

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import * as openpgp from 'openpgp';
 import {
@@ -189,6 +190,79 @@ async function main() {
   changedShareCapabilities.candidates[0].share_permissions[1].aro_foreign_key = 'different-recipient-id';
   const changedPermissionPlan = classifyRecovery(shareRecoveryState, [recoveryCandidate], changedShareCapabilities, ownerOnlyRuntime, 'current-user-id');
   assert.equal(changedPermissionPlan.conflicts.some((item) => item.code === 'RECOVERY_INTENDED_PERMISSION_CHANGED'), true);
+
+  const folderRecoveryCandidate = {
+    ...recoveryCandidate,
+    candidate_id: 'fedcba9876543210',
+    client: 'Cliente recuperato',
+    source_at_root: false,
+  };
+  const recoveredFolderId = 'remote-recovered-folder';
+  const recoveredDestinationKey = 'client:root:cliente recuperato';
+  const recoveredDestinationHash = createHash('sha256').update(recoveredDestinationKey, 'utf8').digest('hex');
+  const folderRecoveryState = {
+    ...recoveryState,
+    folder_format: 'v4',
+    destination_mode: 'client_folders',
+    candidates: [{
+      candidate_id: folderRecoveryCandidate.candidate_id,
+      source_sha256: folderRecoveryCandidate.source_sha256,
+    }],
+    operations: [{
+      operation_id: 'fa4608bd-f2b4-42d4-9f92-6731c7ed9815',
+      object_type: 'folder',
+      action: 'create_folder',
+      destination_key_hash: recoveredDestinationHash,
+      recorded_outcome: {
+        event_type: 'operation_failed',
+        operation_id: 'fa4608bd-f2b4-42d4-9f92-6731c7ed9815',
+        object_type: 'folder',
+        error_code: 'FOLDER_CREATE_FAILED',
+        outcome: 'unknown',
+        http_status: 500,
+      },
+    }],
+  };
+  const recoveredFolderPlan = {
+    destination_key: recoveredDestinationKey,
+    action: 'reuse',
+    folder_id: recoveredFolderId,
+    share_permissions: [],
+  };
+  const folderRecoveryCapabilities = {
+    ...recoveryCapabilities,
+    folder_format_selected: 'v4',
+    destination_mode: 'client_folders',
+    candidates: [{
+      ...folderRecoveryCandidate,
+      action: 'create',
+      destination_key: recoveredDestinationKey,
+      folder_action: 'reuse',
+      folder_id: recoveredFolderId,
+      shared: false,
+      duplicate_kind: null,
+      duplicate_resource_id: null,
+    }],
+  };
+  const folderRecoveryRuntime = {
+    destinationFolders: [recoveredFolderPlan],
+    existingFolders: [{ id: recoveredFolderId, permissions: [] }],
+    existingResources: [],
+  };
+  const recoveredFolderRecovery = classifyRecovery(
+    folderRecoveryState,
+    [folderRecoveryCandidate],
+    folderRecoveryCapabilities,
+    folderRecoveryRuntime,
+    'current-user-id',
+  );
+  assert.equal(recoveredFolderRecovery.conflicts.length, 0);
+  assert.equal(recoveredFolderRecovery.classifications[0].resolution, 'remote_success');
+  assert.equal(recoveredFolderRecovery.classifications[0].folder_id, recoveredFolderId);
+  assert.deepEqual(recoveredFolderRecovery.retryFolders, []);
+  assert.deepEqual(recoveredFolderRecovery.recoveryFolders, [recoveredFolderPlan]);
+  assert.deepEqual(recoveredFolderRecovery.resourceCandidateIds, [folderRecoveryCandidate.candidate_id]);
+  assert.equal(recoveredFolderRecovery.retryActionCount, 1);
 
   const serverGenerated = await openpgp.generateKey({
     type: 'ecc',
@@ -1760,6 +1834,27 @@ async function main() {
     assert.equal(rejectedFolderProgress.at(-1).payload.error_code, 'FOLDER_CREATE_FAILED');
     assert.equal(rejectedFolderProgress.at(-1).payload.outcome, 'confirmed');
     assert.equal(rejectedFolderProgress.at(-1).payload.http_status, 409);
+
+    const uncertainFolderProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { return { status: 500, document: { header: { message: 'Simulated uncertainty.' } } }; } },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => uncertainFolderProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 0,
+    );
+    assert.deepEqual(
+      uncertainFolderProgress.map((event) => event.eventType),
+      ['operation_intent', 'operation_failed'],
+    );
+    assert.equal(uncertainFolderProgress.at(-1).payload.error_code, 'FOLDER_CREATE_FAILED');
+    assert.equal(uncertainFolderProgress.at(-1).payload.outcome, 'unknown');
+    assert.equal(uncertainFolderProgress.at(-1).payload.http_status, 500);
 
     await session.request('/auth/logout.json?api-version=v2', { method: 'POST' });
     assert.equal(authenticated, false);

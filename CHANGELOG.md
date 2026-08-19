@@ -2,6 +2,30 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.25.0 - 2026-08-19
+
+### Added
+
+- aggiunto il fault monouso `next-folder-create-after-commit-500`, che persiste la nuova cartella nel simulatore e sostituisce soltanto la risposta finale con HTTP 500;
+- estesa l'accettazione stateful con i rami `not_applied` e `remote_success` della creazione cartella su entrambi i profili v4/v5;
+- aggiunte regressioni mirate per gli HTTP 4xx/5xx della creazione cartella e per il riuso della destinazione riconciliata.
+
+### Changed
+
+- il recupero reinserisce nella mappa delle destinazioni una cartella creata remotamente ma priva di risposta conclusiva, così le risorse successive vengono create nella cartella verificata senza crearne una seconda;
+- i diciotto scenari stateful esercitano ora dodici percorsi di fault complessivi: sei per profilo, distribuiti fra creazione risorsa, creazione cartella e applicazione ACL;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.25.0`.
+
+### Security
+
+- una cartella classificata `remote_success` viene riutilizzata soltanto se la rilettura autenticata ne dimostra in modo univoco destinazione e identità tecnica;
+- il ramo `not_applied` ripete una sola creazione, mentre il ramo post-commit completa la risorsa senza una seconda `POST /folders.json`;
+- fault, documenti, identità e credenziali restano esclusivamente sintetici e confinati al listener loopback effimero.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; la distribuzione Windows non viene anticipata dagli esiti offline.
+
 ## 0.24.0 - 2026-08-19
 
 ### Added

@@ -25,7 +25,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.24.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.25.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -2570,6 +2570,18 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     (folder.action === 'create' && folderRetryKeys.has(folder.destination_key))
     || (folder.action === 'repair_share' && (folderRetryKeys.has(folder.destination_key) || repairFolderDestinationHashSet.has(technicalDigest(folder.destination_key))))
   ));
+  const remotelyCreatedFolderHashes = new Set(
+    classifications
+      .filter((item) => item.resolution === 'remote_success'
+        && operationsById.get(item.operation_id)?.action === 'create_folder')
+      .map((item) => item.destination_key_hash),
+  );
+  const recoveredFolders = runtime.destinationFolders.filter((folder) => (
+    folder.action === 'reuse'
+    && remotelyCreatedFolderHashes.has(technicalDigest(folder.destination_key))
+    && folderRetryKeys.has(folder.destination_key)
+  ));
+  const recoveryFolders = [...retryFolders, ...recoveredFolders];
   const verificationDigest = digestPlan(classifications.map(({ recovery_id: ignored, ...item }) => item));
   const recoveryPlanDigest = digestPlan({
     batch_id: recovery.batch_id,
@@ -2578,6 +2590,7 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     create_candidate_ids: createCandidateIds,
     repair_resource_candidate_ids: repairResourceCandidateIds,
     retry_folder_hashes: retryFolders.map((folder) => technicalDigest(folder.destination_key)).sort(),
+    recovered_folder_hashes: recoveredFolders.map((folder) => technicalDigest(folder.destination_key)).sort(),
   });
   return {
     recovery,
@@ -2589,6 +2602,7 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     repairResourceCandidateIds,
     resourceCandidateIds,
     retryFolders,
+    recoveryFolders,
     retryActionCount: createCandidateIds.length + repairResourceCandidateIds.length + retryFolders.length,
   };
 }
@@ -4811,7 +4825,7 @@ class PersistentImportSession {
     const progress = async (eventType, payload) => this.emitProgress(reconciliationBatchId, eventType, payload);
     try {
       const createPlan = capabilities.candidates.filter((candidate) => createCandidateIdSet.has(candidate.candidate_id));
-      const recoveryRuntime = { ...runtime, folders: plan.retryFolders };
+      const recoveryRuntime = { ...runtime, folders: plan.recoveryFolders };
       const { created, createdFolders, reconciledFolders } = await createPlannedContent(
         state.session,
         createPlan,

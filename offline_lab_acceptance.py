@@ -23,7 +23,7 @@ from offline_lab_smoke import OfflineLabSmokeError, load_ready_file, read_lab_st
 from passbolt_integration_matrix import JsonLineBridge, MatrixError, locate_node
 
 
-APP_VERSION = "0.24.0"
+APP_VERSION = "0.25.0"
 STATEFUL_SCENARIOS = (
     "import_root_resource",
     "import_new_client_folder",
@@ -485,6 +485,202 @@ def _exercise_import_recovery(
     }
 
 
+def _exercise_folder_recovery(
+    bridge: JsonLineBridge,
+    ready: Mapping[str, Any],
+    session_id: str,
+    profile: str,
+    *,
+    label: str,
+    fault: str,
+    expected_resolution: str,
+) -> dict[str, int]:
+    if expected_resolution not in {"not_applied", "remote_success"}:
+        raise OfflineAcceptanceError("Esito cartella atteso non valido.")
+    candidate = _candidate(
+        label,
+        at_root=False,
+        client=f"Cartella recupero {uuid.uuid4().hex[:8]}",
+    )
+    readiness = _readiness(
+        bridge,
+        session_id,
+        profile,
+        candidate,
+        destination_mode="client_folders",
+    )
+    if (
+        readiness.get("create_count") != 1
+        or readiness.get("create_folder_count") != 1
+    ):
+        raise OfflineAcceptanceError(
+            "Il preflight del recupero cartella non pianifica una sola destinazione nuova."
+        )
+    before_failure = read_lab_status(ready)
+    _set_fault(ready, fault)
+    batch_id = str(uuid.uuid4())
+    resource = _resource(candidate)
+    failed_request = {
+        "command": "session-import",
+        "session_id": session_id,
+        "reconciliation_batch_id": batch_id,
+        "resource_format": profile,
+        "destination_mode": "client_folders",
+        "folder_format": profile,
+        "destination_folder_id": None,
+        "permission_mode": "inherited",
+        "permission_template": None,
+        "candidates": [dict(candidate)],
+        "resources": [resource],
+        "plan_digest": readiness["plan_digest"],
+        "confirmation": "IMPORTA 1",
+    }
+    try:
+        failed_import, failed_events = _request_with_progress(
+            bridge, failed_request, batch_id
+        )
+    finally:
+        resource["password"] = ""
+        failed_request["resources"] = []
+    _expected_failure(
+        failed_import,
+        "Creazione cartella interrotta stateful",
+        {"IMPORT_PARTIAL_FAILURE"},
+    )
+    intent = next(
+        (
+            item
+            for item in failed_events
+            if item["event_type"] == "operation_intent"
+            and item.get("payload", {}).get("action") == "create_folder"
+        ),
+        None,
+    )
+    failure = next(
+        (
+            item
+            for item in failed_events
+            if item["event_type"] == "operation_failed"
+            and item.get("payload", {}).get("operation_id")
+            == (intent or {}).get("payload", {}).get("operation_id")
+        ),
+        None,
+    )
+    if (
+        not isinstance(intent, Mapping)
+        or not isinstance(failure, Mapping)
+        or failure.get("payload", {}).get("outcome") != "unknown"
+    ):
+        raise OfflineAcceptanceError(
+            "La creazione cartella interrotta non contiene prove incerte recuperabili."
+        )
+    remote_success_count = int(expected_resolution == "remote_success")
+    retry_count = int(expected_resolution == "not_applied")
+    after_failure = read_lab_status(ready)
+    if (
+        after_failure.get("folder_count")
+        != int(before_failure["folder_count"]) + remote_success_count
+        or after_failure.get("resource_count") != before_failure.get("resource_count")
+    ):
+        raise OfflineAcceptanceError(
+            "Il fault cartella non ha lasciato lo stato remoto sintetico atteso."
+        )
+    operation = {
+        **dict(intent["payload"]),
+        "recorded_outcome": {
+            "event_type": "operation_failed",
+            **dict(failure["payload"]),
+        },
+    }
+    recovery_state = {
+        "schema_version": 1,
+        "batch_id": batch_id,
+        "resource_format": profile,
+        "folder_format": profile,
+        "destination_mode": "client_folders",
+        "destination_folder_id": None,
+        "permission_mode": "inherited",
+        "candidate_count": 1,
+        "candidates": [
+            {
+                "candidate_id": candidate["candidate_id"],
+                "source_sha256": candidate["source_sha256"],
+            }
+        ],
+        "operations": [operation],
+        "duplicate_candidates": [],
+    }
+    recovery_check_request = {
+        "command": "session-recovery-readiness",
+        "session_id": session_id,
+        "reconciliation_batch_id": batch_id,
+        "resource_format": profile,
+        "destination_mode": "client_folders",
+        "folder_format": profile,
+        "destination_folder_id": None,
+        "permission_mode": "inherited",
+        "permission_template": None,
+        "candidates": [dict(candidate)],
+        "recovery_state": recovery_state,
+    }
+    checked_envelope, checked_events = _request_with_progress(
+        bridge, recovery_check_request, batch_id
+    )
+    checked = _success(checked_envelope, "Verifica recupero cartella stateful")
+    expected_retry_actions = 1 + retry_count
+    if (
+        checked.get("remote_success_count") != remote_success_count
+        or checked.get("not_applied_count") != retry_count
+        or checked.get("retry_action_count") != expected_retry_actions
+        or checked.get("resource_candidate_ids") != [candidate["candidate_id"]]
+    ):
+        raise OfflineAcceptanceError(
+            "Il recupero cartella non ha classificato l'esito remoto atteso."
+        )
+
+    retry_resource = _resource(candidate)
+    recovery_import_request = {
+        **recovery_check_request,
+        "command": "session-recovery-import",
+        "recovery_id": checked["recovery_id"],
+        "recovery_plan_digest": checked["recovery_plan_digest"],
+        "resource_candidate_ids": checked["resource_candidate_ids"],
+        "resources": [retry_resource],
+        "confirmation": checked["confirmation_required"],
+    }
+    try:
+        recovered_envelope, recovered_events = _request_with_progress(
+            bridge, recovery_import_request, batch_id
+        )
+        recovered = _success(recovered_envelope, "Recupero cartella stateful")
+    finally:
+        retry_resource["password"] = ""
+        recovery_import_request["resources"] = []
+    after_recovery = read_lab_status(ready)
+    if (
+        recovered.get("complete") is not True
+        or recovered.get("created_count") != 1
+        or recovered.get("created_folder_count") != retry_count
+        or recovered.get("remote_success_count") != remote_success_count
+        or recovered.get("destructive_actions_performed") is not False
+        or after_recovery.get("folder_count")
+        != int(before_failure["folder_count"]) + 1
+        or after_recovery.get("resource_count")
+        != int(before_failure["resource_count"]) + 1
+        or not checked_events
+        or not recovered_events
+    ):
+        raise OfflineAcceptanceError(
+            "Il recupero cartella stateful non si e' concluso senza duplicazioni."
+        )
+    return {
+        "failed_writes": 1,
+        "retried_writes": retry_count,
+        "remote_success_without_retry": remote_success_count,
+        "followup_resource_writes": 1,
+    }
+
+
 def _exercise_acl_recovery(
     bridge: JsonLineBridge,
     ready: Mapping[str, Any],
@@ -805,13 +1001,40 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
             fault="next-resource-create-after-commit-500",
             expected_resolution="remote_success",
         )
+        folder_retry_metrics = _exercise_folder_recovery(
+            bridge,
+            ready,
+            session_id,
+            profile,
+            label="Interrupted folder before commit",
+            fault="next-folder-create-500",
+            expected_resolution="not_applied",
+        )
+        folder_remote_success_metrics = _exercise_folder_recovery(
+            bridge,
+            ready,
+            session_id,
+            profile,
+            label="Interrupted folder after commit",
+            fault="next-folder-create-after-commit-500",
+            expected_resolution="remote_success",
+        )
         results.append(
             {
                 "name": "interrupted_import_recovery",
                 "status": "passed",
                 "metrics": {
-                    key: import_retry_metrics[key] + import_remote_success_metrics[key]
+                    key: import_retry_metrics[key]
+                    + import_remote_success_metrics[key]
+                    + folder_retry_metrics[key]
+                    + folder_remote_success_metrics[key]
                     for key in import_retry_metrics
+                }
+                | {
+                    "followup_resource_writes": folder_retry_metrics[
+                        "followup_resource_writes"
+                    ]
+                    + folder_remote_success_metrics["followup_resource_writes"]
                 },
             }
         )
@@ -861,7 +1084,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
     status = read_lab_status(ready)
     if status.get("active_fault") != "none":
         raise OfflineAcceptanceError("Una fault injection e' rimasta attiva nel laboratorio.")
-    if status.get("resource_count") != 6 or status.get("folder_count") != 1:
+    if status.get("resource_count") != 8 or status.get("folder_count") != 3:
         raise OfflineAcceptanceError(
             "Lo stato finale del laboratorio non corrisponde ai nove scenari."
         )
@@ -873,7 +1096,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
         "real_instance_attestation": False,
         "scenario_count": len(results),
         "passed_count": len(results),
-        "recovery_fault_path_count": 4,
+        "recovery_fault_path_count": 6,
         "scenarios": results,
         "remote_resource_count": int(status["resource_count"]),
         "remote_folder_count": int(status["folder_count"]),
