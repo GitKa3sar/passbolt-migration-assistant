@@ -25,7 +25,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.23.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.24.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -2330,6 +2330,15 @@ function confirmedFailure(operation) {
     && operation.recorded_outcome?.outcome === 'confirmed';
 }
 
+function writeFailureOutcome(status) {
+  const normalizedStatus = Number(status);
+  return Number.isInteger(normalizedStatus)
+    && normalizedStatus >= 400
+    && normalizedStatus < 500
+    ? 'confirmed'
+    : 'unknown';
+}
+
 function recoveryConflict(operation, code) {
   return {
     operation_id: operation.operation_id,
@@ -3721,7 +3730,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
         operation_id: createFolderOperationId,
         object_type: 'folder',
         error_code: 'FOLDER_CREATE_FAILED',
-        outcome: 'confirmed',
+        outcome: writeFailureOutcome(response.status),
         http_status: response.status,
       });
       throw new SafeError(
@@ -3845,7 +3854,7 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
         object_type: 'resource',
         candidate_id: resource.candidate_id,
         error_code: 'RESOURCE_CREATE_FAILED',
-        outcome: 'confirmed',
+        outcome: writeFailureOutcome(response.status),
         http_status: response.status,
       });
       throw new SafeError(

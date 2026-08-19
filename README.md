@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.23.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.24.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -125,7 +125,7 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 114 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline, contratto WPF, otto anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 114 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con otto percorsi di fault di recupero, contratto WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -172,13 +172,20 @@ Sono disponibili scenari di autenticazione negativa:
 .\run_offline_lab.ps1 -Profile v5 -Scenario session-expired
 ```
 
-Le fault injection monouso consentono inoltre di simulare una risposta HTTP 500 alla prossima creazione di risorsa, cartella o condivisione, oppure la scadenza della sessione:
+Le fault injection monouso consentono inoltre di simulare una risposta HTTP 500 prima della prossima creazione di risorsa, cartella o condivisione, oppure la scadenza della sessione:
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-500
 .\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-500
 .\run_offline_lab.ps1 -Profile v5 -Fault next-share-500
 .\run_offline_lab.ps1 -Profile v5 -Fault expire-session
+```
+
+La versione 0.24.0 aggiunge due fault post-commit: il simulatore applica la creazione della risorsa o la modifica ACL, poi restituisce HTTP 500 come se la risposta conclusiva fosse andata persa. Servono a verificare che il recupero rilegga lo stato remoto, classifichi `remote_success` e chiuda il journal senza ripetere la mutazione:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-after-commit-500
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-after-commit-500
 ```
 
 Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le sette prove della matrice e verifica che non restino oggetti nel simulatore:
@@ -190,12 +197,14 @@ Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le
 
 La versione 0.23.0 aggiunge un secondo controllo automatico, deliberatamente mutativo ma confinato al workspace effimero. Per ciascun profilo esegue le nove prove operative della matrice: risorsa in radice, nuova cartella cliente, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Ogni risorsa creata dal normale import viene riletta e verificata; v5 usa anche una chiave metadati condivisa sintetica con copia privata cifrata e firmata per l'utente del laboratorio.
 
+In 0.24.0 ciascuno dei due scenari di recupero esegue entrambi gli esiti sicuri: il fault pre-commit deve produrre `not_applied` e una sola ripetizione, mentre il fault post-commit deve produrre `remote_success` e zero nuove scritture. Gli HTTP 5xx di creazione sono registrati come esito incerto; soltanto una risposta 4xx resta un fallimento confermato.
+
 ```powershell
 .\run_offline_lab.ps1 -Profile v4 -AcceptanceTest
 .\run_offline_lab.ps1 -Profile v5 -AcceptanceTest
 ```
 
-`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente fault monouso nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
+`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente quattro percorsi di fault per profilo nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici e gli otto percorsi di fault complessivi vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
 
 Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
@@ -242,6 +251,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.24.0 consolida la fault injection dei recuperi incerti. Un errore HTTP 5xx durante una creazione non viene più trattato come prova che la scrittura non sia iniziata: import e ACL rileggono lo stato autenticato e distinguono il ramo `not_applied`, che ripete esattamente la mutazione originaria, da `remote_success`, che chiude il journal senza riscrivere. Il laboratorio dimostra entrambi i rami per v4 e v5, ma resta una regressione sintetica.
 
 La versione 0.23.0 completa nel laboratorio offline l'esecuzione automatica dei nove scenari operativi per entrambi i profili v4/v5. Il simulatore conserva lo stato di risorse, cartelle, segreti e ACL, calcola gli utenti effettivi delle simulazioni Passbolt e consente di riprodurre fallimenti confermati e recuperi idempotenti. Questi 18 scenari sintetici sono una regressione di protocollo, non una certificazione della compatibilità con una release Passbolt reale.
 

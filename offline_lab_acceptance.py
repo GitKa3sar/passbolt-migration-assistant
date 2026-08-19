@@ -23,7 +23,7 @@ from offline_lab_smoke import OfflineLabSmokeError, load_ready_file, read_lab_st
 from passbolt_integration_matrix import JsonLineBridge, MatrixError, locate_node
 
 
-APP_VERSION = "0.23.0"
+APP_VERSION = "0.24.0"
 STATEFUL_SCENARIOS = (
     "import_root_resource",
     "import_new_client_folder",
@@ -333,6 +333,236 @@ def _acl_recovery_state(batch_id: str, plan: Mapping[str, Any]) -> dict[str, Any
     }
 
 
+def _exercise_import_recovery(
+    bridge: JsonLineBridge,
+    ready: Mapping[str, Any],
+    session_id: str,
+    profile: str,
+    *,
+    label: str,
+    fault: str,
+    expected_resolution: str,
+) -> dict[str, int]:
+    if expected_resolution not in {"not_applied", "remote_success"}:
+        raise OfflineAcceptanceError("Esito import atteso non valido.")
+    candidate = _candidate(label, at_root=True)
+    readiness = _readiness(
+        bridge,
+        session_id,
+        profile,
+        candidate,
+        destination_mode="root",
+    )
+    _set_fault(ready, fault)
+    batch_id = str(uuid.uuid4())
+    resource = _resource(candidate)
+    failed_request = {
+        "command": "session-import",
+        "session_id": session_id,
+        "reconciliation_batch_id": batch_id,
+        "resource_format": profile,
+        "destination_mode": "root",
+        "folder_format": "auto",
+        "destination_folder_id": None,
+        "permission_mode": "inherited",
+        "permission_template": None,
+        "candidates": [dict(candidate)],
+        "resources": [resource],
+        "plan_digest": readiness["plan_digest"],
+        "confirmation": "IMPORTA 1",
+    }
+    try:
+        failed_import, failed_events = _request_with_progress(
+            bridge, failed_request, batch_id
+        )
+    finally:
+        resource["password"] = ""
+        failed_request["resources"] = []
+    _expected_failure(
+        failed_import,
+        "Importazione interrotta stateful",
+        {"IMPORT_PARTIAL_FAILURE"},
+    )
+    intent = next(
+        (item for item in failed_events if item["event_type"] == "operation_intent"),
+        None,
+    )
+    failure = next(
+        (item for item in failed_events if item["event_type"] == "operation_failed"),
+        None,
+    )
+    if (
+        not isinstance(intent, Mapping)
+        or not isinstance(failure, Mapping)
+        or failure.get("payload", {}).get("outcome") != "unknown"
+    ):
+        raise OfflineAcceptanceError("Il lotto interrotto non contiene prove incerte recuperabili.")
+    operation = {
+        **dict(intent["payload"]),
+        "recorded_outcome": {
+            "event_type": "operation_failed",
+            **dict(failure["payload"]),
+        },
+    }
+    recovery_state = {
+        "schema_version": 1,
+        "batch_id": batch_id,
+        "resource_format": profile,
+        "folder_format": "none",
+        "destination_mode": "root",
+        "destination_folder_id": None,
+        "permission_mode": "inherited",
+        "candidate_count": 1,
+        "candidates": [
+            {
+                "candidate_id": candidate["candidate_id"],
+                "source_sha256": candidate["source_sha256"],
+            }
+        ],
+        "operations": [operation],
+        "duplicate_candidates": [],
+    }
+    recovery_check_request = {
+        "command": "session-recovery-readiness",
+        "session_id": session_id,
+        "reconciliation_batch_id": batch_id,
+        "resource_format": profile,
+        "destination_mode": "root",
+        "folder_format": "none",
+        "destination_folder_id": None,
+        "permission_mode": "inherited",
+        "permission_template": None,
+        "candidates": [dict(candidate)],
+        "recovery_state": recovery_state,
+    }
+    checked_envelope, checked_events = _request_with_progress(
+        bridge, recovery_check_request, batch_id
+    )
+    checked = _success(checked_envelope, "Verifica recupero import stateful")
+    remote_success_count = int(expected_resolution == "remote_success")
+    retry_count = int(expected_resolution == "not_applied")
+    expected_candidate_ids = [candidate["candidate_id"]] if retry_count else []
+    if (
+        checked.get("remote_success_count") != remote_success_count
+        or checked.get("not_applied_count") != retry_count
+        or checked.get("retry_action_count") != retry_count
+        or checked.get("resource_candidate_ids") != expected_candidate_ids
+    ):
+        raise OfflineAcceptanceError("Il recupero import non ha classificato l'esito remoto atteso.")
+
+    retry_resource = _resource(candidate) if retry_count else None
+    recovery_import_request = {
+        **recovery_check_request,
+        "command": "session-recovery-import",
+        "recovery_id": checked["recovery_id"],
+        "recovery_plan_digest": checked["recovery_plan_digest"],
+        "resource_candidate_ids": checked["resource_candidate_ids"],
+        "resources": [retry_resource] if retry_resource is not None else [],
+        "confirmation": checked["confirmation_required"],
+    }
+    try:
+        recovered_envelope, recovered_events = _request_with_progress(
+            bridge, recovery_import_request, batch_id
+        )
+        recovered = _success(recovered_envelope, "Recupero import stateful")
+    finally:
+        if retry_resource is not None:
+            retry_resource["password"] = ""
+        recovery_import_request["resources"] = []
+    if (
+        recovered.get("complete") is not True
+        or recovered.get("created_count") != retry_count
+        or recovered.get("remote_success_count") != remote_success_count
+        or recovered.get("destructive_actions_performed") is not False
+        or not checked_events
+        or not recovered_events
+    ):
+        raise OfflineAcceptanceError("Il recupero import stateful non si e' concluso in modo idempotente.")
+    return {
+        "failed_writes": 1,
+        "retried_writes": retry_count,
+        "remote_success_without_retry": remote_success_count,
+    }
+
+
+def _exercise_acl_recovery(
+    bridge: JsonLineBridge,
+    ready: Mapping[str, Any],
+    session_id: str,
+    object_id: str,
+    recipient_id: str,
+    *,
+    desired_type: int,
+    fault: str,
+    expected_resolution: str,
+) -> dict[str, int]:
+    if expected_resolution not in {"not_applied", "remote_success"}:
+        raise OfflineAcceptanceError("Esito ACL atteso non valido.")
+    plan = _acl_plan(
+        bridge,
+        session_id,
+        object_id,
+        [{"aro": "User", "aro_foreign_key": recipient_id, "type": desired_type}],
+    )
+    batch_id = str(uuid.uuid4())
+    _set_fault(ready, fault)
+    failed_acl, failed_events = _request_with_progress(
+        bridge,
+        _acl_apply_request(session_id, batch_id, plan),
+        batch_id,
+    )
+    _expected_failure(failed_acl, "ACL interrotta stateful", {"ACL_APPLY_FAILED"})
+    if (
+        [item["event_type"] for item in failed_events]
+        != ["acl_operation_intent", "acl_operation_failed"]
+        or failed_events[-1].get("payload", {}).get("outcome") != "unknown"
+    ):
+        raise OfflineAcceptanceError("Il journal ACL interrotto non e' riconciliabile.")
+    recovery_state = _acl_recovery_state(batch_id, plan)
+    check_request = {
+        "command": "session-acl-recovery-readiness",
+        "session_id": session_id,
+        "acl_batch_id": batch_id,
+        "acl_recovery_state": recovery_state,
+    }
+    checked_envelope, checked_events = _request_with_progress(
+        bridge, check_request, batch_id
+    )
+    checked = _success(checked_envelope, "Verifica recupero ACL stateful")
+    retry_write = expected_resolution == "not_applied"
+    if (
+        checked.get("resolution") != expected_resolution
+        or checked.get("retry_write_required") is not retry_write
+    ):
+        raise OfflineAcceptanceError("La ACL interrotta non e' stata classificata.")
+    recovery_request = {
+        "command": "session-acl-recovery-apply",
+        "session_id": session_id,
+        "acl_batch_id": batch_id,
+        "acl_recovery_state": recovery_state,
+        "recovery_id": checked["recovery_id"],
+        "recovery_plan_digest": checked["recovery_plan_digest"],
+        "confirmation": checked["confirmation_required"],
+    }
+    recovered_envelope, recovered_events = _request_with_progress(
+        bridge, recovery_request, batch_id
+    )
+    recovered = _success(recovered_envelope, "Recupero ACL stateful")
+    if (
+        recovered.get("complete") is not True
+        or recovered.get("resolution") != expected_resolution
+        or recovered.get("remote_write_performed") is not retry_write
+        or not checked_events
+        or not recovered_events
+    ):
+        raise OfflineAcceptanceError("Il recupero ACL stateful non si e' concluso in modo idempotente.")
+    return {
+        "failed_writes": 1,
+        "retried_writes": int(retry_write),
+        "remote_success_without_retry": int(not retry_write),
+    }
+
+
 def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
     if ready.get("app_version") != APP_VERSION:
         raise OfflineAcceptanceError(
@@ -557,202 +787,63 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-        recovery_candidate = _candidate("Interrupted import", at_root=True)
-        recovery_readiness = _readiness(
+        import_retry_metrics = _exercise_import_recovery(
             bridge,
+            ready,
             session_id,
             profile,
-            recovery_candidate,
-            destination_mode="root",
+            label="Interrupted import before commit",
+            fault="next-resource-create-500",
+            expected_resolution="not_applied",
         )
-        _set_fault(ready, "next-resource-create-500")
-        recovery_batch_id = str(uuid.uuid4())
-        recovery_resource = _resource(recovery_candidate)
-        failed_import_request = {
-            "command": "session-import",
-            "session_id": session_id,
-            "reconciliation_batch_id": recovery_batch_id,
-            "resource_format": profile,
-            "destination_mode": "root",
-            "folder_format": "auto",
-            "destination_folder_id": None,
-            "permission_mode": "inherited",
-            "permission_template": None,
-            "candidates": [dict(recovery_candidate)],
-            "resources": [recovery_resource],
-            "plan_digest": recovery_readiness["plan_digest"],
-            "confirmation": "IMPORTA 1",
-        }
-        try:
-            failed_import, failed_events = _request_with_progress(
-                bridge, failed_import_request, recovery_batch_id
-            )
-        finally:
-            recovery_resource["password"] = ""
-            failed_import_request["resources"] = []
-        _expected_failure(
-            failed_import,
-            "Importazione interrotta stateful",
-            {"IMPORT_PARTIAL_FAILURE"},
+        import_remote_success_metrics = _exercise_import_recovery(
+            bridge,
+            ready,
+            session_id,
+            profile,
+            label="Interrupted import after commit",
+            fault="next-resource-create-after-commit-500",
+            expected_resolution="remote_success",
         )
-        intent = next(
-            (item for item in failed_events if item["event_type"] == "operation_intent"),
-            None,
-        )
-        failure = next(
-            (item for item in failed_events if item["event_type"] == "operation_failed"),
-            None,
-        )
-        if not isinstance(intent, Mapping) or not isinstance(failure, Mapping):
-            raise OfflineAcceptanceError("Il lotto interrotto non contiene prove recuperabili.")
-        operation = {
-            **dict(intent["payload"]),
-            "recorded_outcome": {
-                "event_type": "operation_failed",
-                **dict(failure["payload"]),
-            },
-        }
-        recovery_state = {
-            "schema_version": 1,
-            "batch_id": recovery_batch_id,
-            "resource_format": profile,
-            "folder_format": "none",
-            "destination_mode": "root",
-            "destination_folder_id": None,
-            "permission_mode": "inherited",
-            "candidate_count": 1,
-            "candidates": [
-                {
-                    "candidate_id": recovery_candidate["candidate_id"],
-                    "source_sha256": recovery_candidate["source_sha256"],
-                }
-            ],
-            "operations": [operation],
-            "duplicate_candidates": [],
-        }
-        recovery_check_request = {
-            "command": "session-recovery-readiness",
-            "session_id": session_id,
-            "reconciliation_batch_id": recovery_batch_id,
-            "resource_format": profile,
-            "destination_mode": "root",
-            "folder_format": "none",
-            "destination_folder_id": None,
-            "permission_mode": "inherited",
-            "permission_template": None,
-            "candidates": [dict(recovery_candidate)],
-            "recovery_state": recovery_state,
-        }
-        checked_envelope, checked_events = _request_with_progress(
-            bridge, recovery_check_request, recovery_batch_id
-        )
-        checked = _success(checked_envelope, "Verifica recupero import stateful")
-        if checked.get("retry_action_count") != 1 or checked.get("not_applied_count") != 1:
-            raise OfflineAcceptanceError("Il recupero import non ha classificato la scrittura fallita.")
-        retry_resource = _resource(recovery_candidate)
-        recovery_import_request = {
-            **recovery_check_request,
-            "command": "session-recovery-import",
-            "recovery_id": checked["recovery_id"],
-            "recovery_plan_digest": checked["recovery_plan_digest"],
-            "resource_candidate_ids": checked["resource_candidate_ids"],
-            "resources": [retry_resource],
-            "confirmation": checked["confirmation_required"],
-        }
-        try:
-            recovered_envelope, recovered_events = _request_with_progress(
-                bridge, recovery_import_request, recovery_batch_id
-            )
-            recovered = _success(recovered_envelope, "Recupero import stateful")
-        finally:
-            retry_resource["password"] = ""
-            recovery_import_request["resources"] = []
-        if (
-            recovered.get("complete") is not True
-            or recovered.get("created_count") != 1
-            or recovered.get("destructive_actions_performed") is not False
-            or not checked_events
-            or not recovered_events
-        ):
-            raise OfflineAcceptanceError("Il recupero import stateful non si e' concluso.")
         results.append(
             {
                 "name": "interrupted_import_recovery",
                 "status": "passed",
-                "metrics": {"failed_writes": 1, "retried_writes": 1},
+                "metrics": {
+                    key: import_retry_metrics[key] + import_remote_success_metrics[key]
+                    for key in import_retry_metrics
+                },
             }
         )
 
-        interrupted_acl_plan = _acl_plan(
+        acl_retry_metrics = _exercise_acl_recovery(
             bridge,
+            ready,
             session_id,
             root_resource_id,
-            [{"aro": "User", "aro_foreign_key": recipient_id, "type": 7}],
+            recipient_id,
+            desired_type=7,
+            fault="next-share-500",
+            expected_resolution="not_applied",
         )
-        interrupted_acl_batch_id = str(uuid.uuid4())
-        _set_fault(ready, "next-share-500")
-        failed_acl, failed_acl_events = _request_with_progress(
+        acl_remote_success_metrics = _exercise_acl_recovery(
             bridge,
-            _acl_apply_request(
-                session_id, interrupted_acl_batch_id, interrupted_acl_plan
-            ),
-            interrupted_acl_batch_id,
+            ready,
+            session_id,
+            root_resource_id,
+            recipient_id,
+            desired_type=1,
+            fault="next-share-after-commit-500",
+            expected_resolution="remote_success",
         )
-        _expected_failure(
-            failed_acl, "ACL interrotta stateful", {"ACL_APPLY_FAILED"}
-        )
-        if [item["event_type"] for item in failed_acl_events] != [
-            "acl_operation_intent",
-            "acl_operation_failed",
-        ]:
-            raise OfflineAcceptanceError("Il journal ACL interrotto non e' riconciliabile.")
-        acl_state = _acl_recovery_state(
-            interrupted_acl_batch_id, interrupted_acl_plan
-        )
-        acl_check_request = {
-            "command": "session-acl-recovery-readiness",
-            "session_id": session_id,
-            "acl_batch_id": interrupted_acl_batch_id,
-            "acl_recovery_state": acl_state,
-        }
-        acl_checked_envelope, acl_checked_events = _request_with_progress(
-            bridge, acl_check_request, interrupted_acl_batch_id
-        )
-        acl_checked = _success(
-            acl_checked_envelope, "Verifica recupero ACL stateful"
-        )
-        if (
-            acl_checked.get("resolution") != "not_applied"
-            or acl_checked.get("retry_write_required") is not True
-        ):
-            raise OfflineAcceptanceError("La ACL interrotta non e' stata classificata.")
-        acl_recovery_request = {
-            "command": "session-acl-recovery-apply",
-            "session_id": session_id,
-            "acl_batch_id": interrupted_acl_batch_id,
-            "acl_recovery_state": acl_state,
-            "recovery_id": acl_checked["recovery_id"],
-            "recovery_plan_digest": acl_checked["recovery_plan_digest"],
-            "confirmation": acl_checked["confirmation_required"],
-        }
-        acl_recovered_envelope, acl_recovered_events = _request_with_progress(
-            bridge, acl_recovery_request, interrupted_acl_batch_id
-        )
-        acl_recovered = _success(
-            acl_recovered_envelope, "Recupero ACL stateful"
-        )
-        if (
-            acl_recovered.get("complete") is not True
-            or acl_recovered.get("remote_write_performed") is not True
-            or not acl_checked_events
-            or not acl_recovered_events
-        ):
-            raise OfflineAcceptanceError("Il recupero ACL stateful non si e' concluso.")
         results.append(
             {
                 "name": "interrupted_acl_recovery",
                 "status": "passed",
-                "metrics": {"failed_writes": 1, "retried_writes": 1},
+                "metrics": {
+                    key: acl_retry_metrics[key] + acl_remote_success_metrics[key]
+                    for key in acl_retry_metrics
+                },
             }
         )
 
@@ -770,7 +861,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
     status = read_lab_status(ready)
     if status.get("active_fault") != "none":
         raise OfflineAcceptanceError("Una fault injection e' rimasta attiva nel laboratorio.")
-    if status.get("resource_count") != 5 or status.get("folder_count") != 1:
+    if status.get("resource_count") != 6 or status.get("folder_count") != 1:
         raise OfflineAcceptanceError(
             "Lo stato finale del laboratorio non corrisponde ai nove scenari."
         )
@@ -782,6 +873,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
         "real_instance_attestation": False,
         "scenario_count": len(results),
         "passed_count": len(results),
+        "recovery_fault_path_count": 4,
         "scenarios": results,
         "remote_resource_count": int(status["resource_count"]),
         "remote_folder_count": int(status["folder_count"]),

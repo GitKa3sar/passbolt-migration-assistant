@@ -2,6 +2,30 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.0 - 2026-08-19
+
+### Added
+
+- aggiunti i fault monouso `next-resource-create-after-commit-500` e `next-share-after-commit-500`, che applicano la mutazione nel simulatore e sostituiscono soltanto la risposta finale con HTTP 500;
+- estesa l'accettazione stateful affinché i recuperi di import e ACL esercitino, su entrambi i profili v4/v5, sia `not_applied` con una sola riscrittura sia `remote_success` con chiusura senza seconda mutazione;
+- aggiunti al riepilogo del quality gate otto percorsi di fault di recupero, mantenendo separato il conteggio dei diciotto scenari operativi della matrice.
+
+### Changed
+
+- gli errori HTTP 5xx durante la creazione di cartelle o risorse vengono registrati con esito `unknown`, perché la risposta del server non dimostra che la mutazione non sia stata applicata;
+- gli errori HTTP 4xx restano `confirmed` e sono coperti da una regressione dedicata, mentre risorse già presenti e ACL già coincidenti vengono riconciliate tramite la rilettura autenticata esistente;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.24.0`.
+
+### Security
+
+- un HTTP 5xx non autorizza più automaticamente la ripetizione di una creazione: il recupero deve prima dimostrare lo stato remoto e blocca conflitti o duplicati ambigui;
+- i nuovi fault post-commit restano confinati al listener loopback e il test verifica che `remote_success` completi il journal con zero riscritture;
+- payload di avanzamento e report continuano a escludere credenziali, chiavi, contenuti cifrati e metadati delle risorse.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; dopo le relative attestazioni seguiranno pacchetto Windows riproducibile, firma/verifica degli artefatti e guida di aggiornamento.
+
 ## 0.23.0 - 2026-08-14
 
 ### Added

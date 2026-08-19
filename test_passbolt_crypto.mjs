@@ -1737,8 +1737,29 @@ async function main() {
       ['operation_intent', 'folder_created', 'operation_intent', 'operation_failed'],
     );
     assert.equal(failingProgress.at(-1).payload.error_code, 'RESOURCE_CREATE_FAILED');
-    assert.equal(failingProgress.at(-1).payload.outcome, 'confirmed');
+    assert.equal(failingProgress.at(-1).payload.outcome, 'unknown');
     assert.equal(failingProgress.at(-1).payload.http_status, 500);
+
+    const rejectedFolderProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { return { status: 409, document: { header: { message: 'Simulated conflict.' } } }; } },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => rejectedFolderProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 0,
+    );
+    assert.deepEqual(
+      rejectedFolderProgress.map((event) => event.eventType),
+      ['operation_intent', 'operation_failed'],
+    );
+    assert.equal(rejectedFolderProgress.at(-1).payload.error_code, 'FOLDER_CREATE_FAILED');
+    assert.equal(rejectedFolderProgress.at(-1).payload.outcome, 'confirmed');
+    assert.equal(rejectedFolderProgress.at(-1).payload.http_status, 409);
 
     await session.request('/auth/logout.json?api-version=v2', { method: 'POST' });
     assert.equal(authenticated, false);

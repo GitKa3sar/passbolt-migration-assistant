@@ -14,15 +14,17 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.23.0';
+const APP_VERSION = '0.24.0';
 const INPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILES = new Set(['v4', 'v5']);
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
 const FAULTS = new Set([
   'none',
   'next-resource-create-500',
+  'next-resource-create-after-commit-500',
   'next-folder-create-500',
   'next-share-500',
+  'next-share-after-commit-500',
   'expire-session',
 ]);
 
@@ -631,6 +633,10 @@ async function createLab(options) {
           }),
         });
         state.createdResourceCount += 1;
+        if (consumeFault('next-resource-create-after-commit-500')) {
+          send(response, 500, apiError('Injected offline-lab resource response failure after commit.', 500));
+          return;
+        }
         send(response, 200, apiSuccess({ id, permission }));
         return;
       }
@@ -701,6 +707,10 @@ async function createLab(options) {
             else target.secrets.push(secret);
           }
         }
+        if (consumeFault('next-share-after-commit-500')) {
+          send(response, 500, apiError('Injected offline-lab sharing response failure after commit.', 500));
+          return;
+        }
         send(response, 200, apiSuccess(null));
         return;
       }
@@ -767,6 +777,7 @@ async function main() {
       scenarios: [...SCENARIOS],
       faults: [...FAULTS],
       stateful_acceptance_scenarios: 9,
+      stateful_recovery_fault_paths: 4,
       effective_acl_simulation: true,
       shared_v5_metadata_key: true,
       loopback_only: true,
