@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.25.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.26.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -125,7 +125,7 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 114 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con dodici percorsi di fault di recupero, contratto WPF, otto anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 114 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, contratto WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -194,6 +194,17 @@ La versione 0.25.0 completa lo stesso controllo per la creazione delle cartelle.
 .\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-after-commit-500
 ```
 
+La versione 0.26.0 estende gli stessi controlli alle interruzioni di trasporto senza risposta HTTP. Per ciascuna mutazione è disponibile un fault pre-commit, che deve essere dimostrato `not_applied`, e uno post-commit, che deve essere riconciliato come `remote_success` senza ripetere la scrittura:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-after-commit-disconnect
+```
+
 Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le sette prove della matrice e verifica che non restino oggetti nel simulatore:
 
 ```powershell
@@ -203,14 +214,14 @@ Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le
 
 La versione 0.23.0 aggiunge un secondo controllo automatico, deliberatamente mutativo ma confinato al workspace effimero. Per ciascun profilo esegue le nove prove operative della matrice: risorsa in radice, nuova cartella cliente, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Ogni risorsa creata dal normale import viene riletta e verificata; v5 usa anche una chiave metadati condivisa sintetica con copia privata cifrata e firmata per l'utente del laboratorio.
 
-In 0.25.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risorsa, creazione cartella e modifica ACL. Il fault pre-commit deve produrre `not_applied` e una sola ripetizione della mutazione originaria; il fault post-commit deve produrre `remote_success` e zero riscritture della stessa mutazione. Per le cartelle, la risorsa pianificata viene poi creata nella destinazione appena verificata. Gli HTTP 5xx di creazione sono registrati come esito incerto; soltanto una risposta 4xx resta un fallimento confermato.
+In 0.26.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risorsa, creazione cartella e modifica ACL sia dopo HTTP 500 sia dopo una disconnessione. Il fault pre-commit deve produrre `not_applied` e una sola ripetizione della mutazione originaria; il fault post-commit deve produrre `remote_success` e zero riscritture della stessa mutazione. Per le cartelle, la risorsa pianificata viene poi creata nella destinazione appena verificata. Gli HTTP 5xx e gli errori di trasporto delle creazioni sono registrati come esito incerto; soltanto una risposta 4xx resta un fallimento confermato.
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v4 -AcceptanceTest
 .\run_offline_lab.ps1 -Profile v5 -AcceptanceTest
 ```
 
-`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente sei percorsi di fault per profilo nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici e i dodici percorsi di fault complessivi vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
+`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente dodici percorsi di fault per profilo nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici e i ventiquattro percorsi di fault complessivi vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
 
 Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
@@ -257,6 +268,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.26.0 copre anche la perdita completa della risposta a livello di trasporto. Le creazioni di risorsa e cartella registrano un evento incerto durevole quando la richiesta termina con connessione interrotta, timeout o lettura incompleta; il recupero non usa uno stato HTTP fittizio e deve ancora dimostrare `not_applied` oppure `remote_success`. Il laboratorio interrompe deliberatamente la connessione prima e dopo il commit per risorse, cartelle e ACL su entrambi i profili, senza promuovere il risultato sintetico ad attestazione reale.
 
 La versione 0.25.0 completa il recupero sintetico della creazione cartella. Se Passbolt applica `POST /folders.json` ma la risposta conclusiva va persa, la nuova rilettura autenticata deve trovare una sola cartella nella destinazione prevista: il recupero la classifica `remote_success`, la reinserisce nella mappa interna delle destinazioni e completa le risorse senza creare una cartella duplicata. Il ramo pre-commit continua invece a richiedere `not_applied` prima di ripetere una sola volta la creazione. Entrambi i rami sono esercitati su v4 e v5.
 

@@ -23,7 +23,7 @@ from offline_lab_smoke import OfflineLabSmokeError, load_ready_file, read_lab_st
 from passbolt_integration_matrix import JsonLineBridge, MatrixError, locate_node
 
 
-APP_VERSION = "0.25.0"
+APP_VERSION = "0.26.0"
 STATEFUL_SCENARIOS = (
     "import_root_resource",
     "import_new_client_folder",
@@ -36,6 +36,11 @@ STATEFUL_SCENARIOS = (
     "interrupted_acl_recovery",
 )
 ERROR_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{2,80}$")
+TRANSPORT_ERROR_CODES = {
+    "API_CONNECTION_FAILED",
+    "API_RESPONSE_READ_FAILED",
+    "API_TIMEOUT",
+}
 SENSITIVE_PROGRESS_KEYS = {
     "password",
     "passphrase",
@@ -78,6 +83,28 @@ def _expected_failure(
             f"{phase} non ha prodotto l'errore controllato previsto ({safe_code})."
         )
     return code
+
+
+def _assert_uncertain_write_failure(
+    failure: Mapping[str, Any], fault: str
+) -> None:
+    payload = failure.get("payload")
+    if not isinstance(payload, Mapping) or payload.get("outcome") != "unknown":
+        raise OfflineAcceptanceError(
+            "Il fault di scrittura non contiene un esito incerto valido."
+        )
+    if fault.endswith("-disconnect"):
+        if (
+            payload.get("error_code") not in TRANSPORT_ERROR_CODES
+            or "http_status" in payload
+        ):
+            raise OfflineAcceptanceError(
+                "La disconnessione non e' stata diagnosticata come errore di trasporto senza stato HTTP."
+            )
+    elif payload.get("http_status") != 500:
+        raise OfflineAcceptanceError(
+            "Il fault HTTP non conserva lo stato 500 atteso."
+        )
 
 
 def _candidate(label: str, *, at_root: bool, client: str | None = None) -> dict[str, Any]:
@@ -397,6 +424,7 @@ def _exercise_import_recovery(
         or failure.get("payload", {}).get("outcome") != "unknown"
     ):
         raise OfflineAcceptanceError("Il lotto interrotto non contiene prove incerte recuperabili.")
+    _assert_uncertain_write_failure(failure, fault)
     operation = {
         **dict(intent["payload"]),
         "recorded_outcome": {
@@ -574,6 +602,7 @@ def _exercise_folder_recovery(
         raise OfflineAcceptanceError(
             "La creazione cartella interrotta non contiene prove incerte recuperabili."
         )
+    _assert_uncertain_write_failure(failure, fault)
     remote_success_count = int(expected_resolution == "remote_success")
     retry_count = int(expected_resolution == "not_applied")
     after_failure = read_lab_status(ready)
@@ -707,13 +736,23 @@ def _exercise_acl_recovery(
         _acl_apply_request(session_id, batch_id, plan),
         batch_id,
     )
-    _expected_failure(failed_acl, "ACL interrotta stateful", {"ACL_APPLY_FAILED"})
+    expected_error_codes = {"ACL_APPLY_FAILED"}
+    if fault.endswith("-disconnect"):
+        expected_error_codes |= TRANSPORT_ERROR_CODES
+    failure_code = _expected_failure(
+        failed_acl, "ACL interrotta stateful", expected_error_codes
+    )
     if (
         [item["event_type"] for item in failed_events]
         != ["acl_operation_intent", "acl_operation_failed"]
         or failed_events[-1].get("payload", {}).get("outcome") != "unknown"
     ):
         raise OfflineAcceptanceError("Il journal ACL interrotto non e' riconciliabile.")
+    _assert_uncertain_write_failure(failed_events[-1], fault)
+    if failed_events[-1].get("payload", {}).get("error_code") != failure_code:
+        raise OfflineAcceptanceError(
+            "La diagnostica ACL non coincide con l'errore restituito al chiamante."
+        )
     recovery_state = _acl_recovery_state(batch_id, plan)
     check_request = {
         "command": "session-acl-recovery-readiness",
@@ -983,89 +1022,115 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-        import_retry_metrics = _exercise_import_recovery(
-            bridge,
-            ready,
-            session_id,
-            profile,
-            label="Interrupted import before commit",
-            fault="next-resource-create-500",
-            expected_resolution="not_applied",
-        )
-        import_remote_success_metrics = _exercise_import_recovery(
-            bridge,
-            ready,
-            session_id,
-            profile,
-            label="Interrupted import after commit",
-            fault="next-resource-create-after-commit-500",
-            expected_resolution="remote_success",
-        )
-        folder_retry_metrics = _exercise_folder_recovery(
-            bridge,
-            ready,
-            session_id,
-            profile,
-            label="Interrupted folder before commit",
-            fault="next-folder-create-500",
-            expected_resolution="not_applied",
-        )
-        folder_remote_success_metrics = _exercise_folder_recovery(
-            bridge,
-            ready,
-            session_id,
-            profile,
-            label="Interrupted folder after commit",
-            fault="next-folder-create-after-commit-500",
-            expected_resolution="remote_success",
-        )
+        import_recovery_metrics = [
+            _exercise_import_recovery(
+                bridge,
+                ready,
+                session_id,
+                profile,
+                label=label,
+                fault=fault,
+                expected_resolution=resolution,
+            )
+            for label, fault, resolution in (
+                (
+                    "Interrupted import before HTTP commit",
+                    "next-resource-create-500",
+                    "not_applied",
+                ),
+                (
+                    "Interrupted import after HTTP commit",
+                    "next-resource-create-after-commit-500",
+                    "remote_success",
+                ),
+                (
+                    "Interrupted import before transport commit",
+                    "next-resource-create-disconnect",
+                    "not_applied",
+                ),
+                (
+                    "Interrupted import after transport commit",
+                    "next-resource-create-after-commit-disconnect",
+                    "remote_success",
+                ),
+            )
+        ]
+        folder_recovery_metrics = [
+            _exercise_folder_recovery(
+                bridge,
+                ready,
+                session_id,
+                profile,
+                label=label,
+                fault=fault,
+                expected_resolution=resolution,
+            )
+            for label, fault, resolution in (
+                (
+                    "Interrupted folder before HTTP commit",
+                    "next-folder-create-500",
+                    "not_applied",
+                ),
+                (
+                    "Interrupted folder after HTTP commit",
+                    "next-folder-create-after-commit-500",
+                    "remote_success",
+                ),
+                (
+                    "Interrupted folder before transport commit",
+                    "next-folder-create-disconnect",
+                    "not_applied",
+                ),
+                (
+                    "Interrupted folder after transport commit",
+                    "next-folder-create-after-commit-disconnect",
+                    "remote_success",
+                ),
+            )
+        ]
+        combined_import_metrics = import_recovery_metrics + folder_recovery_metrics
         results.append(
             {
                 "name": "interrupted_import_recovery",
                 "status": "passed",
                 "metrics": {
-                    key: import_retry_metrics[key]
-                    + import_remote_success_metrics[key]
-                    + folder_retry_metrics[key]
-                    + folder_remote_success_metrics[key]
-                    for key in import_retry_metrics
+                    key: sum(item[key] for item in combined_import_metrics)
+                    for key in import_recovery_metrics[0]
                 }
                 | {
-                    "followup_resource_writes": folder_retry_metrics[
-                        "followup_resource_writes"
-                    ]
-                    + folder_remote_success_metrics["followup_resource_writes"]
+                    "followup_resource_writes": sum(
+                        item["followup_resource_writes"]
+                        for item in folder_recovery_metrics
+                    )
                 },
             }
         )
 
-        acl_retry_metrics = _exercise_acl_recovery(
-            bridge,
-            ready,
-            session_id,
-            root_resource_id,
-            recipient_id,
-            desired_type=7,
-            fault="next-share-500",
-            expected_resolution="not_applied",
-        )
-        acl_remote_success_metrics = _exercise_acl_recovery(
-            bridge,
-            ready,
-            session_id,
-            root_resource_id,
-            recipient_id,
-            desired_type=1,
-            fault="next-share-after-commit-500",
-            expected_resolution="remote_success",
-        )
+        acl_recovery_metrics = [
+            _exercise_acl_recovery(
+                bridge,
+                ready,
+                session_id,
+                root_resource_id,
+                recipient_id,
+                desired_type=desired_type,
+                fault=fault,
+                expected_resolution=resolution,
+            )
+            for desired_type, fault, resolution in (
+                (7, "next-share-500", "not_applied"),
+                (1, "next-share-after-commit-500", "remote_success"),
+                (7, "next-share-disconnect", "not_applied"),
+                (1, "next-share-after-commit-disconnect", "remote_success"),
+            )
+        ]
         results.append(
             {
                 "name": "interrupted_acl_recovery",
                 "status": "passed",
                 "metrics": {
-                    key: acl_retry_metrics[key] + acl_remote_success_metrics[key]
-                    for key in acl_retry_metrics
+                    key: sum(item[key] for item in acl_recovery_metrics)
+                    for key in acl_recovery_metrics[0]
                 },
             }
         )
@@ -1084,7 +1149,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
     status = read_lab_status(ready)
     if status.get("active_fault") != "none":
         raise OfflineAcceptanceError("Una fault injection e' rimasta attiva nel laboratorio.")
-    if status.get("resource_count") != 8 or status.get("folder_count") != 3:
+    if status.get("resource_count") != 12 or status.get("folder_count") != 5:
         raise OfflineAcceptanceError(
             "Lo stato finale del laboratorio non corrisponde ai nove scenari."
         )
@@ -1096,7 +1161,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
         "real_instance_attestation": False,
         "scenario_count": len(results),
         "passed_count": len(results),
-        "recovery_fault_path_count": 6,
+        "recovery_fault_path_count": 12,
         "scenarios": results,
         "remote_resource_count": int(status["resource_count"]),
         "remote_folder_count": int(status["folder_count"]),

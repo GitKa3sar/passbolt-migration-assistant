@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 
-APP_VERSION = "0.25.0"
+APP_VERSION = "0.26.0"
 LAB_MARKER = "LAB-ONLY-NOT-A-REAL-SECRET"
 WORKSPACE_NAME_PATTERN = re.compile(r"^passbolt-offline-lab-[0-9a-f]{32}$")
 

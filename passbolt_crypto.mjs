@@ -25,7 +25,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.25.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.26.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -3734,11 +3734,38 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       destination_key_hash: technicalDigest(folder.destination_key),
       ...(folder.shared ? { permission_mask_hash: permissionMaskDigest(folder.share_permissions) } : {}),
     });
-    const response = await session.request('/folders.json?api-version=v2&contain[permission]=1', {
-      method: 'POST',
-      body: payload,
-      allowError: true,
-    });
+    let response;
+    try {
+      response = await session.request('/folders.json?api-version=v2&contain[permission]=1', {
+        method: 'POST',
+        body: payload,
+        allowError: true,
+      });
+    } catch (error) {
+      const causeCode = error instanceof SafeError ? error.code : 'INTERNAL_ERROR';
+      const httpStatus = error instanceof SafeError && Number.isInteger(error.details?.http_status)
+        ? error.details.http_status
+        : null;
+      await progress('operation_failed', {
+        operation_id: createFolderOperationId,
+        object_type: 'folder',
+        error_code: causeCode,
+        outcome: 'unknown',
+        ...(httpStatus === null ? {} : { http_status: httpStatus }),
+      });
+      throw new SafeError(
+        'IMPORT_PARTIAL_FAILURE',
+        `La creazione della cartella ${folder.name} non ha restituito un esito verificabile. Lo stato remoto deve essere controllato prima di ripetere la scrittura.`,
+        {
+          created_folders: createdFolders,
+          reconciled_folders: reconciledFolders,
+          created,
+          failed_folder_name: folder.name,
+          cause_code: causeCode,
+          ...(httpStatus === null ? {} : { http_status: httpStatus }),
+        },
+      );
+    }
     if (response.status < 200 || response.status >= 300) {
       await progress('operation_failed', {
         operation_id: createFolderOperationId,
@@ -3857,11 +3884,39 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       destination_key_hash: technicalDigest(planned.destination_key),
       ...(planned.shared ? { permission_mask_hash: permissionMaskDigest(planned.share_permissions) } : {}),
     });
-    const response = await session.request('/resources.json?api-version=v2&contain[permission]=1', {
-      method: 'POST',
-      body: payload,
-      allowError: true,
-    });
+    let response;
+    try {
+      response = await session.request('/resources.json?api-version=v2&contain[permission]=1', {
+        method: 'POST',
+        body: payload,
+        allowError: true,
+      });
+    } catch (error) {
+      const causeCode = error instanceof SafeError ? error.code : 'INTERNAL_ERROR';
+      const httpStatus = error instanceof SafeError && Number.isInteger(error.details?.http_status)
+        ? error.details.http_status
+        : null;
+      await progress('operation_failed', {
+        operation_id: createResourceOperationId,
+        object_type: 'resource',
+        candidate_id: resource.candidate_id,
+        error_code: causeCode,
+        outcome: 'unknown',
+        ...(httpStatus === null ? {} : { http_status: httpStatus }),
+      });
+      throw new SafeError(
+        'IMPORT_PARTIAL_FAILURE',
+        `La creazione di ${resource.title} non ha restituito un esito verificabile. Lo stato remoto deve essere controllato prima di ripetere la scrittura.`,
+        {
+          created_folders: createdFolders,
+          reconciled_folders: reconciledFolders,
+          created,
+          failed_candidate_id: resource.candidate_id,
+          cause_code: causeCode,
+          ...(httpStatus === null ? {} : { http_status: httpStatus }),
+        },
+      );
+    }
     if (response.status < 200 || response.status >= 300) {
       await progress('operation_failed', {
         operation_id: createResourceOperationId,

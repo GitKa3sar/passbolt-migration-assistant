@@ -1814,6 +1814,36 @@ async function main() {
     assert.equal(failingProgress.at(-1).payload.outcome, 'unknown');
     assert.equal(failingProgress.at(-1).payload.http_status, 500);
 
+    const disconnectedResourceProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        {
+          async request(path) {
+            if (path.startsWith('/folders.json')) {
+              return { status: 200, document: { body: { id: 'transport-folder-id' } } };
+            }
+            throw new Error('Simulated transport interruption.');
+          },
+        },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => disconnectedResourceProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 1
+        && error?.details?.created?.length === 0
+        && error?.details?.cause_code === 'INTERNAL_ERROR',
+    );
+    assert.deepEqual(
+      disconnectedResourceProgress.map((event) => event.eventType),
+      ['operation_intent', 'folder_created', 'operation_intent', 'operation_failed'],
+    );
+    assert.equal(disconnectedResourceProgress.at(-1).payload.error_code, 'INTERNAL_ERROR');
+    assert.equal(disconnectedResourceProgress.at(-1).payload.outcome, 'unknown');
+    assert.equal(Object.hasOwn(disconnectedResourceProgress.at(-1).payload, 'http_status'), false);
+
     const rejectedFolderProgress = [];
     await assert.rejects(
       createPlannedContent(
@@ -1855,6 +1885,28 @@ async function main() {
     assert.equal(uncertainFolderProgress.at(-1).payload.error_code, 'FOLDER_CREATE_FAILED');
     assert.equal(uncertainFolderProgress.at(-1).payload.outcome, 'unknown');
     assert.equal(uncertainFolderProgress.at(-1).payload.http_status, 500);
+
+    const disconnectedFolderProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { throw new Error('Simulated transport interruption.'); } },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => disconnectedFolderProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 0
+        && error?.details?.cause_code === 'INTERNAL_ERROR',
+    );
+    assert.deepEqual(
+      disconnectedFolderProgress.map((event) => event.eventType),
+      ['operation_intent', 'operation_failed'],
+    );
+    assert.equal(disconnectedFolderProgress.at(-1).payload.error_code, 'INTERNAL_ERROR');
+    assert.equal(disconnectedFolderProgress.at(-1).payload.outcome, 'unknown');
+    assert.equal(Object.hasOwn(disconnectedFolderProgress.at(-1).payload, 'http_status'), false);
 
     await session.request('/auth/logout.json?api-version=v2', { method: 'POST' });
     assert.equal(authenticated, false);

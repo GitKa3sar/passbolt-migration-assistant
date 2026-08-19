@@ -2,6 +2,30 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.26.0 - 2026-08-19
+
+### Added
+
+- aggiunti sei fault monouso di disconnessione pre/post-commit per creazione risorsa, creazione cartella e applicazione ACL;
+- estesa l'accettazione stateful v4/v5 con entrambi i rami di recupero anche quando la richiesta termina senza alcuno stato HTTP;
+- aggiunte regressioni mirate affinché le eccezioni di trasporto durante le creazioni producano un evento durevole `operation_failed` con esito `unknown`.
+
+### Changed
+
+- una creazione interrotta a livello di trasporto viene restituita come lotto parzialmente applicato e richiede la stessa rilettura autenticata già prevista per gli HTTP 5xx;
+- i diciotto scenari stateful esercitano ora ventiquattro percorsi di fault complessivi: dodici per profilo, equamente distribuiti fra risposta HTTP 500 e disconnessione;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.26.0`.
+
+### Security
+
+- la diagnostica delle disconnessioni conserva soltanto un codice enumerato e non inventa uno stato HTTP assente;
+- i fault post-commit devono chiudersi come `remote_success` senza una seconda mutazione, mentre quelli pre-commit richiedono `not_applied` prima di una sola ripetizione;
+- tutte le interruzioni di trasporto restano confinate al listener loopback effimero e usano esclusivamente dati, identità e chiavi sintetici.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; la distribuzione Windows seguirà soltanto dopo le relative attestazioni.
+
 ## 0.25.0 - 2026-08-19
 
 ### Added
