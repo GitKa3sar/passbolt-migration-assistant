@@ -80,6 +80,15 @@ class NullRootFolderFormatBridge(FakeBridge):
         return response
 
 
+class GpgAuthOnlyBridge(FakeBridge):
+    def request(self, request):
+        response = super().request(request)
+        if request["command"] == "session-open":
+            response["result"]["authentication"] = "GPGAuth"
+            response["result"]["mfa_provider"] = None
+        return response
+
+
 class IntegrationMatrixTests(unittest.TestCase):
     def profile(self, **overrides):
         values = {
@@ -176,6 +185,21 @@ class IntegrationMatrixTests(unittest.TestCase):
         scenario = next(item for item in report["scenarios"] if item["name"] == "resource_root_dry_run")
         self.assertEqual(scenario["status"], "passed")
         self.assertIsNone(scenario["metrics"]["folder_format_selected"])
+
+    def test_gpg_auth_only_login_preserves_null_mfa_provider(self):
+        report = matrix.run_instance(
+            self.profile(),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "",
+            probe_runner=self.probe,
+            bridge_factory=lambda: GpgAuthOnlyBridge(),
+        )
+        scenario = next(item for item in report["scenarios"] if item["name"] == "authenticated_login")
+        self.assertEqual(scenario["status"], "passed")
+        self.assertEqual(scenario["metrics"]["authentication"], "GPGAuth")
+        self.assertIsNone(scenario["metrics"]["mfa_provider"])
+        matrix.validate_report_document(report)
 
     def test_bridge_receives_secrets_only_in_session_open(self):
         bridge = FakeBridge()

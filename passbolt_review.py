@@ -27,7 +27,7 @@ from typing import Iterable, Iterator, Mapping
 from xml.etree import ElementTree
 
 
-APP_VERSION = "0.23.0"
+APP_VERSION = "0.28.1"
 ROOT_CLIENT_LABEL = "(radice)"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_ARCHIVE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
@@ -36,6 +36,12 @@ MAX_RECORDS_PER_FILE = 5_000
 MAX_PDF_PAGES = 200
 MAX_SECURE_REVIEW_STDIN_BYTES = 64 * 1024 * 1024
 MAX_OFFICE_PASSWORD_CHARACTERS = 1_024
+SOURCE_MAPPING_SCHEMA_VERSION = 1
+SOURCE_MAPPING_FIELDS = ("title", "username", "secret", "uri")
+MAX_SOURCE_MAPPING_PROFILE_BYTES = 16 * 1024
+MAX_SOURCE_MAPPING_PROFILE_NAME_CHARACTERS = 80
+MAX_SOURCE_MAPPING_ALIASES_PER_FIELD = 8
+MAX_SOURCE_MAPPING_ALIAS_CHARACTERS = 80
 OLE_COMPOUND_FILE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 
 # Third-party document readers can emit advisory warnings on stderr. The CLI
@@ -82,6 +88,27 @@ class ExcelEncryptionReaderUnavailable(ReviewError):
 
 
 @dataclass(frozen=True)
+class SourceMappingProfile:
+    """Validated, secret-free mapping from source labels to candidate fields."""
+
+    schema_version: int
+    name: str
+    fields: dict[str, tuple[str, ...]]
+    digest: str
+
+    def document(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "name": self.name,
+            "fields": {
+                field_name: list(self.fields[field_name])
+                for field_name in SOURCE_MAPPING_FIELDS
+            },
+            "digest": self.digest,
+        }
+
+
+@dataclass(frozen=True)
 class CredentialCandidate:
     candidate_id: str
     source_relative_path: str
@@ -98,6 +125,8 @@ class CredentialCandidate:
     confidence: str
     source_password_required: bool = False
     fields_detected: list[str] = field(default_factory=list)
+    source_mapping_digest: str = ""
+    source_mapping_profile: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -118,12 +147,118 @@ class ReviewResult:
     candidates: list[CredentialCandidate] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     protected_excel_issues: list[ProtectedExcelIssue] = field(default_factory=list)
+    source_mapping_profile_name: str = "Rilevamento automatico"
+    source_mapping_profile_digest: str = ""
 
 
 def _normalized_key(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     ascii_text = "".join(character for character in text if not unicodedata.combining(character))
     return re.sub(r"[^a-z0-9]", "", ascii_text.casefold())
+
+
+def _canonical_source_mapping_document(
+    name: str, fields: Mapping[str, tuple[str, ...]]
+) -> dict[str, object]:
+    return {
+        "schema_version": SOURCE_MAPPING_SCHEMA_VERSION,
+        "name": name,
+        "fields": {
+            field_name: list(fields[field_name]) for field_name in SOURCE_MAPPING_FIELDS
+        },
+    }
+
+
+def normalize_source_mapping_profile(value: object) -> SourceMappingProfile | None:
+    """Validate and canonicalize an optional exact-match source mapping profile."""
+
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ReviewError("Il profilo di mappatura sorgente deve essere un oggetto JSON.")
+    allowed_keys = {"schema_version", "name", "fields", "digest"}
+    if set(value) - allowed_keys:
+        raise ReviewError("Il profilo di mappatura contiene campi non riconosciuti.")
+    if value.get("schema_version") != SOURCE_MAPPING_SCHEMA_VERSION:
+        raise ReviewError("La versione del profilo di mappatura non è supportata.")
+    name = str(value.get("name", "")).strip()
+    if (
+        not name
+        or len(name) > MAX_SOURCE_MAPPING_PROFILE_NAME_CHARACTERS
+        or re.search(r"[\x00-\x1f\x7f]", name)
+    ):
+        raise ReviewError("Il nome del profilo di mappatura non è valido.")
+    raw_fields = value.get("fields")
+    if not isinstance(raw_fields, Mapping) or set(raw_fields) != set(
+        SOURCE_MAPPING_FIELDS
+    ):
+        raise ReviewError(
+            "Il profilo deve dichiarare esattamente title, username, secret e uri."
+        )
+
+    normalized_fields: dict[str, tuple[str, ...]] = {}
+    alias_owner: dict[str, str] = {}
+    for field_name in SOURCE_MAPPING_FIELDS:
+        raw_aliases = raw_fields.get(field_name)
+        if (
+            not isinstance(raw_aliases, list)
+            or len(raw_aliases) > MAX_SOURCE_MAPPING_ALIASES_PER_FIELD
+        ):
+            raise ReviewError(
+                f"La mappatura {field_name} deve essere una lista di massimo "
+                f"{MAX_SOURCE_MAPPING_ALIASES_PER_FIELD} etichette."
+            )
+        normalized_aliases: list[str] = []
+        for raw_alias in raw_aliases:
+            if (
+                not isinstance(raw_alias, str)
+                or not raw_alias.strip()
+                or len(raw_alias.strip()) > MAX_SOURCE_MAPPING_ALIAS_CHARACTERS
+                or re.search(r"[\x00-\x1f\x7f]", raw_alias)
+            ):
+                raise ReviewError(
+                    f"Una etichetta della mappatura {field_name} non è valida."
+                )
+            normalized = _normalized_key(raw_alias)
+            if not normalized or normalized in normalized_aliases:
+                raise ReviewError(
+                    f"La mappatura {field_name} contiene etichette vuote o duplicate."
+                )
+            previous_owner = alias_owner.get(normalized)
+            if previous_owner is not None:
+                raise ReviewError(
+                    "Una stessa etichetta sorgente non può alimentare due campi: "
+                    f"{previous_owner} e {field_name}."
+                )
+            alias_owner[normalized] = field_name
+            normalized_aliases.append(normalized)
+        normalized_fields[field_name] = tuple(normalized_aliases)
+
+    if not normalized_fields["secret"] or not (
+        normalized_fields["username"] or normalized_fields["uri"]
+    ):
+        raise ReviewError(
+            "Il profilo deve mappare la password e almeno uno fra username e URL/host."
+        )
+
+    canonical = _canonical_source_mapping_document(name, normalized_fields)
+    digest = hashlib.sha256(
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    supplied_digest = value.get("digest")
+    if supplied_digest is not None and str(supplied_digest).strip().lower() != digest:
+        raise ReviewError("Il digest del profilo di mappatura non corrisponde al contenuto.")
+    return SourceMappingProfile(
+        schema_version=SOURCE_MAPPING_SCHEMA_VERSION,
+        name=name,
+        fields=normalized_fields,
+        digest=digest,
+    )
 
 
 TITLE_KEYS = {
@@ -251,7 +386,37 @@ def _find_field(
 
 def _candidate_fields(
     record: dict[object, object],
+    source_mapping_profile: SourceMappingProfile | None = None,
 ) -> tuple[tuple[bool, str], tuple[bool, str], tuple[bool, str], tuple[bool, str]]:
+    if source_mapping_profile is not None:
+        values_by_key: dict[str, list[str]] = {}
+        for key, value in record.items():
+            normalized = _normalized_key(key)
+            if normalized:
+                values_by_key.setdefault(normalized, []).append(_scalar(value))
+
+        mapped_fields: list[tuple[bool, str]] = []
+        for field_name in SOURCE_MAPPING_FIELDS:
+            selected: tuple[bool, str] = (False, "")
+            matched_alias = ""
+            for alias in source_mapping_profile.fields[field_name]:
+                matches = values_by_key.get(alias, [])
+                if len(matches) > 1:
+                    raise ReviewError(
+                        f"Il profilo {source_mapping_profile.name} trova più colonne "
+                        f"equivalenti per {field_name}."
+                    )
+                if matches:
+                    if matched_alias:
+                        raise ReviewError(
+                            f"Il profilo {source_mapping_profile.name} trova sia "
+                            f"{matched_alias} sia {alias} per {field_name}."
+                        )
+                    matched_alias = alias
+                    selected = (True, matches[0])
+            mapped_fields.append(selected)
+        return tuple(mapped_fields)  # type: ignore[return-value]
+
     title = (False, "")
     username = (False, "")
     secret = (False, "")
@@ -330,7 +495,17 @@ def _find_ip_address(record: dict[object, object]) -> str:
     return ""
 
 
-def _has_credential_key(record: dict[object, object]) -> bool:
+def _has_credential_key(
+    record: dict[object, object],
+    source_mapping_profile: SourceMappingProfile | None = None,
+) -> bool:
+    if source_mapping_profile is not None:
+        aliases = {
+            alias
+            for field_name in SOURCE_MAPPING_FIELDS
+            for alias in source_mapping_profile.fields[field_name]
+        }
+        return any(_normalized_key(key) in aliases for key in record)
     return any(
         _matches_field_key(key, TITLE_KEYS, False)
         or _matches_field_key(key, USERNAME_KEYS, True)
@@ -348,14 +523,15 @@ def _make_candidate(
     client: str,
     location: str,
     source_password_required: bool = False,
+    source_mapping_profile: SourceMappingProfile | None = None,
 ) -> CredentialCandidate | None:
     (
         (title_found, title),
         (username_found, username),
         (secret_found, secret),
         (uri_found, uri),
-    ) = _candidate_fields(record)
-    if not uri:
+    ) = _candidate_fields(record, source_mapping_profile)
+    if not uri and source_mapping_profile is None:
         detected_ip = _find_ip_address(record)
         if detected_ip:
             uri_found, uri = True, detected_ip
@@ -380,9 +556,12 @@ def _make_candidate(
     confidence = "high" if ready and (title_found or uri_found) else "medium"
     if not secret_present:
         confidence = "low"
-    identifier_material = "\x1f".join(
-        (relative_path, location, title, username, uri, source_hash)
-    ).encode("utf-8", errors="surrogatepass")
+    identifier_parts = [relative_path, location, title, username, uri, source_hash]
+    if source_mapping_profile is not None:
+        identifier_parts.append(source_mapping_profile.digest)
+    identifier_material = "\x1f".join(identifier_parts).encode(
+        "utf-8", errors="surrogatepass"
+    )
     candidate_id = hashlib.sha256(identifier_material).hexdigest()[:16]
 
     return CredentialCandidate(
@@ -401,6 +580,14 @@ def _make_candidate(
         confidence=confidence,
         source_password_required=source_password_required,
         fields_detected=fields_detected,
+        source_mapping_digest=(
+            source_mapping_profile.digest if source_mapping_profile is not None else ""
+        ),
+        source_mapping_profile=(
+            source_mapping_profile.document()
+            if source_mapping_profile is not None
+            else None
+        ),
     )
 
 
@@ -421,13 +608,17 @@ def _strip_wrapping_quotes(value: str) -> str:
     return value
 
 
-def _key_value_records(text: str, label: str = "testo") -> Iterator[tuple[str, dict[str, str]]]:
+def _key_value_records(
+    text: str,
+    label: str = "testo",
+    source_mapping_profile: SourceMappingProfile | None = None,
+) -> Iterator[tuple[str, dict[str, str]]]:
     record: dict[str, str] = {}
     start_line = 1
 
     def emit(end_line: int) -> tuple[str, dict[str, str]] | None:
         nonlocal record, start_line
-        if not record or not _has_credential_key(record):
+        if not record or not _has_credential_key(record, source_mapping_profile):
             record = {}
             return None
         location = f"{label}, righe {start_line}-{end_line}"
@@ -474,7 +665,9 @@ def _csv_records(text: str, delimiter: str) -> Iterator[tuple[str, dict[str, str
         yield f"riga {row_number}", {str(key): _scalar(value) for key, value in row.items() if key}
 
 
-def _json_records(text: str) -> Iterator[tuple[str, dict[object, object]]]:
+def _json_records(
+    text: str, source_mapping_profile: SourceMappingProfile | None = None
+) -> Iterator[tuple[str, dict[object, object]]]:
     try:
         document = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -487,7 +680,7 @@ def _json_records(text: str) -> Iterator[tuple[str, dict[object, object]]]:
         if emitted >= MAX_RECORDS_PER_FILE:
             return
         if isinstance(value, dict):
-            if _has_credential_key(value):
+            if _has_credential_key(value, source_mapping_profile):
                 emitted += 1
                 yield path, value
             for key, child in value.items():
@@ -502,7 +695,9 @@ def _json_records(text: str) -> Iterator[tuple[str, dict[object, object]]]:
     yield from visit(document, "$")
 
 
-def _xml_records(raw: bytes) -> Iterator[tuple[str, dict[str, str]]]:
+def _xml_records(
+    raw: bytes, source_mapping_profile: SourceMappingProfile | None = None
+) -> Iterator[tuple[str, dict[str, str]]]:
     normalized = raw.upper()
     if b"<!DOCTYPE" in normalized or b"<!ENTITY" in normalized:
         raise ReviewError("XML con DTD o entità non consentite.")
@@ -521,20 +716,24 @@ def _xml_records(raw: bytes) -> Iterator[tuple[str, dict[str, str]]]:
             if not list(child):
                 tag = child.tag.rsplit("}", 1)[-1]
                 record[tag] = (child.text or "").strip()
-        if record and _has_credential_key(record):
+        if record and _has_credential_key(record, source_mapping_profile):
             emitted += 1
             yield f"elemento {element.tag.rsplit('}', 1)[-1]} #{index}", record
             if emitted >= MAX_RECORDS_PER_FILE:
                 break
 
 
-def _ini_records(text: str) -> Iterator[tuple[str, dict[str, str]]]:
+def _ini_records(
+    text: str, source_mapping_profile: SourceMappingProfile | None = None
+) -> Iterator[tuple[str, dict[str, str]]]:
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     parser.optionxform = str
     try:
         parser.read_string(text)
     except configparser.Error:
-        yield from _key_value_records(text)
+        yield from _key_value_records(
+            text, source_mapping_profile=source_mapping_profile
+        )
         return
     for section in parser.sections():
         yield f"sezione [{section}]", dict(parser.items(section))
@@ -666,7 +865,9 @@ def _xlsx_records(
             decrypted.close()
 
 
-def _docx_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
+def _docx_records(
+    path: Path, source_mapping_profile: SourceMappingProfile | None = None
+) -> Iterator[tuple[str, dict[str, str]]]:
     _preflight_zip(path)
     try:
         from docx import Document
@@ -675,7 +876,9 @@ def _docx_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
 
     document = Document(path)
     paragraph_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    yield from _key_value_records(paragraph_text, "paragrafi")
+    yield from _key_value_records(
+        paragraph_text, "paragrafi", source_mapping_profile
+    )
     emitted = 0
     for table_number, table in enumerate(document.tables, start=1):
         if not table.rows:
@@ -693,7 +896,9 @@ def _docx_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
                 return
 
 
-def _pdf_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
+def _pdf_records(
+    path: Path, source_mapping_profile: SourceMappingProfile | None = None
+) -> Iterator[tuple[str, dict[str, str]]]:
     try:
         from pypdf import PdfReader
     except ImportError as exc:
@@ -713,34 +918,40 @@ def _pdf_records(path: Path) -> Iterator[tuple[str, dict[str, str]]]:
             text = (page.extract_text() or "")[:MAX_TEXT_CHARACTERS]
         except Exception as exc:
             raise ReviewError(f"Testo PDF non leggibile a pagina {page_number}.") from exc
-        yield from _key_value_records(text, f"pagina {page_number}")
+        yield from _key_value_records(
+            text, f"pagina {page_number}", source_mapping_profile
+        )
 
 
 def _records_for_file(
-    path: Path, extension: str, *, file_password: str | None = None
+    path: Path,
+    extension: str,
+    *,
+    file_password: str | None = None,
+    source_mapping_profile: SourceMappingProfile | None = None,
 ) -> Iterable[tuple[str, dict[object, object]]]:
     if extension == ".xls":
         raise ReviewError("Formato XLS legacy non disponibile; salvare una copia come XLSX.")
     if extension == ".xlsx":
         return _xlsx_records(path, file_password)
     if extension == ".docx":
-        return _docx_records(path)
+        return _docx_records(path, source_mapping_profile)
     if extension == ".pdf":
-        return _pdf_records(path)
+        return _pdf_records(path, source_mapping_profile)
 
     raw = path.read_bytes()
     if extension == ".xml":
-        return _xml_records(raw)
+        return _xml_records(raw, source_mapping_profile)
     text = _decode_text(raw)
     if extension == ".csv":
         return _csv_records(text, ",")
     if extension == ".tsv":
         return _csv_records(text, "\t")
     if extension == ".json":
-        return _json_records(text)
+        return _json_records(text, source_mapping_profile)
     if extension in {".ini", ".cfg"}:
-        return _ini_records(text)
-    return _key_value_records(text)
+        return _ini_records(text, source_mapping_profile)
+    return _key_value_records(text, source_mapping_profile=source_mapping_profile)
 
 
 def _sha256(path: Path) -> str:
@@ -777,6 +988,7 @@ def analyze_files(
     selected_files: Iterable[str],
     *,
     file_passwords: Mapping[str, str] | None = None,
+    source_mapping_profile: SourceMappingProfile | Mapping[str, object] | None = None,
 ) -> ReviewResult:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
@@ -785,6 +997,11 @@ def analyze_files(
     supplied_files = list(dict.fromkeys(str(value) for value in selected_files))
     if not supplied_files:
         raise ReviewError("Selezionare almeno un file da revisionare.")
+    profile = (
+        source_mapping_profile
+        if isinstance(source_mapping_profile, SourceMappingProfile)
+        else normalize_source_mapping_profile(source_mapping_profile)
+    )
     supplied_keys = {_normalized_supplied_path(value) for value in supplied_files}
     password_map: dict[str, str] = {}
     for supplied_path, password in dict(file_passwords or {}).items():
@@ -826,7 +1043,10 @@ def analyze_files(
             )
             file_candidates = 0
             for location, record in _records_for_file(
-                path, extension, file_password=file_password
+                path,
+                extension,
+                file_password=file_password,
+                source_mapping_profile=profile,
             ):
                 candidate = _make_candidate(
                     record,
@@ -835,6 +1055,7 @@ def analyze_files(
                     client=client,
                     location=location,
                     source_password_required=source_password_required,
+                    source_mapping_profile=profile,
                 )
                 if candidate is not None:
                     candidates.append(candidate)
@@ -871,17 +1092,29 @@ def analyze_files(
         candidates=candidates,
         warnings=warnings,
         protected_excel_issues=protected_excel_issues,
+        source_mapping_profile_name=(
+            profile.name if profile is not None else "Rilevamento automatico"
+        ),
+        source_mapping_profile_digest=(profile.digest if profile is not None else ""),
     )
 
 
-def _read_secure_review_request() -> tuple[list[str], dict[str, str]]:
-    raw = sys.stdin.buffer.read(MAX_SECURE_REVIEW_STDIN_BYTES + 1)
-    if len(raw) > MAX_SECURE_REVIEW_STDIN_BYTES:
-        raise ReviewError("La richiesta di revisione protetta è troppo grande.")
+def _read_bounded_json_stdin(maximum_bytes: int, label: str) -> object:
+    raw = sys.stdin.buffer.read(maximum_bytes + 1)
+    if len(raw) > maximum_bytes:
+        raise ReviewError(f"{label} è troppo grande.")
     try:
-        document = json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ReviewError("La richiesta di revisione protetta non contiene JSON valido.") from exc
+        raise ReviewError(f"{label} non contiene JSON valido.") from exc
+
+
+def _read_secure_review_request() -> tuple[
+    list[str], dict[str, str], SourceMappingProfile | None
+]:
+    document = _read_bounded_json_stdin(
+        MAX_SECURE_REVIEW_STDIN_BYTES, "La richiesta di revisione protetta"
+    )
     if not isinstance(document, dict):
         raise ReviewError("La richiesta di revisione protetta deve essere un oggetto JSON.")
     files = document.get("files")
@@ -905,7 +1138,24 @@ def _read_secure_review_request() -> tuple[list[str], dict[str, str]]:
         ):
             raise ReviewError("Una password Excel non è valida.")
         passwords[relative_path] = password
-    return files, passwords
+    profile = normalize_source_mapping_profile(document.get("source_mapping_profile"))
+    return files, passwords, profile
+
+
+def _read_source_mapping_profile_file(path_value: str) -> SourceMappingProfile:
+    path = Path(path_value).expanduser().resolve()
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_SOURCE_MAPPING_PROFILE_BYTES:
+            raise ReviewError("Il file del profilo di mappatura non è valido o è troppo grande.")
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+    except ReviewError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewError("Il file del profilo di mappatura non contiene JSON valido.") from exc
+    profile = normalize_source_mapping_profile(document)
+    if profile is None:
+        raise ReviewError("Il file non contiene un profilo di mappatura.")
+    return profile
 
 
 def parse_args() -> argparse.Namespace:
@@ -917,6 +1167,15 @@ def parse_args() -> argparse.Namespace:
         "--secure-json",
         action="store_true",
         help="Legge file e password Excel da stdin e restituisce una busta JSON.",
+    )
+    parser.add_argument(
+        "--source-profile",
+        help="Profilo JSON locale con mapping esatto dei campi sorgente.",
+    )
+    parser.add_argument(
+        "--profile-check",
+        action="store_true",
+        help="Valida da stdin un profilo sorgente e restituisce forma canonica e digest.",
     )
     parser.add_argument("--self-test", action="store_true")
     return parser.parse_args()
@@ -932,6 +1191,8 @@ def main() -> int:
                     "unlimited_file_selection": True,
                     "unlimited_candidate_collection": True,
                     "single_pass_field_detection": True,
+                    "source_mapping_profiles": True,
+                    "source_mapping_profile_schema": SOURCE_MAPPING_SCHEMA_VERSION,
                     "reviewable_extensions": len(REVIEWABLE_EXTENSIONS),
                     "excel_password_prompt_supported": True,
                     "secrets_serialized": False,
@@ -939,14 +1200,54 @@ def main() -> int:
             )
         )
         return 0
+    if args.profile_check:
+        try:
+            document = _read_bounded_json_stdin(
+                MAX_SOURCE_MAPPING_PROFILE_BYTES,
+                "Il profilo di mappatura sorgente",
+            )
+            if isinstance(document, Mapping) and "source_mapping_profile" in document:
+                document = document.get("source_mapping_profile")
+            profile = normalize_source_mapping_profile(document)
+            if profile is None:
+                raise ReviewError("Il profilo di mappatura sorgente è mancante.")
+            print(
+                json.dumps(
+                    {"ok": True, "result": {"profile": profile.document()}},
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
+        except ReviewError as exc:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "SOURCE_MAPPING_PROFILE_INVALID",
+                            "message": str(exc),
+                        },
+                    },
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 2
     if args.secure_json:
         files: list[str] = []
         passwords: dict[str, str] = {}
+        profile: SourceMappingProfile | None = None
         try:
             if not args.root:
                 raise ReviewError("La cartella clienti non è configurata.")
-            files, passwords = _read_secure_review_request()
-            result = analyze_files(args.root, files, file_passwords=passwords)
+            files, passwords, profile = _read_secure_review_request()
+            result = analyze_files(
+                args.root,
+                files,
+                file_passwords=passwords,
+                source_mapping_profile=profile,
+            )
             envelope = {"ok": True, "result": asdict(result)}
             print(json.dumps(envelope, ensure_ascii=True, separators=(",", ":")))
             return 0
@@ -973,7 +1274,14 @@ def main() -> int:
         print("ERRORE: indicare --root e almeno un --file.", file=sys.stderr)
         return 2
     try:
-        result = analyze_files(args.root, args.file)
+        profile = (
+            _read_source_mapping_profile_file(args.source_profile)
+            if args.source_profile
+            else None
+        )
+        result = analyze_files(
+            args.root, args.file, source_mapping_profile=profile
+        )
     except ReviewError as exc:
         print(f"ERRORE: {exc}", file=sys.stderr)
         return 2

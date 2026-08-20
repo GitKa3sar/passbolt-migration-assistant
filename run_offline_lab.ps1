@@ -4,7 +4,7 @@ param(
     [string]$Profile = "v5",
     [ValidateSet("healthy", "mfa-rejected", "session-expired")]
     [string]$Scenario = "healthy",
-    [ValidateSet("none", "next-resource-create-500", "next-folder-create-500", "next-share-500", "expire-session")]
+    [ValidateSet("none", "next-resource-create-500", "next-resource-create-after-commit-500", "next-resource-create-disconnect", "next-resource-create-after-commit-disconnect", "next-folder-create-500", "next-folder-create-after-commit-500", "next-folder-create-disconnect", "next-folder-create-after-commit-disconnect", "next-share-500", "next-share-after-commit-500", "next-share-disconnect", "next-share-after-commit-disconnect", "expire-session")]
     [string]$Fault = "none",
     [switch]$SelfTest,
     [switch]$AcceptanceTest,

@@ -15,6 +15,7 @@ $PythonFiles = @(
     "passbolt_app.py",
     "passbolt_import.py",
     "passbolt_integration_matrix.py",
+    "passbolt_project.py",
     "offline_lab_acceptance.py",
     "offline_lab_setup.py",
     "offline_lab_smoke.py",
@@ -25,6 +26,7 @@ $PythonFiles = @(
     "test_passbolt_app.py",
     "test_passbolt_import.py",
     "test_passbolt_integration_matrix.py",
+    "test_passbolt_project.py",
     "test_offline_lab.py",
     "test_passbolt_reconciliation.py",
     "test_passbolt_review.py"
@@ -34,6 +36,7 @@ $UnitTestFiles = @(
     "test_passbolt_app.py",
     "test_passbolt_import.py",
     "test_passbolt_integration_matrix.py",
+    "test_passbolt_project.py",
     "test_offline_lab.py",
     "test_passbolt_reconciliation.py",
     "test_passbolt_review.py",
@@ -204,6 +207,7 @@ try {
     Invoke-Checked "Self-test revisione" $PythonExecutable ($PythonPrefix + @("passbolt_review.py", "--self-test"))
     Invoke-Checked "Self-test importazione" $PythonExecutable ($PythonPrefix + @("passbolt_import.py", "--self-test"))
     Invoke-Checked "Self-test matrice integrazione" $PythonExecutable ($PythonPrefix + @("passbolt_integration_matrix.py", "self-test"))
+    Invoke-Checked "Self-test progetti locali" $PythonExecutable ($PythonPrefix + @("passbolt_project.py", "--self-test"))
     Invoke-Checked "Self-test bridge OpenPGP" $NodeExecutable @("passbolt_crypto.mjs") '{"command":"self-test"}'
     Invoke-Checked "Self-test server laboratorio offline" $NodeExecutable @("offline_lab_server.mjs", "--self-test")
 
@@ -293,12 +297,13 @@ try {
     Write-Host ""
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.23.0"
+        version = "0.28.1"
         ci_mode = [bool]$Ci
-        python_tests = 114
+        python_tests = 129
         node_suite = "OK"
         offline_stateful_scenarios = 18
-        wpf_controls = 132
+        offline_recovery_fault_paths = 24
+        wpf_controls = 136
         ui_preview_count = $(if ($SkipUiPreviews) { 0 } else { 8 })
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })
         secrets_serialized = $false

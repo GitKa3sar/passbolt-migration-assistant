@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.23.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -15,10 +15,13 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 
 - inventario metadati di file TXT, CSV, JSON, XML, XLSX, DOCX e ODT;
 - revisione locale con password mascherate per impostazione predefinita, visualizzazione esplicita temporanea ed editor dei cinque campi importabili;
+- profili locali di mappatura sorgente per associare etichette non standard a titolo, username, password e URL/host, con validazione, digest e anteprima mascherata prima dell'importazione;
+- progetti locali di preparazione protetti con Windows DPAPI, per ripristinare origine, cartella, profilo e selezioni tecniche senza salvare trust, sessioni, credenziali, correzioni o piani;
 - riconoscimento dei file `.xlsx` protetti da password, con richiesta interattiva e decifratura esclusivamente in memoria;
 - rilevamento automatico di indirizzi IPv4 e IPv6 per il campo URL/host quando manca un URL esplicito;
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
+- verifica fail-closed della firma GPGAuth con tolleranza temporale massima di cinque minuti rispetto all'header `Date` della stessa risposta HTTPS;
 - creazione di risorse Passbolt v4 e v5 con cifratura OpenPGP locale;
 - destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
 - creazione di sottocartelle personali e condivise con permessi ereditati oppure con una ACL personalizzata;
@@ -76,6 +79,10 @@ Al primo utilizzo:
 4. selezionare la cartella locale contenente i documenti da inventariare;
 5. completare revisione, mappatura delle destinazioni, eventuale configurazione dei permessi e dry-run prima di autorizzare la scrittura.
 
+Se i documenti usano intestazioni non riconosciute automaticamente, nella fase **Inventario** aprire **Profilo sorgente: Automatico** prima della revisione. Il profilo personalizzato associa una o più etichette a ciascun campo Passbolt; richiede sempre la password e almeno uno fra username e URL/host. **Carica JSON...** e **Salva JSON...** consentono di riusare soltanto la configurazione delle etichette: il file non contiene valori dei documenti o credenziali. Ogni modifica al profilo invalida la revisione e il piano già costruiti, così la griglia mascherata diventa l'anteprima obbligatoria della nuova mappatura.
+
+Per sospendere una preparazione, selezionare i file nell'inventario e usare **Salva progetto...**; dalla revisione vengono aggiunte soltanto le coppie tecniche `candidate_id`/SHA-256 dei candidati pronti selezionati. Il file `.pbproj` è cifrato con Windows DPAPI nello scope dell'utente corrente: dipende dal relativo profilo di protezione e non ha portabilità garantita. **Apri progetto...** ripristina URL HTTPS, cartella sorgente, profilo e selezioni, ma lascia la connessione non verificata: la fingerprint deve essere rilevata, confrontata e confermata di nuovo. L'inventario viene ricostruito senza aprire i documenti; la revisione resta un'azione esplicita e i candidati vengono riselezionati soltanto se identificativo, hash sorgente e stato **Pronto** coincidono. Password Excel, valori delle credenziali, correzioni manuali, chiave privata, passphrase, MFA, cookie, sessioni, cartelle Passbolt, ACL, dry-run e attestazioni non vengono salvati.
+
 Il pulsante **Preflight e dry-run** prepara il piano senza modificare Passbolt e popola la scheda **Preflight**. La conferma resta disabilitata se almeno un controllo è bloccante. Durante la scrittura, la scheda **Attività lotto** mostra soltanto eventi già registrati nel journal locale; non visualizza password, passphrase o MFA. Prima di dichiarare il successo, l'app rilegge ogni risorsa creata e confronta metadati, contenuto decifrato in memoria, cartella e ACL con il piano. La scheda **Verifica finale** conserva soltanto gli esiti booleani e i titoli già presenti nella revisione locale.
 
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
@@ -121,11 +128,13 @@ Prima di usare il progetto:
 
 La chiave privata viene selezionata dalla GUI. Passphrase e TOTP sono inviati al bridge locale soltanto per aprire la sessione, rimossi subito dalla richiesta e non scritti nei log. I cookie di sessione restano in memoria e il logout viene tentato alla chiusura. Nella revisione le password vengono mostrate soltanto dopo una conferma esplicita; quelle lette dai sorgenti vengono rimosse dalla UI quando si torna alla maschera o si cambia fase, mentre eventuali correzioni restano in memoria esclusivamente fino all'importazione o alla chiusura. Se un `.xlsx` è protetto, la password del documento viene chiesta soltanto dopo il rilevamento della cifratura, resta in memoria per revisione, verifica d'integrità e importazione e non viene inoltrata a Passbolt. Il formato legacy `.xls` protetto non è supportato.
 
+I progetti `.pbproj` possono contenere percorsi locali e nomi relativi dei documenti, quindi restano materiale operativo riservato anche se protetto. La busta JSON a schema chiuso e i digest rilevano alterazioni prima e dopo la decifratura; DPAPI fornisce riservatezza e integrità per l'utente Windows corrente. La perdita del profilo Windows può rendere il progetto irrecuperabile: il file non sostituisce i documenti sorgente, un backup verificato o il journal di riconciliazione.
+
 Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavorare con materiale sensibile.
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 114 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline, contratto WPF, otto anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 129 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, contratto dei 136 controlli WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -172,13 +181,37 @@ Sono disponibili scenari di autenticazione negativa:
 .\run_offline_lab.ps1 -Profile v5 -Scenario session-expired
 ```
 
-Le fault injection monouso consentono inoltre di simulare una risposta HTTP 500 alla prossima creazione di risorsa, cartella o condivisione, oppure la scadenza della sessione:
+Le fault injection monouso consentono inoltre di simulare una risposta HTTP 500 prima della prossima creazione di risorsa, cartella o condivisione, oppure la scadenza della sessione:
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-500
 .\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-500
 .\run_offline_lab.ps1 -Profile v5 -Fault next-share-500
 .\run_offline_lab.ps1 -Profile v5 -Fault expire-session
+```
+
+La versione 0.24.0 aggiunge due fault post-commit: il simulatore applica la creazione della risorsa o la modifica ACL, poi restituisce HTTP 500 come se la risposta conclusiva fosse andata persa. Servono a verificare che il recupero rilegga lo stato remoto, classifichi `remote_success` e chiuda il journal senza ripetere la mutazione:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-after-commit-500
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-after-commit-500
+```
+
+La versione 0.25.0 completa lo stesso controllo per la creazione delle cartelle. Il fault seguente persiste la cartella e restituisce HTTP 500 prima di comunicarne l'ID al client; il recupero deve ritrovarla in modo univoco, riusarla come destinazione e creare la risorsa successiva senza una seconda cartella:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-after-commit-500
+```
+
+La versione 0.26.0 estende gli stessi controlli alle interruzioni di trasporto senza risposta HTTP. Per ciascuna mutazione è disponibile un fault pre-commit, che deve essere dimostrato `not_applied`, e uno post-commit, che deve essere riconciliato come `remote_success` senza ripetere la scrittura:
+
+```powershell
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-disconnect
+.\run_offline_lab.ps1 -Profile v5 -Fault next-share-after-commit-disconnect
 ```
 
 Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le sette prove della matrice e verifica che non restino oggetti nel simulatore:
@@ -190,12 +223,14 @@ Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le
 
 La versione 0.23.0 aggiunge un secondo controllo automatico, deliberatamente mutativo ma confinato al workspace effimero. Per ciascun profilo esegue le nove prove operative della matrice: risorsa in radice, nuova cartella cliente, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Ogni risorsa creata dal normale import viene riletta e verificata; v5 usa anche una chiave metadati condivisa sintetica con copia privata cifrata e firmata per l'utente del laboratorio.
 
+In 0.26.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risorsa, creazione cartella e modifica ACL sia dopo HTTP 500 sia dopo una disconnessione. Il fault pre-commit deve produrre `not_applied` e una sola ripetizione della mutazione originaria; il fault post-commit deve produrre `remote_success` e zero riscritture della stessa mutazione. Per le cartelle, la risorsa pianificata viene poi creata nella destinazione appena verificata. Gli HTTP 5xx e gli errori di trasporto delle creazioni sono registrati come esito incerto; soltanto una risposta 4xx resta un fallimento confermato.
+
 ```powershell
 .\run_offline_lab.ps1 -Profile v4 -AcceptanceTest
 .\run_offline_lab.ps1 -Profile v5 -AcceptanceTest
 ```
 
-`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente fault monouso nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
+`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente dodici percorsi di fault per profilo nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici e i ventiquattro percorsi di fault complessivi vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
 
 Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
@@ -242,6 +277,18 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.28.1 corregge il login quando l'orologio del server rende la firma della sfida GPGAuth di pochi secondi futura rispetto a Windows. Il bridge prova sempre prima la verifica OpenPGP stretta; soltanto per quell'errore temporale può ripeterla usando l'header HTTP `Date` della stessa risposta HTTPS, se valido e distante non più di 300 secondi. Firma crittografica, identità della chiave server fissata, validità della chiave e policy degli hash restano obbligatorie. Date assenti o malformate, firme prodotte da altre chiavi e scarti maggiori rimangono bloccati con diagnostica sicura.
+
+La versione 0.28.0 introduce progetti locali di preparazione schema 1. Il payload normalizzato contiene soltanto origine HTTPS, cartella sorgente, profilo di mappatura e selezioni tecniche; viene legato a digest, cifrato con DPAPI `CurrentUser` e salvato in modo atomico dentro una busta a campi chiusi. Il ripristino non persiste né riattiva la fingerprint, non apre documenti, non ricrea sessioni e non riusa dry-run: connessione, inventario, revisione e corrispondenza dei candidati vengono dimostrati nuovamente. I file sono volutamente locali e privi di portabilità garantita.
+
+La versione 0.27.0 introduce profili di mappatura sorgente per esportazioni con intestazioni non standard. Il confronto è esatto dopo normalizzazione, il profilo è privo di valori sorgente e viene legato tramite SHA-256 a candidati, rilettura d'integrità e piano. La revisione mascherata resta l'anteprima obbligatoria; un mapping ambiguo non produce candidati importabili. Il comportamento automatico precedente rimane disponibile e conserva gli identificativi storici necessari ai recuperi già avviati.
+
+La versione 0.26.0 copre anche la perdita completa della risposta a livello di trasporto. Le creazioni di risorsa e cartella registrano un evento incerto durevole quando la richiesta termina con connessione interrotta, timeout o lettura incompleta; il recupero non usa uno stato HTTP fittizio e deve ancora dimostrare `not_applied` oppure `remote_success`. Il laboratorio interrompe deliberatamente la connessione prima e dopo il commit per risorse, cartelle e ACL su entrambi i profili, senza promuovere il risultato sintetico ad attestazione reale.
+
+La versione 0.25.0 completa il recupero sintetico della creazione cartella. Se Passbolt applica `POST /folders.json` ma la risposta conclusiva va persa, la nuova rilettura autenticata deve trovare una sola cartella nella destinazione prevista: il recupero la classifica `remote_success`, la reinserisce nella mappa interna delle destinazioni e completa le risorse senza creare una cartella duplicata. Il ramo pre-commit continua invece a richiedere `not_applied` prima di ripetere una sola volta la creazione. Entrambi i rami sono esercitati su v4 e v5.
+
+La versione 0.24.0 consolida la fault injection dei recuperi incerti. Un errore HTTP 5xx durante una creazione non viene più trattato come prova che la scrittura non sia iniziata: import e ACL rileggono lo stato autenticato e distinguono il ramo `not_applied`, che ripete esattamente la mutazione originaria, da `remote_success`, che chiude il journal senza riscrivere. Il laboratorio dimostra entrambi i rami per v4 e v5, ma resta una regressione sintetica.
 
 La versione 0.23.0 completa nel laboratorio offline l'esecuzione automatica dei nove scenari operativi per entrambi i profili v4/v5. Il simulatore conserva lo stato di risorse, cartelle, segreti e ACL, calcola gli utenti effettivi delle simulazioni Passbolt e consente di riprodurre fallimenti confermati e recuperi idempotenti. Questi 18 scenari sintetici sono una regressione di protocollo, non una certificazione della compatibilità con una release Passbolt reale.
 

@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 from passbolt_api_probe import ProbeError, normalize_base_url, normalize_fingerprint, run_probe
 
 
-APP_VERSION = "0.23.0"
+APP_VERSION = "0.28.1"
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 CI_ENVIRONMENT_VARIABLES = ("CI", "GITHUB_ACTIONS", "PASSBOLT_MIGRATION_CI")
@@ -701,7 +701,7 @@ def run_instance(
                             "authenticated_login",
                             {
                                 "authentication": str(open_payload.get("authentication", "")),
-                                "mfa_provider": str(open_payload.get("mfa_provider", "")) or None,
+                                "mfa_provider": str(open_payload.get("mfa_provider") or "") or None,
                                 "secrets_serialized": False,
                                 "write_requests": 0,
                             },

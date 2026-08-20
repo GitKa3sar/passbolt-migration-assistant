@@ -14,15 +14,24 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.23.0';
+const APP_VERSION = '0.28.1';
 const INPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILES = new Set(['v4', 'v5']);
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
 const FAULTS = new Set([
   'none',
   'next-resource-create-500',
+  'next-resource-create-after-commit-500',
+  'next-resource-create-disconnect',
+  'next-resource-create-after-commit-disconnect',
   'next-folder-create-500',
+  'next-folder-create-after-commit-500',
+  'next-folder-create-disconnect',
+  'next-folder-create-after-commit-disconnect',
   'next-share-500',
+  'next-share-after-commit-500',
+  'next-share-disconnect',
+  'next-share-after-commit-disconnect',
   'expire-session',
 ]);
 
@@ -582,6 +591,10 @@ async function createLab(options) {
           send(response, 500, apiError('Injected offline-lab folder failure.', 500));
           return;
         }
+        if (consumeFault('next-folder-create-disconnect')) {
+          response.destroy();
+          return;
+        }
         const payload = await requestJson(request);
         const id = randomUUID();
         const permission = ownerPermission('Folder', id, userId);
@@ -598,6 +611,14 @@ async function createLab(options) {
           } : { name: String(payload?.name ?? '') }),
         });
         state.createdFolderCount += 1;
+        if (consumeFault('next-folder-create-after-commit-500')) {
+          send(response, 500, apiError('Injected offline-lab folder response failure after commit.', 500));
+          return;
+        }
+        if (consumeFault('next-folder-create-after-commit-disconnect')) {
+          response.destroy();
+          return;
+        }
         send(response, 200, apiSuccess({ id, permission }));
         return;
       }
@@ -608,6 +629,10 @@ async function createLab(options) {
         }
         if (consumeFault('next-resource-create-500')) {
           send(response, 500, apiError('Injected offline-lab resource failure.', 500));
+          return;
+        }
+        if (consumeFault('next-resource-create-disconnect')) {
+          response.destroy();
           return;
         }
         const payload = await requestJson(request);
@@ -631,6 +656,14 @@ async function createLab(options) {
           }),
         });
         state.createdResourceCount += 1;
+        if (consumeFault('next-resource-create-after-commit-500')) {
+          send(response, 500, apiError('Injected offline-lab resource response failure after commit.', 500));
+          return;
+        }
+        if (consumeFault('next-resource-create-after-commit-disconnect')) {
+          response.destroy();
+          return;
+        }
         send(response, 200, apiSuccess({ id, permission }));
         return;
       }
@@ -679,6 +712,10 @@ async function createLab(options) {
           send(response, 500, apiError('Injected offline-lab sharing failure.', 500));
           return;
         }
+        if (consumeFault('next-share-disconnect')) {
+          response.destroy();
+          return;
+        }
         const payload = await requestJson(request);
         const pathParts = url.pathname.split('/');
         const objectType = pathParts[2];
@@ -701,6 +738,14 @@ async function createLab(options) {
             else target.secrets.push(secret);
           }
         }
+        if (consumeFault('next-share-after-commit-500')) {
+          send(response, 500, apiError('Injected offline-lab sharing response failure after commit.', 500));
+          return;
+        }
+        if (consumeFault('next-share-after-commit-disconnect')) {
+          response.destroy();
+          return;
+        }
         send(response, 200, apiSuccess(null));
         return;
       }
@@ -711,7 +756,9 @@ async function createLab(options) {
       }
       send(response, 404, apiError('Unknown offline-lab route.', 404));
     } catch {
-      send(response, 500, apiError('Offline lab internal error.', 500));
+      if (!response.destroyed) {
+        send(response, 500, apiError('Offline lab internal error.', 500));
+      }
     }
   });
 
@@ -767,6 +814,7 @@ async function main() {
       scenarios: [...SCENARIOS],
       faults: [...FAULTS],
       stateful_acceptance_scenarios: 9,
+      stateful_recovery_fault_paths: 12,
       effective_acl_simulation: true,
       shared_v5_metadata_key: true,
       loopback_only: true,
