@@ -16,6 +16,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Security
 
 $ProjectRoot = $PSScriptRoot
 $ProbeScript = Join-Path $ProjectRoot "passbolt_api_probe.py"
@@ -24,6 +25,7 @@ $ReviewScript = Join-Path $ProjectRoot "passbolt_review.py"
 $ImportScript = Join-Path $ProjectRoot "passbolt_import.py"
 $CryptoScript = Join-Path $ProjectRoot "passbolt_crypto.mjs"
 $IntegrationMatrixScript = Join-Path $ProjectRoot "passbolt_integration_matrix.py"
+$LocalProjectScript = Join-Path $ProjectRoot "passbolt_project.py"
 $BundledPython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 $BundledNode = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
 $ConfiguredPython = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_PYTHON")
@@ -62,7 +64,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.27.0"
+        Title="Passbolt Migration Assistant - v0.28.0"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -469,12 +471,13 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="0,0,0,24">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
                             <TextBlock Text="Configurazione" Style="{StaticResource PageTitle}" />
                             <TextBlock Text="Verifica l&#x2019;istanza Passbolt e indica la cartella principale dei documenti clienti." Style="{StaticResource PageSubtitle}" />
                         </StackPanel>
-                        <Border Grid.Column="1" Style="{StaticResource StatusPill}">
+                        <Button x:Name="OpenProjectButton" Grid.Column="1" Content="Apri progetto..." Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" ToolTip="Ripristina una preparazione protetta per l'utente Windows corrente; connessione e contenuti saranno verificati di nuovo" />
+                        <Border Grid.Column="2" Style="{StaticResource StatusPill}">
                             <TextBlock Text="DRY-RUN ATTIVO" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
                         </Border>
                     </Grid>
@@ -588,9 +591,10 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </Border>
 
                 <Grid Grid.Row="4" Margin="0,12,0,0">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <Button x:Name="BackButton" Content="&#x2190;  Torna alla configurazione" Style="{StaticResource SecondaryButton}" />
-                    <TextBox x:Name="ActivityLog" Grid.Column="1" Margin="12,0,0,0" Height="42" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas" FontSize="10" Background="#F2F2F7" BorderBrush="#E5E5EA" />
+                    <Button x:Name="SaveInventoryProjectButton" Grid.Column="1" Content="Salva progetto..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" ToolTip="Salva origine, cartella, profilo e file selezionati in un progetto DPAPI privo di credenziali" />
+                    <TextBox x:Name="ActivityLog" Grid.Column="2" Margin="12,0,0,0" Height="42" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas" FontSize="10" Background="#F2F2F7" BorderBrush="#E5E5EA" />
                 </Grid>
             </Grid>
 
@@ -654,10 +658,11 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </Border>
 
                 <Grid Grid.Row="4" Margin="0,12,0,0">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Button x:Name="ReviewBackButton" Content="&#x2190;  Torna all&#x2019;inventario" Style="{StaticResource SecondaryButton}" />
-                    <TextBlock Grid.Column="1" Text="Le password sono mascherate per impostazione predefinita; quando richieste restano solo in memoria e non vengono salvate o registrate." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
-                    <Button x:Name="PrepareImportButton" Grid.Column="2" Content="Prepara importazione (0)" Style="{StaticResource PrimaryButton}" IsEnabled="False" />
+                    <Button x:Name="SaveReviewProjectButton" Grid.Column="1" Content="Salva progetto..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" ToolTip="Salva anche le sole prove tecniche dei candidati pronti selezionati; valori e correzioni restano esclusi" />
+                    <TextBlock Grid.Column="2" Text="Le password sono mascherate per impostazione predefinita; quando richieste restano solo in memoria e non vengono salvate o registrate." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
+                    <Button x:Name="PrepareImportButton" Grid.Column="3" Content="Prepara importazione (0)" Style="{StaticResource PrimaryButton}" IsEnabled="False" />
                 </Grid>
             </Grid>
 
@@ -1026,6 +1031,7 @@ $SafeModeText = Get-Control "SafeModeText"
 $PassboltUrl = Get-Control "PassboltUrl"
 $DetectedFingerprint = Get-Control "DetectedFingerprint"
 $VerifyButton = Get-Control "VerifyButton"
+$OpenProjectButton = Get-Control "OpenProjectButton"
 $ConnectionDot = Get-Control "ConnectionDot"
 $ConnectionStatus = Get-Control "ConnectionStatus"
 $ClientFolder = Get-Control "ClientFolder"
@@ -1050,6 +1056,7 @@ $FilesGrid = Get-Control "FilesGrid"
 $WarningsPanel = Get-Control "WarningsPanel"
 $WarningsText = Get-Control "WarningsText"
 $BackButton = Get-Control "BackButton"
+$SaveInventoryProjectButton = Get-Control "SaveInventoryProjectButton"
 $ActivityLog = Get-Control "ActivityLog"
 $ReviewSummary = Get-Control "ReviewSummary"
 $ReviewMetricFiles = Get-Control "ReviewMetricFiles"
@@ -1066,6 +1073,7 @@ $ReviewCandidatesGrid = Get-Control "ReviewCandidatesGrid"
 $ReviewWarningsPanel = Get-Control "ReviewWarningsPanel"
 $ReviewWarningsText = Get-Control "ReviewWarningsText"
 $ReviewBackButton = Get-Control "ReviewBackButton"
+$SaveReviewProjectButton = Get-Control "SaveReviewProjectButton"
 $PrepareImportButton = Get-Control "PrepareImportButton"
 $ImportPage = Get-Control "ImportPage"
 $ImportSummary = Get-Control "ImportSummary"
@@ -1149,8 +1157,13 @@ $script:InventoryFolder = ""
 $script:AllInventoryRows = @()
 $script:ReviewResult = $null
 $script:AllReviewRows = @()
+$script:ReviewedSourceFiles = @()
 $script:ReviewFilePasswords = @{}
 $script:SourceMappingProfile = $null
+$script:PendingProjectSourceRoot = ""
+$script:PendingProjectSelectedFiles = @()
+$script:PendingProjectSelectedCandidates = @()
+$script:LoadedProjectDigest = ""
 $script:ReviewPasswordsVisible = $false
 $script:UpdatingReviewPasswordToggle = $false
 $script:ImportCandidates = @()
@@ -1313,6 +1326,343 @@ function Invoke-SecureJsonProcess(
     } finally {
         $Payload = $null
         if ($null -ne $Process) { $Process.Dispose() }
+    }
+}
+
+$script:LocalProjectEntropy = [System.Text.Encoding]::UTF8.GetBytes("Passbolt Migration Assistant local project schema 1")
+$script:MaximumLocalProjectFileBytes = 32MB
+
+function Invoke-LocalProjectRequest([object]$Request) {
+    $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($LocalProjectScript, "--secure-json") $Request
+    if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+    return $Envelope.result
+}
+
+function Protect-LocalProjectText([string]$PlainText) {
+    $PlainBytes = (New-Object System.Text.UTF8Encoding($false, $true)).GetBytes($PlainText)
+    try {
+        return [System.Security.Cryptography.ProtectedData]::Protect(
+            $PlainBytes,
+            $script:LocalProjectEntropy,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+    } finally {
+        if ($null -ne $PlainBytes) { [Array]::Clear($PlainBytes, 0, $PlainBytes.Length) }
+    }
+}
+
+function Unprotect-LocalProjectText([byte[]]$CipherBytes) {
+    try {
+        $PlainBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+            $CipherBytes,
+            $script:LocalProjectEntropy,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+    } catch {
+        throw "Il progetto non puo' essere decifrato dall'utente Windows corrente oppure e' stato alterato."
+    }
+    try {
+        if ($PlainBytes.Length -gt 16MB) { throw "Il progetto decifrato supera il limite di sicurezza in byte." }
+        return (New-Object System.Text.UTF8Encoding($false, $true)).GetString($PlainBytes)
+    } catch [System.Text.DecoderFallbackException] {
+        throw "Il progetto decifrato non contiene JSON UTF-8 valido."
+    } finally {
+        if ($null -ne $PlainBytes) { [Array]::Clear($PlainBytes, 0, $PlainBytes.Length) }
+    }
+}
+
+function Write-AtomicUtf8File([string]$Path, [string]$Content) {
+    $FullPath = [IO.Path]::GetFullPath($Path)
+    $Directory = [IO.Path]::GetDirectoryName($FullPath)
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
+        throw "La cartella scelta per il progetto non e' disponibile."
+    }
+    $TemporaryPath = Join-Path $Directory (([IO.Path]::GetFileName($FullPath)) + ".tmp-" + [guid]::NewGuid().ToString("N"))
+    $BackupPath = Join-Path $Directory (([IO.Path]::GetFileName($FullPath)) + ".bak-" + [guid]::NewGuid().ToString("N"))
+    $Bytes = (New-Object System.Text.UTF8Encoding($false, $true)).GetBytes($Content)
+    try {
+        $Stream = New-Object System.IO.FileStream(
+            $TemporaryPath,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None,
+            4096,
+            [IO.FileOptions]::WriteThrough
+        )
+        try {
+            $Stream.Write($Bytes, 0, $Bytes.Length)
+            $Stream.Flush($true)
+        } finally {
+            $Stream.Dispose()
+        }
+        if (Test-Path -LiteralPath $FullPath -PathType Leaf) {
+            [IO.File]::Replace($TemporaryPath, $FullPath, $BackupPath)
+        } else {
+            [IO.File]::Move($TemporaryPath, $FullPath)
+        }
+    } finally {
+        if ($null -ne $Bytes) { [Array]::Clear($Bytes, 0, $Bytes.Length) }
+        if (Test-Path -LiteralPath $TemporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $TemporaryPath -Force
+        }
+        if (Test-Path -LiteralPath $BackupPath -PathType Leaf) {
+            Remove-Item -LiteralPath $BackupPath -Force
+        }
+    }
+}
+
+function Get-LocalProjectFileSelection([switch]$ReviewContext) {
+    $Paths = New-Object System.Collections.Generic.List[string]
+    if ($ReviewContext -and @($script:ReviewedSourceFiles).Count -gt 0) {
+        foreach ($RelativePath in @($script:ReviewedSourceFiles)) { $Paths.Add([string]$RelativePath) }
+    } else {
+        foreach ($Row in @($FilesGrid.SelectedItems)) { $Paths.Add([string]$Row.RelativePath) }
+    }
+    return $Paths.ToArray()
+}
+
+function Get-LocalProjectCandidateSelection([switch]$ReviewContext) {
+    $Selections = New-Object System.Collections.Generic.List[object]
+    if (-not $ReviewContext) { return $Selections.ToArray() }
+    foreach ($Row in @($ReviewCandidatesGrid.SelectedItems | Where-Object { $_.Status -eq "ready" })) {
+        $Selections.Add([pscustomobject][ordered]@{
+            candidate_id = [string]$Row.CandidateId
+            source_sha256 = [string]$Row.SourceHash
+        })
+    }
+    return $Selections.ToArray()
+}
+
+function Save-LocalPreparationProject([switch]$ReviewContext) {
+    if (-not $script:ConnectionVerified -or -not $script:VerifiedUrl) {
+        [System.Windows.MessageBox]::Show("Verificare prima la connessione Passbolt. La fingerprint non verra' salvata nel progetto.", "Connessione non verificata", "OK", "Warning") | Out-Null
+        return
+    }
+    if ($null -eq $script:InventoryResult -or -not $script:InventoryFolder) {
+        [System.Windows.MessageBox]::Show("Eseguire prima l'inventario della cartella sorgente.", "Inventario necessario", "OK", "Warning") | Out-Null
+        return
+    }
+    $SelectedFiles = @(Get-LocalProjectFileSelection -ReviewContext:$ReviewContext)
+    if ($SelectedFiles.Count -lt 1) {
+        [System.Windows.MessageBox]::Show("Selezionare almeno un file da includere nel progetto locale.", "Selezione mancante", "OK", "Warning") | Out-Null
+        return
+    }
+    $SelectedCandidates = @(Get-LocalProjectCandidateSelection -ReviewContext:$ReviewContext)
+    $SavedAtUtc = [DateTime]::UtcNow.ToString("o")
+    $Request = [pscustomobject]@{
+        command = "normalize-project"
+        project = [pscustomobject][ordered]@{
+            schema_version = 1
+            kind = "passbolt-migration-preparation"
+            app_version = "0.28.0"
+            saved_at_utc = $SavedAtUtc
+            server_origin = [string]$script:VerifiedUrl
+            source_root = [string]$script:InventoryFolder
+            source_mapping_profile = $script:SourceMappingProfile
+            selected_files = $SelectedFiles
+            selected_candidates = $SelectedCandidates
+        }
+    }
+    $Dialog = New-Object System.Windows.Forms.SaveFileDialog
+    $Dialog.Title = "Salva progetto locale protetto"
+    $Dialog.Filter = "Progetto Passbolt protetto (*.pbproj)|*.pbproj"
+    $Dialog.DefaultExt = "pbproj"
+    $Dialog.AddExtension = $true
+    $Dialog.OverwritePrompt = $true
+    $Dialog.FileName = "progetto-passbolt-$(Get-Date -Format 'yyyyMMdd-HHmm').pbproj"
+    try {
+        if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $Normalized = Invoke-LocalProjectRequest $Request
+        $ProjectText = $Normalized.project | ConvertTo-Json -Depth 14 -Compress
+        $CipherBytes = Protect-LocalProjectText $ProjectText
+        try {
+            $Ciphertext = [Convert]::ToBase64String($CipherBytes)
+            $EnvelopeResult = Invoke-LocalProjectRequest ([pscustomobject]@{
+                command = "create-envelope"
+                ciphertext = $Ciphertext
+                saved_at_utc = $SavedAtUtc
+            })
+            $EnvelopeText = $EnvelopeResult.envelope | ConvertTo-Json -Depth 8 -Compress
+            Write-AtomicUtf8File $Dialog.FileName $EnvelopeText
+            $DigestPrefix = ([string]$Normalized.project.digest).Substring(0, 8).ToUpperInvariant()
+            Add-Activity "Progetto locale protetto salvato: $($SelectedFiles.Count) file, $($SelectedCandidates.Count) candidati tecnici, digest $DigestPrefix."
+            [System.Windows.MessageBox]::Show(
+                "Progetto salvato con protezione DPAPI per l'utente Windows corrente.`n`nNon contiene fingerprint fidate, sessioni, chiavi, passphrase, MFA, password, correzioni o piani. Non e' trasferibile a un altro utente o computer.",
+                "Progetto locale salvato",
+                "OK",
+                "Information"
+            ) | Out-Null
+        } finally {
+            if ($null -ne $CipherBytes) { [Array]::Clear($CipherBytes, 0, $CipherBytes.Length) }
+            $Ciphertext = $null
+            $ProjectText = $null
+        }
+    } catch {
+        Add-Activity "Salvataggio del progetto locale non riuscito."
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Progetto non salvato", "OK", "Error") | Out-Null
+    } finally {
+        $Request.project = $null
+        $SelectedCandidates = @()
+        $Dialog.Dispose()
+    }
+}
+
+function Restore-LocalPreparationProject([object]$Project) {
+    if (Test-ImportSessionActive) {
+        Stop-ImportSession "Sessione chiusa prima del ripristino di un progetto locale." $false
+    }
+    $script:ConnectionVerified = $false
+    $script:VerifiedUrl = ""
+    $script:VerifiedFingerprint = ""
+    $DetectedFingerprint.Text = "Non ancora rilevata"
+    $ConnectionDot.Fill = Get-Brush "#98A5B1"
+    $ConnectionStatus.Text = "Da verificare dopo il ripristino"
+    $ConnectionStatus.Foreground = Get-Brush "#C77D00"
+    $script:InventoryResult = $null
+    $script:InventoryFolder = ""
+    $script:AllInventoryRows = @()
+    $script:ReviewResult = $null
+    $script:AllReviewRows = @()
+    $script:ReviewedSourceFiles = @()
+    $script:ReviewFilePasswords = @{}
+    $script:SourceMappingProfile = $Project.source_mapping_profile
+    $script:PendingProjectSourceRoot = [string]$Project.source_root
+    $script:PendingProjectSelectedFiles = @($Project.selected_files | ForEach-Object { [string]$_ })
+    $script:PendingProjectSelectedCandidates = @($Project.selected_candidates)
+    $script:LoadedProjectDigest = [string]$Project.digest
+    $FilesGrid.ItemsSource = $null
+    $ReviewCandidatesGrid.ItemsSource = $null
+    Reset-ImportWorkflow
+    Update-SourceMappingProfileState
+    $PassboltUrl.Text = [string]$Project.server_origin
+    $ClientFolder.Text = [string]$Project.source_root
+    $MetricClients.Text = [string][char]0x2014
+    $MetricFiles.Text = [string][char]0x2014
+    $MetricSize.Text = [string][char]0x2014
+    $MetricIgnored.Text = [string][char]0x2014
+    $InventoryRoot.Text = "Progetto ripristinato: verificare connessione e rieseguire l'inventario"
+    $ReviewSummary.Text = "Il progetto richiede una nuova revisione locale"
+    $ReviewMetricFiles.Text = [string][char]0x2014
+    $ReviewMetricCandidates.Text = [string][char]0x2014
+    $ReviewMetricReady.Text = [string][char]0x2014
+    $ReviewMetricIncomplete.Text = [string][char]0x2014
+    $WarningsPanel.Visibility = "Collapsed"
+    $ReviewWarningsPanel.Visibility = "Collapsed"
+    Show-Page "Configuration"
+    Update-ConfigurationState
+    $DigestPrefix = ([string]$Project.digest).Substring(0, 8).ToUpperInvariant()
+    Add-Activity "Progetto locale ripristinato (digest $DigestPrefix); connessione, inventario e revisione restano da verificare."
+}
+
+function Open-LocalPreparationProject {
+    $Dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $Dialog.Title = "Apri progetto locale protetto"
+    $Dialog.Filter = "Progetto Passbolt protetto (*.pbproj)|*.pbproj"
+    $Dialog.Multiselect = $false
+    try {
+        if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $File = Get-Item -LiteralPath $Dialog.FileName -ErrorAction Stop
+        if ($File.Length -lt 1 -or $File.Length -gt $script:MaximumLocalProjectFileBytes) {
+            throw "Il file progetto e' vuoto o supera il limite di sicurezza in byte."
+        }
+        try {
+            $EnvelopeText = [IO.File]::ReadAllText($File.FullName, (New-Object System.Text.UTF8Encoding($false, $true)))
+        } catch [System.Text.DecoderFallbackException] {
+            throw "Il file progetto non contiene JSON UTF-8 valido."
+        }
+        $Opened = Invoke-LocalProjectRequest ([pscustomobject]@{
+            command = "open-envelope-json"
+            envelope_json = $EnvelopeText
+        })
+        try {
+            $CipherBytes = [Convert]::FromBase64String([string]$Opened.ciphertext)
+        } catch {
+            throw "Il contenuto protetto del progetto non usa Base64 valido."
+        }
+        try {
+            $ProjectText = Unprotect-LocalProjectText $CipherBytes
+            $Normalized = Invoke-LocalProjectRequest ([pscustomobject]@{
+                command = "normalize-project-json"
+                project_json = $ProjectText
+            })
+            Restore-LocalPreparationProject $Normalized.project
+        } finally {
+            if ($null -ne $CipherBytes) { [Array]::Clear($CipherBytes, 0, $CipherBytes.Length) }
+            $ProjectText = $null
+            $EnvelopeText = $null
+        }
+        $MissingSource = -not (Test-Path -LiteralPath ([string]$Normalized.project.source_root) -PathType Container)
+        $AvailabilityMessage = if ($MissingSource) {
+            "La cartella sorgente salvata non e' disponibile: selezionarne una valida prima di continuare."
+        } else {
+            "Verificare nuovamente la connessione, quindi continuare: inventario e selezioni saranno ricostruiti senza aprire automaticamente i documenti."
+        }
+        [System.Windows.MessageBox]::Show(
+            "Il progetto e' stato decifrato per l'utente Windows corrente.`n`n$AvailabilityMessage`n`nLa fingerprint non e' stata ripristinata e richiede una nuova conferma indipendente.",
+            "Progetto locale ripristinato",
+            "OK",
+            $(if ($MissingSource) { "Warning" } else { "Information" })
+        ) | Out-Null
+    } catch {
+        Add-Activity "Apertura del progetto locale non riuscita."
+        [System.Windows.MessageBox]::Show($_.Exception.Message, "Progetto non aperto", "OK", "Error") | Out-Null
+    } finally {
+        $Dialog.Dispose()
+    }
+}
+
+function Apply-PendingProjectInventorySelection {
+    if (@($script:PendingProjectSelectedFiles).Count -lt 1) { return }
+    $Expected = @{}
+    foreach ($RelativePath in @($script:PendingProjectSelectedFiles)) {
+        $Identity = ([string]$RelativePath).Replace("\", "/").ToLowerInvariant()
+        $Expected[$Identity] = $true
+    }
+    $FilesGrid.UnselectAll()
+    $Applied = 0
+    foreach ($Row in @($script:AllInventoryRows)) {
+        $Identity = ([string]$Row.RelativePath).Replace("\", "/").ToLowerInvariant()
+        if ($Expected.ContainsKey($Identity)) {
+            [void]$FilesGrid.SelectedItems.Add($Row)
+            $Applied++
+            $Expected.Remove($Identity)
+        }
+    }
+    $Missing = $Expected.Count
+    $script:PendingProjectSelectedFiles = @()
+    Update-ReviewSelectionState
+    Add-Activity "Selezione progetto ricostruita: $Applied file disponibili, $Missing mancanti."
+    if ($Missing -gt 0) {
+        [System.Windows.MessageBox]::Show("$Missing file salvati nel progetto non sono piu' presenti nell'inventario e non sono stati selezionati.", "Progetto parzialmente ripristinato", "OK", "Warning") | Out-Null
+    }
+}
+
+function Apply-PendingProjectCandidateSelection {
+    if (@($script:PendingProjectSelectedCandidates).Count -lt 1) { return }
+    $Expected = @{}
+    foreach ($Selection in @($script:PendingProjectSelectedCandidates)) {
+        $Expected[([string]$Selection.candidate_id).ToLowerInvariant()] = ([string]$Selection.source_sha256).ToLowerInvariant()
+    }
+    $ReviewCandidatesGrid.UnselectAll()
+    $Applied = 0
+    foreach ($Row in @($script:AllReviewRows)) {
+        $CandidateId = ([string]$Row.CandidateId).ToLowerInvariant()
+        if (
+            $Expected.ContainsKey($CandidateId) -and
+            ([string]$Row.SourceHash).ToLowerInvariant() -eq [string]$Expected[$CandidateId] -and
+            [string]$Row.Status -eq "ready"
+        ) {
+            [void]$ReviewCandidatesGrid.SelectedItems.Add($Row)
+            $Applied++
+            $Expected.Remove($CandidateId)
+        }
+    }
+    $Missing = $Expected.Count
+    $script:PendingProjectSelectedCandidates = @()
+    Update-ImportSelectionState
+    Add-Activity "Candidati progetto ricostruiti dopo rilettura: $Applied pronti, $Missing non corrispondenti."
+    if ($Missing -gt 0) {
+        [System.Windows.MessageBox]::Show("$Missing candidati salvati non coincidono piu' con identificativo, hash sorgente e stato Pronto. Non sono stati selezionati.", "Candidati non ripristinati", "OK", "Warning") | Out-Null
     }
 }
 
@@ -4515,7 +4865,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.27.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4743,6 +5093,9 @@ function Update-ConfigurationState {
 
     $CanContinue = $script:ConnectionVerified -and $FolderIsValid
     $ContinueButton.IsEnabled = $CanContinue
+    $InventoryCanBeSaved = $CanContinue -and $null -ne $script:InventoryResult -and $script:InventoryFolder -eq $ClientFolder.Text.Trim()
+    $SaveInventoryProjectButton.IsEnabled = $InventoryCanBeSaved
+    $SaveReviewProjectButton.IsEnabled = $InventoryCanBeSaved -and $null -ne $script:ReviewResult
     if ($CanContinue) {
         $StepInventoryNumber.Foreground = Get-Brush "#007AFF"
         $StepInventoryText.Foreground = Get-Brush "#3A3A3C"
@@ -5235,7 +5588,9 @@ function Reset-ReviewForSourceMappingChange {
     Set-ReviewPasswordsVisible $false
     $script:ReviewResult = $null
     $script:AllReviewRows = @()
+    $script:ReviewedSourceFiles = @()
     $script:ReviewFilePasswords = @{}
+    $script:PendingProjectSelectedCandidates = @()
     $ReviewCandidatesGrid.ItemsSource = $null
     $ReviewSummary.Text = "Profilo sorgente modificato: ripetere la revisione"
     $ReviewMetricFiles.Text = [string][char]0x2014
@@ -5372,6 +5727,7 @@ function Invoke-SelectedReview {
         }
         $script:ReviewResult = $Result
         $script:AllReviewRows = $ReviewRows.ToArray()
+        $script:ReviewedSourceFiles = $SelectedFiles.ToArray()
         Reset-ImportWorkflow
         $ReviewMetricFiles.Text = "$($Result.analyzed_files)/$($Result.selected_files)"
         Update-ReviewMetrics
@@ -5383,6 +5739,7 @@ function Invoke-SelectedReview {
         $ReviewSummary.Text = "Revisione locale completata $(Get-Date -Format 'dd/MM/yyyy HH:mm')$MappingSuffix"
         Set-ReviewFilters
         Apply-ReviewFilters
+        Apply-PendingProjectCandidateSelection
 
         $WarningItems = @($Result.warnings)
         if ($WarningItems.Count -gt 0) {
@@ -5419,6 +5776,7 @@ function Invoke-Inventory {
 
     $script:ReviewResult = $null
     $script:AllReviewRows = @()
+    $script:ReviewedSourceFiles = @()
     $script:ReviewFilePasswords = @{}
     Reset-ImportWorkflow
     $ReviewCandidatesGrid.ItemsSource = $null
@@ -5466,6 +5824,7 @@ function Invoke-Inventory {
         $InventoryRoot.Text = "Cartella: $($Result.root) $([char]0x2022) inventario aggiornato $(Get-Date -Format 'dd/MM/yyyy HH:mm')"
         Set-InventoryFilters $Result
         Apply-InventoryFilters
+        Apply-PendingProjectInventorySelection
 
         $ErrorCount = @($Result.access_errors).Count
         $LinkCount = @($script:AllInventoryRows | Where-Object { $_.IsLink }).Count
@@ -5482,10 +5841,13 @@ function Invoke-Inventory {
         }
 
         $ExportButton.IsEnabled = $true
+        Update-ConfigurationState
         Add-Activity "Inventario completato: $($Result.client_folders) clienti, $($Result.supported_files) file supportati, $($Result.ignored_files) ignorati."
     } catch {
         $script:InventoryResult = $null
         $script:AllInventoryRows = @()
+        $SaveInventoryProjectButton.IsEnabled = $false
+        $SaveReviewProjectButton.IsEnabled = $false
         $InventoryRoot.Text = "Inventario non riuscito"
         $FilterStatus.Text = "0 file"
         Add-Activity "Inventario non riuscito: $($_.Exception.Message)"
@@ -5588,6 +5950,16 @@ $VerifyButton.Add_Click({
 
 $ClientFolder.Add_TextChanged({
     Update-ConfigurationState
+    if (
+        $script:PendingProjectSourceRoot -and
+        -not [string]::Equals($ClientFolder.Text.Trim(), $script:PendingProjectSourceRoot, [StringComparison]::OrdinalIgnoreCase)
+    ) {
+        $script:PendingProjectSourceRoot = ""
+        $script:PendingProjectSelectedFiles = @()
+        $script:PendingProjectSelectedCandidates = @()
+        $script:LoadedProjectDigest = ""
+        Add-Activity "Cartella sorgente modificata; le selezioni pendenti del progetto sono state invalidate."
+    }
     if ($script:InventoryFolder -and $ClientFolder.Text.Trim() -ne $script:InventoryFolder) {
         if (Test-ImportSessionActive) {
             Stop-ImportSession "Sessione chiusa perche' la cartella clienti e' stata modificata." $false
@@ -5596,6 +5968,7 @@ $ClientFolder.Add_TextChanged({
         $script:AllInventoryRows = @()
         $script:ReviewResult = $null
         $script:AllReviewRows = @()
+        $script:ReviewedSourceFiles = @()
         Reset-ImportWorkflow
         $StepReviewNumber.Foreground = Get-Brush "#8E8E93"
         $StepReviewText.Foreground = Get-Brush "#8E8E93"
@@ -5629,6 +6002,9 @@ $ContinueButton.Add_Click({
     }
 })
 
+$OpenProjectButton.Add_Click({ Open-LocalPreparationProject })
+$SaveInventoryProjectButton.Add_Click({ Save-LocalPreparationProject })
+$SaveReviewProjectButton.Add_Click({ Save-LocalPreparationProject -ReviewContext })
 $BackButton.Add_Click({ Show-Page "Configuration"; Update-ConfigurationState })
 $StepConfiguration.Add_MouseLeftButtonUp({ Show-Page "Configuration"; Update-ConfigurationState })
 $StepInventory.Add_MouseLeftButtonUp({
@@ -5863,7 +6239,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.27.0"
+        version = "0.28.0"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         width = $PreviewWidth
@@ -5897,7 +6273,7 @@ if ($SelfTest) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
     }
     if (
-        $Window.Title -notmatch "v0\.27\.0" -or
+        $Window.Title -notmatch "v0\.28\.0" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -5995,6 +6371,89 @@ for line in sys.stdin:
     if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported -or -not $ReviewBackendTest.unlimited_file_selection -or -not $ReviewBackendTest.unlimited_candidate_collection -or -not $ReviewBackendTest.single_pass_field_detection -or -not $ReviewBackendTest.source_mapping_profiles) {
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
+    $LocalProjectBackendTest = Invoke-PythonJson $LocalProjectScript @("--self-test")
+    if (
+        $LocalProjectBackendTest.version -ne "0.28.0" -or
+        -not $LocalProjectBackendTest.dpapi_current_user_required -or
+        $LocalProjectBackendTest.secret_fields_serialized -or
+        $LocalProjectBackendTest.trusted_fingerprint_persisted -or
+        $LocalProjectBackendTest.session_state_persisted -or
+        -not $LocalProjectBackendTest.strict_envelope
+    ) {
+        throw "Il backend dei progetti locali non rispetta il contratto di sicurezza."
+    }
+    $LocalProjectPlainProbe = '{"kind":"synthetic-local-project","contains_secrets":false}'
+    $LocalProjectCipherProbe = $null
+    $LocalProjectRoundTripProbe = $null
+    $LocalProjectDpapiProbeAvailable = $false
+    try {
+        $LocalProjectCipherProbe = Protect-LocalProjectText $LocalProjectPlainProbe
+        $LocalProjectRoundTripProbe = Unprotect-LocalProjectText $LocalProjectCipherProbe
+        $LocalProjectDpapiProbeAvailable = $true
+        if (
+            $LocalProjectRoundTripProbe -cne $LocalProjectPlainProbe -or
+            [Convert]::ToBase64String($LocalProjectCipherProbe).Contains("synthetic-local-project") -or
+            $null -eq $OpenProjectButton -or
+            $null -eq $SaveInventoryProjectButton -or
+            $null -eq $SaveReviewProjectButton -or
+            $SaveInventoryProjectButton.IsEnabled -or
+            $SaveReviewProjectButton.IsEnabled
+        ) {
+            throw "La protezione DPAPI o i controlli UI dei progetti locali non sono nello stato previsto."
+        }
+    } catch [System.Security.Cryptography.CryptographicException] {
+        # Some CI/sandbox hosts launch PowerShell under an impersonated token
+        # without a loaded user profile. Runtime save/load still fails closed;
+        # regular desktop and hosted Windows CI exercise the round-trip when
+        # CurrentUser DPAPI is available.
+        $LocalProjectDpapiProbeAvailable = $false
+    } finally {
+        if ($null -ne $LocalProjectCipherProbe) { [Array]::Clear($LocalProjectCipherProbe, 0, $LocalProjectCipherProbe.Length) }
+        $LocalProjectPlainProbe = $null
+        $LocalProjectRoundTripProbe = $null
+    }
+    if ($null -eq $OpenProjectButton -or $null -eq $SaveInventoryProjectButton -or $null -eq $SaveReviewProjectButton -or $SaveInventoryProjectButton.IsEnabled -or $SaveReviewProjectButton.IsEnabled) {
+        throw "I controlli UI dei progetti locali non sono nello stato fail-closed previsto."
+    }
+    if ([Environment]::GetEnvironmentVariable("PASSBOLT_MIGRATION_CI") -and -not $LocalProjectDpapiProbeAvailable) {
+        throw "DPAPI CurrentUser non e' disponibile nel quality gate CI."
+    }
+    $LocalProjectWriteProbePath = Join-Path ([IO.Path]::GetTempPath()) ("passbolt-local-project-write-" + [guid]::NewGuid().ToString("N") + ".pbproj")
+    try {
+        Write-AtomicUtf8File $LocalProjectWriteProbePath '{"probe":1}'
+        Write-AtomicUtf8File $LocalProjectWriteProbePath '{"probe":2}'
+        if ([IO.File]::ReadAllText($LocalProjectWriteProbePath) -cne '{"probe":2}') {
+            throw "La scrittura atomica dei progetti locali non conserva l'ultima versione completa."
+        }
+    } finally {
+        if (Test-Path -LiteralPath $LocalProjectWriteProbePath -PathType Leaf) {
+            Remove-Item -LiteralPath $LocalProjectWriteProbePath -Force
+        }
+    }
+    $ProjectInventoryRowA = [pscustomobject]@{ RelativePath = "Cliente Alfa/accessi.csv" }
+    $ProjectInventoryRowB = [pscustomobject]@{ RelativePath = "Cliente Beta/server.txt" }
+    $script:AllInventoryRows = @($ProjectInventoryRowA, $ProjectInventoryRowB)
+    $FilesGrid.ItemsSource = $script:AllInventoryRows
+    $script:PendingProjectSelectedFiles = @("Cliente Beta/server.txt")
+    Apply-PendingProjectInventorySelection
+    if ($FilesGrid.SelectedItems.Count -ne 1 -or [string]$FilesGrid.SelectedItem.RelativePath -ne "Cliente Beta/server.txt") {
+        throw "Il ripristino del progetto non ricostruisce la selezione inventario prevista."
+    }
+    $ProjectCandidateRowA = [pscustomobject]@{ CandidateId = ("a" * 64); SourceHash = ("b" * 64); Status = "ready" }
+    $ProjectCandidateRowB = [pscustomobject]@{ CandidateId = ("c" * 64); SourceHash = ("d" * 64); Status = "ready" }
+    $script:AllReviewRows = @($ProjectCandidateRowA, $ProjectCandidateRowB)
+    $ReviewCandidatesGrid.ItemsSource = $script:AllReviewRows
+    $script:PendingProjectSelectedCandidates = @([pscustomobject]@{ candidate_id = ("c" * 64); source_sha256 = ("d" * 64) })
+    Apply-PendingProjectCandidateSelection
+    if ($ReviewCandidatesGrid.SelectedItems.Count -ne 1 -or [string]$ReviewCandidatesGrid.SelectedItem.CandidateId -ne ("c" * 64)) {
+        throw "Il ripristino del progetto non lega la selezione candidato alle prove tecniche previste."
+    }
+    $FilesGrid.UnselectAll()
+    $ReviewCandidatesGrid.UnselectAll()
+    $FilesGrid.ItemsSource = $null
+    $ReviewCandidatesGrid.ItemsSource = $null
+    $script:AllInventoryRows = @()
+    $script:AllReviewRows = @()
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
     if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.source_mapping_profile_revalidation -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
@@ -6217,10 +6676,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.27.0"
+        version = "0.28.0"
         ui = "WPF"
         phases = 4
-        controls = 133
+        controls = 136
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -6238,6 +6697,8 @@ for line in sys.stdin:
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
         source_mapping_profile_ui = "OK"
+        protected_local_project_ui = "OK"
+        dpapi_current_user_probe = $(if ($LocalProjectDpapiProbeAvailable) { "OK" } else { "profile_unavailable" })
         protected_excel_password_prompt = "OK"
         persistent_import_session = "OK"
         reconciliation_progress_protocol = "OK"

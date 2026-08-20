@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.27.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -16,6 +16,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - inventario metadati di file TXT, CSV, JSON, XML, XLSX, DOCX e ODT;
 - revisione locale con password mascherate per impostazione predefinita, visualizzazione esplicita temporanea ed editor dei cinque campi importabili;
 - profili locali di mappatura sorgente per associare etichette non standard a titolo, username, password e URL/host, con validazione, digest e anteprima mascherata prima dell'importazione;
+- progetti locali di preparazione protetti con Windows DPAPI, per ripristinare origine, cartella, profilo e selezioni tecniche senza salvare trust, sessioni, credenziali, correzioni o piani;
 - riconoscimento dei file `.xlsx` protetti da password, con richiesta interattiva e decifratura esclusivamente in memoria;
 - rilevamento automatico di indirizzi IPv4 e IPv6 per il campo URL/host quando manca un URL esplicito;
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
@@ -79,6 +80,8 @@ Al primo utilizzo:
 
 Se i documenti usano intestazioni non riconosciute automaticamente, nella fase **Inventario** aprire **Profilo sorgente: Automatico** prima della revisione. Il profilo personalizzato associa una o più etichette a ciascun campo Passbolt; richiede sempre la password e almeno uno fra username e URL/host. **Carica JSON...** e **Salva JSON...** consentono di riusare soltanto la configurazione delle etichette: il file non contiene valori dei documenti o credenziali. Ogni modifica al profilo invalida la revisione e il piano già costruiti, così la griglia mascherata diventa l'anteprima obbligatoria della nuova mappatura.
 
+Per sospendere una preparazione, selezionare i file nell'inventario e usare **Salva progetto...**; dalla revisione vengono aggiunte soltanto le coppie tecniche `candidate_id`/SHA-256 dei candidati pronti selezionati. Il file `.pbproj` è cifrato con Windows DPAPI nello scope dell'utente corrente: dipende dal relativo profilo di protezione e non ha portabilità garantita. **Apri progetto...** ripristina URL HTTPS, cartella sorgente, profilo e selezioni, ma lascia la connessione non verificata: la fingerprint deve essere rilevata, confrontata e confermata di nuovo. L'inventario viene ricostruito senza aprire i documenti; la revisione resta un'azione esplicita e i candidati vengono riselezionati soltanto se identificativo, hash sorgente e stato **Pronto** coincidono. Password Excel, valori delle credenziali, correzioni manuali, chiave privata, passphrase, MFA, cookie, sessioni, cartelle Passbolt, ACL, dry-run e attestazioni non vengono salvati.
+
 Il pulsante **Preflight e dry-run** prepara il piano senza modificare Passbolt e popola la scheda **Preflight**. La conferma resta disabilitata se almeno un controllo è bloccante. Durante la scrittura, la scheda **Attività lotto** mostra soltanto eventi già registrati nel journal locale; non visualizza password, passphrase o MFA. Prima di dichiarare il successo, l'app rilegge ogni risorsa creata e confronta metadati, contenuto decifrato in memoria, cartella e ACL con il piano. La scheda **Verifica finale** conserva soltanto gli esiti booleani e i titoli già presenti nella revisione locale.
 
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
@@ -124,11 +127,13 @@ Prima di usare il progetto:
 
 La chiave privata viene selezionata dalla GUI. Passphrase e TOTP sono inviati al bridge locale soltanto per aprire la sessione, rimossi subito dalla richiesta e non scritti nei log. I cookie di sessione restano in memoria e il logout viene tentato alla chiusura. Nella revisione le password vengono mostrate soltanto dopo una conferma esplicita; quelle lette dai sorgenti vengono rimosse dalla UI quando si torna alla maschera o si cambia fase, mentre eventuali correzioni restano in memoria esclusivamente fino all'importazione o alla chiusura. Se un `.xlsx` è protetto, la password del documento viene chiesta soltanto dopo il rilevamento della cifratura, resta in memoria per revisione, verifica d'integrità e importazione e non viene inoltrata a Passbolt. Il formato legacy `.xls` protetto non è supportato.
 
+I progetti `.pbproj` possono contenere percorsi locali e nomi relativi dei documenti, quindi restano materiale operativo riservato anche se protetto. La busta JSON a schema chiuso e i digest rilevano alterazioni prima e dopo la decifratura; DPAPI fornisce riservatezza e integrità per l'utente Windows corrente. La perdita del profilo Windows può rendere il progetto irrecuperabile: il file non sostituisce i documenti sorgente, un backup verificato o il journal di riconciliazione.
+
 Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavorare con materiale sensibile.
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 121 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, contratto dei 133 controlli WPF, otto anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 129 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, contratto dei 136 controlli WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -271,6 +276,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.28.0 introduce progetti locali di preparazione schema 1. Il payload normalizzato contiene soltanto origine HTTPS, cartella sorgente, profilo di mappatura e selezioni tecniche; viene legato a digest, cifrato con DPAPI `CurrentUser` e salvato in modo atomico dentro una busta a campi chiusi. Il ripristino non persiste né riattiva la fingerprint, non apre documenti, non ricrea sessioni e non riusa dry-run: connessione, inventario, revisione e corrispondenza dei candidati vengono dimostrati nuovamente. I file sono volutamente locali e privi di portabilità garantita.
 
 La versione 0.27.0 introduce profili di mappatura sorgente per esportazioni con intestazioni non standard. Il confronto è esatto dopo normalizzazione, il profilo è privo di valori sorgente e viene legato tramite SHA-256 a candidati, rilettura d'integrità e piano. La revisione mascherata resta l'anteprima obbligatoria; un mapping ambiguo non produce candidati importabili. Il comportamento automatico precedente rimane disponibile e conserva gli identificativi storici necessari ai recuperi già avviati.
 

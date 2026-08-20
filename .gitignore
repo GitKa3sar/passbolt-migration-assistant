@@ -45,6 +45,7 @@ secrets*.json
 credentials*.json
 
 # Output locali e documenti sorgente dei clienti
+*.pbproj
 review*.json
 revisione*.json
 inventario*.json

@@ -2,6 +2,30 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.28.0 - 2026-08-20
+
+### Added
+
+- aggiunti progetti locali di preparazione schema 1 per salvare e ripristinare origine HTTPS, cartella sorgente, profilo di mappatura, file selezionati e sole prove tecniche dei candidati pronti;
+- aggiunti **Apri progetto...** nella configurazione e **Salva progetto...** in inventario e revisione, con ripristino differito delle selezioni dopo inventario e rilettura esplicita;
+- aggiunto `passbolt_project.py`, con payload e busta a campi chiusi, forma canonica, limiti in byte, digest SHA-256 e CLI locale a JSON protetto.
+
+### Changed
+
+- i progetti `.pbproj` vengono cifrati con Windows DPAPI `CurrentUser` e scritti tramite file temporaneo sincronizzato e sostituzione atomica;
+- il ripristino chiude la sessione corrente, azzera fingerprint e stato remoto e richiede nuovamente verifica della connessione, inventario e revisione; i candidati vengono riselezionati soltanto se ID, hash sorgente e stato Pronto coincidono;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.28.0`, 129 test Python e 136 controlli WPF.
+
+### Security
+
+- fingerprint fidate, chiavi, passphrase, MFA, cookie, sessioni, password Excel, valori e correzioni delle credenziali, destinazioni Passbolt, ACL, dry-run, attestazioni e journal non vengono serializzati nel progetto;
+- busta e payload sono validati separatamente prima e dopo DPAPI; proprietà sconosciute o duplicate, Base64 e digest incoerenti, attraversamenti di percorso e prove tecniche non valide vengono rifiutati fail-closed;
+- i progetti sono protetti dal profilo dell'utente Windows corrente, non hanno portabilità garantita e non vengono trattati come backup o come prova della matrice reale.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; questa evoluzione locale non anticipa la distribuzione Windows.
+
 ## 0.27.0 - 2026-08-20
 
 ### Added
