@@ -2,6 +2,22 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.28.1 - 2026-08-20
+
+### Fixed
+
+- corretta la verifica della firma della sfida GPGAuth quando l'orologio del server è avanti di pochi secondi rispetto a Windows, usando come riferimento alternativo soltanto l'header `Date` della medesima risposta HTTPS;
+- distinti gli errori temporali `AUTH_CHALLENGE_CLOCK_UNVERIFIED` e `AUTH_CHALLENGE_CLOCK_SKEW` dalla firma crittograficamente non valida e resa la diagnostica WPF esplicita sugli orologi di client e server.
+
+### Security
+
+- la verifica stretta resta il primo percorso e la tolleranza è limitata a 300 secondi; firma matematica, firmatario fissato, validità della chiave e policy hash non vengono disabilitati;
+- aggiunte regressioni per tolleranza bounded, scarto eccessivo, data HTTP malformata, sfida non firmata e firma prodotta da una chiave diversa.
+
+### Changed
+
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.28.1`; il gate finale su istanze Passbolt v4/v5 reali resta esterno e non viene attestato da questa correzione locale.
+
 ## 0.28.0 - 2026-08-20
 
 ### Added

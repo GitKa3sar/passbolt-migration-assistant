@@ -14,6 +14,7 @@ import {
   buildResourcePayload,
   classifyRecovery,
   createPlannedContent,
+  decryptServerChallenge,
   verifyCreatedResources,
   encryptSecret,
   permissionMaskDigest,
@@ -320,6 +321,89 @@ async function main() {
   const groupRecipientFingerprint = groupRecipientPublicKey.getFingerprint().toUpperCase();
   const metadataFingerprint = metadataPublicKey.getFingerprint().toUpperCase();
   const authToken = 'gpgauthv1.3.0|36|11111111-1111-4111-8111-111111111111|gpgauthv1.3.0';
+  const authClockProbeLocalDate = new Date();
+  const boundedAuthServerDate = new Date((Math.floor(authClockProbeLocalDate.getTime() / 1000) * 1000) + 30_000);
+  const boundedFutureChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    signingKeys: serverPrivateKey,
+    date: boundedAuthServerDate,
+    format: 'armored',
+  });
+  assert.equal(
+    await decryptServerChallenge(
+      boundedFutureChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      boundedAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    authToken,
+  );
+
+  const excessiveAuthServerDate = new Date((Math.floor(authClockProbeLocalDate.getTime() / 1000) * 1000) + 600_000);
+  const excessiveFutureChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    signingKeys: serverPrivateKey,
+    date: excessiveAuthServerDate,
+    format: 'armored',
+  });
+  await assert.rejects(
+    decryptServerChallenge(
+      excessiveFutureChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      excessiveAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_CLOCK_SKEW'
+      && Number.isInteger(error?.details?.clock_skew_seconds)
+      && error.details.clock_skew_seconds > 300,
+  );
+  await assert.rejects(
+    decryptServerChallenge(
+      boundedFutureChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      'invalid-date',
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_CLOCK_UNVERIFIED',
+  );
+
+  const wrongSignerChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    signingKeys: directRecipientPrivateKey,
+    date: boundedAuthServerDate,
+    format: 'armored',
+  });
+  await assert.rejects(
+    decryptServerChallenge(
+      wrongSignerChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      boundedAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_BAD_SIGNATURE',
+  );
+  const unsignedChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    format: 'armored',
+  });
+  await assert.rejects(
+    decryptServerChallenge(
+      unsignedChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      boundedAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_UNSIGNED',
+  );
   let authenticated = false;
   let completedLoginCount = 0;
   let identityMode = 'redirect-success';
@@ -2846,6 +2930,8 @@ async function main() {
         gpgauth_stage0: true,
         gpgauth_stage1: true,
         gpgauth_stage2: true,
+        gpgauth_bounded_clock_skew: true,
+        gpgauth_bad_signature_fail_closed: true,
         official_wrapped_gpgauth_payload: officialWrappedGpgAuthPayloadCount >= 2,
         same_origin_redirect: true,
         cross_origin_redirect_blocked: true,

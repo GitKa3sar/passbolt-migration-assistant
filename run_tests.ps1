@@ -297,7 +297,7 @@ try {
     Write-Host ""
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.0"
+        version = "0.28.1"
         ci_mode = [bool]$Ci
         python_tests = 129
         node_suite = "OK"

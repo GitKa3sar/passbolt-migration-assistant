@@ -10,7 +10,13 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.28.0` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.28.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+
+### Correzione verifica temporale GPGAuth 0.28.1
+
+La sfida utente di GPGAuth viene ancora decifrata con la chiave privata locale e deve contenere una firma verificabile con la chiave pubblica del server già vincolata alla fingerprint confermata. La verifica usa anzitutto l'ora locale. Se OpenPGP.js segnala esclusivamente che la firma è stata creata nel futuro, il bridge può ripetere la stessa verifica con l'header HTTP `Date` della risposta che contiene la sfida, purché sia un IMF-fixdate valido e lo scarto assoluto non superi 300 secondi.
+
+Il percorso di compatibilità non disabilita la verifica: firma matematica, firmatario, validità della chiave e policy dell'algoritmo hash restano controllati. Un header assente o malformato produce `AUTH_CHALLENGE_CLOCK_UNVERIFIED`; uno scarto eccessivo produce `AUTH_CHALLENGE_CLOCK_SKEW`; una firma errata o appartenente a un'altra chiave produce `AUTH_CHALLENGE_BAD_SIGNATURE`. La GUI mostra soltanto codice, fase e scarto numerico e suggerisce di controllare sia Windows sia il server Passbolt, senza esporre token, chiavi o URL privati.
 
 ### Progetti locali di preparazione 0.28.0
 

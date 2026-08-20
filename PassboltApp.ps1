@@ -64,7 +64,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.28.0"
+        Title="Passbolt Migration Assistant - v0.28.1"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -1454,7 +1454,7 @@ function Save-LocalPreparationProject([switch]$ReviewContext) {
         project = [pscustomobject][ordered]@{
             schema_version = 1
             kind = "passbolt-migration-preparation"
-            app_version = "0.28.0"
+            app_version = "0.28.1"
             saved_at_utc = $SavedAtUtc
             server_origin = [string]$script:VerifiedUrl
             source_root = [string]$script:InventoryFolder
@@ -2008,7 +2008,7 @@ function Get-SecureErrorMessage($Envelope) {
                 $ClockSkew = [int]$Details.clock_skew_seconds
                 if ([Math]::Abs($ClockSkew) -ge 20) {
                     $Technical.Add("scarto orologio $ClockSkew s")
-                    $Message += " Verificare la sincronizzazione automatica di data, ora e fuso orario di Windows."
+                    $Message += " Verificare la sincronizzazione automatica di data, ora e fuso orario sia in Windows sia sul server Passbolt."
                 }
             }
         }
@@ -4865,7 +4865,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.1", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -6239,7 +6239,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.0"
+        version = "0.28.1"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         width = $PreviewWidth
@@ -6273,7 +6273,7 @@ if ($SelfTest) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
     }
     if (
-        $Window.Title -notmatch "v0\.28\.0" -or
+        $Window.Title -notmatch "v0\.28\.1" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -6373,7 +6373,7 @@ for line in sys.stdin:
     }
     $LocalProjectBackendTest = Invoke-PythonJson $LocalProjectScript @("--self-test")
     if (
-        $LocalProjectBackendTest.version -ne "0.28.0" -or
+        $LocalProjectBackendTest.version -ne "0.28.1" -or
         -not $LocalProjectBackendTest.dpapi_current_user_required -or
         $LocalProjectBackendTest.secret_fields_serialized -or
         $LocalProjectBackendTest.trusted_fingerprint_persisted -or
@@ -6459,7 +6459,7 @@ for line in sys.stdin:
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.gpgauth_bounded_clock_verification -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
@@ -6475,6 +6475,16 @@ for line in sys.stdin:
     })
     if ($LoginDiagnosticProbe -notmatch "MFA_TOTP_REJECTED" -or $LoginDiagnosticProbe -notmatch "verifica MFA TOTP" -or $LoginDiagnosticProbe -notmatch "HTTP 400" -or $LoginDiagnosticProbe -notmatch "sincronizzazione") {
         throw "La diagnostica sicura del login non espone fase, codice e stato HTTP."
+    }
+    $GpgAuthClockProbe = Get-SecureErrorMessage ([pscustomobject]@{
+        error = [pscustomobject]@{
+            code = "AUTH_CHALLENGE_CLOCK_SKEW"
+            message = "Orologi troppo distanti."
+            details = [pscustomobject]@{ auth_phase = "challenge_decryption"; clock_skew_seconds = 301 }
+        }
+    })
+    if ($GpgAuthClockProbe -notmatch "AUTH_CHALLENGE_CLOCK_SKEW" -or $GpgAuthClockProbe -notmatch "decifratura sfida utente" -or $GpgAuthClockProbe -notmatch "scarto orologio 301 s" -or $GpgAuthClockProbe -notmatch "server Passbolt") {
+        throw "La diagnostica temporale GPGAuth non espone il suggerimento sicuro previsto."
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
@@ -6676,7 +6686,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.0"
+        version = "0.28.1"
         ui = "WPF"
         phases = 4
         controls = 136

@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -21,6 +21,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - rilevamento automatico di indirizzi IPv4 e IPv6 per il campo URL/host quando manca un URL esplicito;
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
+- verifica fail-closed della firma GPGAuth con tolleranza temporale massima di cinque minuti rispetto all'header `Date` della stessa risposta HTTPS;
 - creazione di risorse Passbolt v4 e v5 con cifratura OpenPGP locale;
 - destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
 - creazione di sottocartelle personali e condivise con permessi ereditati oppure con una ACL personalizzata;
@@ -276,6 +277,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.28.1 corregge il login quando l'orologio del server rende la firma della sfida GPGAuth di pochi secondi futura rispetto a Windows. Il bridge prova sempre prima la verifica OpenPGP stretta; soltanto per quell'errore temporale può ripeterla usando l'header HTTP `Date` della stessa risposta HTTPS, se valido e distante non più di 300 secondi. Firma crittografica, identità della chiave server fissata, validità della chiave e policy degli hash restano obbligatorie. Date assenti o malformate, firme prodotte da altre chiavi e scarti maggiori rimangono bloccati con diagnostica sicura.
 
 La versione 0.28.0 introduce progetti locali di preparazione schema 1. Il payload normalizzato contiene soltanto origine HTTPS, cartella sorgente, profilo di mappatura e selezioni tecniche; viene legato a digest, cifrato con DPAPI `CurrentUser` e salvato in modo atomico dentro una busta a campi chiusi. Il ripristino non persiste né riattiva la fingerprint, non apre documenti, non ricrea sessioni e non riusa dry-run: connessione, inventario, revisione e corrispondenza dei candidati vengono dimostrati nuovamente. I file sono volutamente locali e privi di portabilità garantita.
 

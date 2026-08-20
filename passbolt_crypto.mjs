@@ -25,7 +25,8 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.28.0';
+const MAX_GPG_AUTH_CLOCK_SKEW_SECONDS = 300;
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.28.1';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -376,28 +377,102 @@ async function verifyServerOwnership(session, serverPublicKey, userFingerprint) 
   assert(returned === token, 'SERVER_OWNERSHIP_MISMATCH', 'La prova GPGAuth del server non corrisponde. Login interrotto.');
 }
 
-async function decryptServerChallenge(armoredChallenge, privateKey, serverPublicKey) {
+function isFutureSignatureError(error) {
+  let current = error;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if (String(current.message ?? current).includes('Signature creation time is in the future')) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+function boundedGpgAuthServerDate(value, localDate) {
+  const header = String(value ?? '').trim();
+  if (!/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(header)) {
+    return null;
+  }
+  const timestamp = Date.parse(header);
+  if (!Number.isFinite(timestamp)) return null;
+  const serverDate = new Date(timestamp);
+  if (serverDate.toUTCString() !== header) return null;
+  const skewSeconds = Math.round((timestamp - localDate.getTime()) / 1000);
+  return { date: serverDate, skewSeconds };
+}
+
+async function verifyServerChallengeAtDate(armoredChallenge, privateKey, serverPublicKey, date = undefined) {
+  const decrypted = await openpgp.decrypt({
+    message: await openpgp.readMessage({ armoredMessage: armoredChallenge }),
+    decryptionKeys: privateKey,
+    verificationKeys: serverPublicKey,
+    format: 'utf8',
+    ...(date === undefined ? {} : { date }),
+  });
+  assert(Array.isArray(decrypted.signatures) && decrypted.signatures.length > 0, 'AUTH_CHALLENGE_UNSIGNED', 'La sfida GPGAuth non contiene una firma del server.');
+  await Promise.all(decrypted.signatures.map((signature) => signature.verified));
+  return decrypted;
+}
+
+async function decryptServerChallenge(armoredChallenge, privateKey, serverPublicKey, serverDateHeader = '', localDate = new Date()) {
   let message;
   try {
     message = await openpgp.readMessage({ armoredMessage: armoredChallenge });
   } catch {
     throw new SafeError('AUTH_CHALLENGE_INVALID', 'La sfida GPGAuth ricevuta non e un messaggio OpenPGP valido.');
   }
-  let decrypted;
+  // Classify private-key/decryption failures separately before evaluating the
+  // server signature. The cleartext is never returned unless verification
+  // below succeeds.
   try {
-    decrypted = await openpgp.decrypt({
+    await openpgp.decrypt({
       message,
       decryptionKeys: privateKey,
-      verificationKeys: serverPublicKey,
       format: 'utf8',
     });
   } catch {
-    throw new SafeError('AUTH_CHALLENGE_DECRYPT_FAILED', 'Impossibile decifrare o verificare la sfida GPGAuth.');
+    throw new SafeError('AUTH_CHALLENGE_DECRYPT_FAILED', 'Impossibile decifrare la sfida GPGAuth con la chiave utente.');
   }
-  assert(Array.isArray(decrypted.signatures) && decrypted.signatures.length > 0, 'AUTH_CHALLENGE_UNSIGNED', 'La sfida GPGAuth non contiene una firma del server.');
+
+  let decrypted;
+  let strictError;
   try {
-    await Promise.all(decrypted.signatures.map((signature) => signature.verified));
-  } catch {
+    decrypted = await verifyServerChallengeAtDate(armoredChallenge, privateKey, serverPublicKey);
+  } catch (error) {
+    if (error instanceof SafeError) throw error;
+    strictError = error;
+  }
+
+  if (!decrypted) {
+    if (!isFutureSignatureError(strictError)) {
+      throw new SafeError('AUTH_CHALLENGE_BAD_SIGNATURE', 'La firma della sfida GPGAuth non e valida.');
+    }
+
+    // GnuPG signs with the server clock, while OpenPGP.js verifies against the
+    // client clock. Retry only against the IMF-fixdate of this same HTTPS
+    // response and only inside a small bounded skew. Signature mathematics,
+    // signer identity, key validity and hash-policy checks remain enabled.
+    const serverTime = boundedGpgAuthServerDate(serverDateHeader, localDate);
+    if (!serverTime) {
+      throw new SafeError(
+        'AUTH_CHALLENGE_CLOCK_UNVERIFIED',
+        'La firma GPGAuth usa un orario futuro e Passbolt non ha fornito un riferimento temporale HTTP valido.',
+      );
+    }
+    if (Math.abs(serverTime.skewSeconds) > MAX_GPG_AUTH_CLOCK_SKEW_SECONDS) {
+      throw new SafeError(
+        'AUTH_CHALLENGE_CLOCK_SKEW',
+        'Gli orologi del PC e del server Passbolt sono troppo distanti per verificare in sicurezza la sfida GPGAuth.',
+        { clock_skew_seconds: serverTime.skewSeconds },
+      );
+    }
+    try {
+      decrypted = await verifyServerChallengeAtDate(armoredChallenge, privateKey, serverPublicKey, serverTime.date);
+    } catch (error) {
+      if (error instanceof SafeError) throw error;
+      throw new SafeError('AUTH_CHALLENGE_BAD_SIGNATURE', 'La firma della sfida GPGAuth non e valida.');
+    }
+  }
+
+  if (!decrypted) {
     throw new SafeError('AUTH_CHALLENGE_BAD_SIGNATURE', 'La firma della sfida GPGAuth non e valida.');
   }
   const token = String(decrypted.data ?? '').trim();
@@ -521,7 +596,12 @@ async function authenticate(session, keyMaterial, expectedFingerprint, mfaTotp =
     assert(challengeHeader, 'AUTH_CHALLENGE_MISSING', apiMessage(stageOne.document, 'Passbolt non ha restituito la sfida GPGAuth per questo utente.'));
     authPhase = 'challenge_decryption';
     const challenge = decodeHeaderValue(challengeHeader);
-    const token = await decryptServerChallenge(challenge, keyMaterial.privateKey, serverPublicKey);
+    const token = await decryptServerChallenge(
+      challenge,
+      keyMaterial.privateKey,
+      serverPublicKey,
+      stageOne.headers.get('date'),
+    );
 
     authPhase = 'challenge_response';
     const stageTwoData = {
@@ -5179,6 +5259,24 @@ async function selfTest() {
   });
   await Promise.all(decrypted.signatures.map((signature) => signature.verified));
   assert(decrypted.data === marker, 'SELF_TEST_FAILED', 'Il test OpenPGP locale non e riuscito.');
+  const authClockLocalDate = new Date();
+  const authClockServerDate = new Date((Math.floor(authClockLocalDate.getTime() / 1000) * 1000) + 30_000);
+  const authClockToken = 'gpgauthv1.3.0|36|22222222-2222-4222-8222-222222222222|gpgauthv1.3.0';
+  const authClockChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authClockToken }),
+    encryptionKeys: publicKey,
+    signingKeys: privateKey,
+    date: authClockServerDate,
+    format: 'armored',
+  });
+  const verifiedAuthClockToken = await decryptServerChallenge(
+    authClockChallenge,
+    privateKey,
+    publicKey,
+    authClockServerDate.toUTCString(),
+    authClockLocalDate,
+  );
+  assert(verifiedAuthClockToken === authClockToken, 'SELF_TEST_FAILED', 'La tolleranza temporale limitata GPGAuth non e disponibile.');
   const formEncodedArmor = encodeURIComponent(encrypted).replace(/%20/g, '+');
   assert(decodeHeaderValue(formEncodedArmor) === encrypted, 'SELF_TEST_FAILED', 'La decodifica form-urlencoded degli header GPGAuth non e riuscita.');
   const secretMessage = await encryptSecret(
@@ -5235,6 +5333,7 @@ async function selfTest() {
     encryption: true,
     decryption: true,
     signature_verification: true,
+    gpgauth_bounded_clock_verification: true,
     gpgauth_header_form_decoding: true,
     official_wrapped_gpgauth_payload_contract: true,
     official_minimal_totp_payload_contract: true,
@@ -5372,6 +5471,7 @@ export {
   buildResourcePayload,
   classifyRecovery,
   createPlannedContent,
+  decryptServerChallenge,
   verifyCreatedResources,
   encryptSecret,
   buildAclObjectCatalog,
