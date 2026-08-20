@@ -701,7 +701,7 @@ def run_instance(
                             "authenticated_login",
                             {
                                 "authentication": str(open_payload.get("authentication", "")),
-                                "mfa_provider": str(open_payload.get("mfa_provider", "")) or None,
+                                "mfa_provider": str(open_payload.get("mfa_provider") or "") or None,
                                 "secrets_serialized": False,
                                 "write_requests": 0,
                             },
