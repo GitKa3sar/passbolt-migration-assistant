@@ -128,10 +128,19 @@ class ImportPreparationTests(unittest.TestCase):
         request["source_at_root"] = False
 
         def guarded_records(
-            path: Path, extension: str, *, file_password: str | None = None
+            path: Path,
+            extension: str,
+            *,
+            file_password: str | None = None,
+            source_mapping_profile: object | None = None,
         ):
             iterator = iter(
-                real_records_for_file(path, extension, file_password=file_password)
+                real_records_for_file(
+                    path,
+                    extension,
+                    file_password=file_password,
+                    source_mapping_profile=source_mapping_profile,
+                )
             )
             yield next(iterator)
             raise AssertionError("Il parser ha proseguito oltre i candidati richiesti")
@@ -232,6 +241,86 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(source_count, 1)
         self.assertEqual(resources[0]["password"], self.secret)
         self.assertEqual(resources[0]["candidate_id"], self.request["candidate_id"])
+
+    def test_custom_source_mapping_is_revalidated_for_secret_handoff(self) -> None:
+        source = self.root / "Cliente Alfa" / "vendor-export.csv"
+        secret = "segreto-mappato-solo-in-memoria"
+        source.write_text(
+            "display_label,account_name,credential_value,target_endpoint\n"
+            f"Portale vendor,utente-vendor,{secret},https://vendor.test\n",
+            encoding="utf-8",
+        )
+        profile = {
+            "schema_version": 1,
+            "name": "Export vendor",
+            "fields": {
+                "title": ["display_label"],
+                "username": ["account_name"],
+                "secret": ["credential_value"],
+                "uri": ["target_endpoint"],
+            },
+        }
+        reviewed = asdict(
+            analyze_files(
+                self.root,
+                ["Cliente Alfa/vendor-export.csv"],
+                source_mapping_profile=profile,
+            ).candidates[0]
+        )
+        request = {
+            key: reviewed[key]
+            for key in (
+                "candidate_id",
+                "source_relative_path",
+                "source_sha256",
+                "client",
+                "title",
+                "username",
+                "uri",
+                "source_mapping_digest",
+                "source_mapping_profile",
+            )
+        }
+        request["source_at_root"] = False
+
+        integrity = verify_integrity(self.root, [request])
+        resources, source_count = extract_resources(
+            self.root, [request], include_secrets=True
+        )
+
+        self.assertTrue(integrity["verified"])
+        self.assertEqual(source_count, 1)
+        self.assertEqual(resources[0]["password"], secret)
+        self.assertNotIn(secret, json.dumps(reviewed))
+
+    def test_custom_source_mapping_digest_tampering_is_rejected(self) -> None:
+        source = self.root / "Cliente Alfa" / "mapped.env"
+        source.write_text(
+            "ACCOUNT_NAME=utente\nCREDENTIAL_VALUE=segreto\n",
+            encoding="utf-8",
+        )
+        profile = {
+            "schema_version": 1,
+            "name": "Export env",
+            "fields": {
+                "title": [],
+                "username": ["account_name"],
+                "secret": ["credential_value"],
+                "uri": [],
+            },
+        }
+        reviewed = asdict(
+            analyze_files(
+                self.root,
+                ["Cliente Alfa/mapped.env"],
+                source_mapping_profile=profile,
+            ).candidates[0]
+        )
+        reviewed["source_at_root"] = False
+        reviewed["source_mapping_profile"]["name"] = "Profilo alterato"
+
+        with self.assertRaisesRegex(ImportPreparationError, "profilo"):
+            _selected_candidates([reviewed])
 
     def test_edited_metadata_is_imported_while_original_review_stays_verified(self) -> None:
         edited = dict(self.request)
@@ -1382,9 +1471,20 @@ for raw in sys.stdin:
     def test_change_during_read_is_rejected(self) -> None:
         from passbolt_review import _records_for_file as real_records_for_file
 
-        def changing_records(path: Path, extension: str, *, file_password: str | None = None):
+        def changing_records(
+            path: Path,
+            extension: str,
+            *,
+            file_password: str | None = None,
+            source_mapping_profile: object | None = None,
+        ):
             records = list(
-                real_records_for_file(path, extension, file_password=file_password)
+                real_records_for_file(
+                    path,
+                    extension,
+                    file_password=file_password,
+                    source_mapping_profile=source_mapping_profile,
+                )
             )
             path.write_text(
                 path.read_text(encoding="utf-8") + "\nNota: cambio concorrente\n",

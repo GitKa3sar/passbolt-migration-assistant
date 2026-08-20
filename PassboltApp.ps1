@@ -62,7 +62,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.26.0"
+        Title="Passbolt Migration Assistant - v0.27.0"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -539,14 +539,15 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </Grid.RowDefinitions>
 
                 <Grid Grid.Row="0" Margin="0,0,0,16">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Text="Inventario file" Style="{StaticResource PageTitle}" />
                         <TextBlock x:Name="InventoryRoot" Text="Inventario non ancora eseguito" Style="{StaticResource PageSubtitle}" FontSize="12" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <Button x:Name="RefreshButton" Grid.Column="1" Content="Aggiorna inventario" Style="{StaticResource SecondaryButton}" VerticalAlignment="Center" />
                     <Button x:Name="ExportButton" Grid.Column="2" Content="Esporta CSV" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" VerticalAlignment="Center" IsEnabled="False" />
-                    <Button x:Name="ReviewSelectionButton" Grid.Column="3" Content="Rivedi selezionati (0)" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" VerticalAlignment="Center" IsEnabled="False" />
+                    <Button x:Name="SourceProfileButton" Grid.Column="3" Content="Profilo sorgente: Automatico" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" VerticalAlignment="Center" ToolTip="Configura etichette sorgente esatte, senza salvare valori delle credenziali" />
+                    <Button x:Name="ReviewSelectionButton" Grid.Column="4" Content="Rivedi selezionati (0)" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" VerticalAlignment="Center" IsEnabled="False" />
                 </Grid>
 
                 <Grid Grid.Row="1" Margin="0,0,0,12">
@@ -1035,6 +1036,7 @@ $ContinueButton = Get-Control "ContinueButton"
 $InventoryRoot = Get-Control "InventoryRoot"
 $RefreshButton = Get-Control "RefreshButton"
 $ExportButton = Get-Control "ExportButton"
+$SourceProfileButton = Get-Control "SourceProfileButton"
 $ReviewSelectionButton = Get-Control "ReviewSelectionButton"
 $MetricClients = Get-Control "MetricClients"
 $MetricFiles = Get-Control "MetricFiles"
@@ -1148,6 +1150,7 @@ $script:AllInventoryRows = @()
 $script:ReviewResult = $null
 $script:AllReviewRows = @()
 $script:ReviewFilePasswords = @{}
+$script:SourceMappingProfile = $null
 $script:ReviewPasswordsVisible = $false
 $script:UpdatingReviewPasswordToggle = $false
 $script:ImportCandidates = @()
@@ -3674,6 +3677,8 @@ function Get-ReviewCandidateRequest($Row, [switch]$ForReveal) {
         reviewed_uri = [string]$Row.OriginalUri
         password_overridden = $PasswordOverridden
         source_password_required = [bool]$Row.SourcePasswordRequired
+        source_mapping_digest = [string]$Row.SourceMappingDigest
+        source_mapping_profile = $Row.SourceMappingProfile
     }
 }
 
@@ -4510,7 +4515,7 @@ function Invoke-ConfirmedImport {
         Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
         Refresh-RecoveryBatches -Quiet
         Add-Activity "Importazione non completata: $FailureMessage"
-        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.26.0", "OK", "Error") | Out-Null
+        [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.27.0", "OK", "Error") | Out-Null
     } finally {
         foreach ($Entry in $SecretOverrides) { $Entry.password = $null }
         foreach ($Entry in $WriteSourceFilePasswords) { $Entry.password = $null }
@@ -4999,6 +5004,250 @@ function Show-ExcelPasswordDialog([string]$RelativePath, [switch]$Retry, [switch
     return $Result
 }
 
+function ConvertTo-SourceProfileAliases([string]$Value) {
+    return @(
+        $Value -split "[,;`r`n]+" |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
+function Get-SourceMappingProfileFromEditors([hashtable]$Editors) {
+    return [pscustomobject][ordered]@{
+        schema_version = 1
+        name = ([string]$Editors.Name.Text).Trim()
+        fields = [pscustomobject][ordered]@{
+            title = @(ConvertTo-SourceProfileAliases ([string]$Editors.Title.Text))
+            username = @(ConvertTo-SourceProfileAliases ([string]$Editors.Username.Text))
+            secret = @(ConvertTo-SourceProfileAliases ([string]$Editors.Secret.Text))
+            uri = @(ConvertTo-SourceProfileAliases ([string]$Editors.Uri.Text))
+        }
+    }
+}
+
+function Test-SourceMappingProfile($Profile) {
+    $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ReviewScript, "--profile-check") $Profile
+    if (-not [bool]$Envelope.ok) { throw (Get-SecureErrorMessage $Envelope) }
+    if ($null -eq $Envelope.result.profile -or -not [string]$Envelope.result.profile.digest) {
+        throw "Il validatore non ha restituito un profilo sorgente verificabile."
+    }
+    return $Envelope.result.profile
+}
+
+function Set-SourceMappingProfileEditors([hashtable]$Editors, $Profile) {
+    if ($null -eq $Profile) {
+        $Editors.Name.Text = "Profilo personalizzato"
+        $Editors.Title.Text = ""
+        $Editors.Username.Text = ""
+        $Editors.Secret.Text = ""
+        $Editors.Uri.Text = ""
+        return
+    }
+    $Editors.Name.Text = [string]$Profile.name
+    $Editors.Title.Text = @($Profile.fields.title) -join ", "
+    $Editors.Username.Text = @($Profile.fields.username) -join ", "
+    $Editors.Secret.Text = @($Profile.fields.secret) -join ", "
+    $Editors.Uri.Text = @($Profile.fields.uri) -join ", "
+}
+
+function Show-SourceMappingProfileDialog([switch]$BuildOnly) {
+    $Dialog = New-Object System.Windows.Window
+    $Dialog.Title = "Profilo di mappatura sorgente"
+    if (-not $BuildOnly -and $Window.IsVisible) { $Dialog.Owner = $Window }
+    $Dialog.WindowStartupLocation = "CenterOwner"
+    $Dialog.ResizeMode = "NoResize"
+    $Dialog.Width = 720
+    $Dialog.Height = 600
+    $Dialog.Background = Get-Brush "#F2F2F7"
+    $Dialog.FontFamily = $Window.FontFamily
+
+    $Layout = New-Object System.Windows.Controls.Grid
+    $Layout.Margin = [System.Windows.Thickness]::new(24)
+    $Layout.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = "Auto" }))
+    $Layout.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = "*" }))
+    $Layout.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = "Auto" }))
+
+    $Header = New-Object System.Windows.Controls.StackPanel
+    [System.Windows.Controls.Grid]::SetRow($Header, 0)
+    $HeaderTitle = New-Object System.Windows.Controls.TextBlock
+    $HeaderTitle.Text = "Associa le etichette dei documenti ai campi Passbolt"
+    $HeaderTitle.FontSize = 21
+    $HeaderTitle.FontWeight = "SemiBold"
+    $HeaderTitle.Foreground = Get-Brush "#1D1D1F"
+    $HeaderText = New-Object System.Windows.Controls.TextBlock
+    $HeaderText.Text = "Inserisci una o piu etichette separate da virgola. Il confronto e esatto dopo la normalizzazione; il profilo contiene soltanto nomi di campo, mai valori o password."
+    $HeaderText.TextWrapping = "Wrap"
+    $HeaderText.Foreground = Get-Brush "#66737F"
+    $HeaderText.Margin = [System.Windows.Thickness]::new(0, 6, 0, 16)
+    [void]$Header.Children.Add($HeaderTitle)
+    [void]$Header.Children.Add($HeaderText)
+    [void]$Layout.Children.Add($Header)
+
+    $Form = New-Object System.Windows.Controls.Grid
+    [System.Windows.Controls.Grid]::SetRow($Form, 1)
+    $Form.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = 170 }))
+    $Form.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = "*" }))
+    $Editors = @{}
+    $Rows = @(
+        [pscustomobject]@{ Key = "Name"; Label = "Nome profilo"; Hint = "Esempio: Export password manager" },
+        [pscustomobject]@{ Key = "Title"; Label = "Titolo"; Hint = "Esempio: label, entry_name" },
+        [pscustomobject]@{ Key = "Username"; Label = "Username"; Hint = "Esempio: account_name, login_id" },
+        [pscustomobject]@{ Key = "Secret"; Label = "Password"; Hint = "Obbligatorio; esempio: credential_value" },
+        [pscustomobject]@{ Key = "Uri"; Label = "URL / host"; Hint = "Esempio: target, endpoint" }
+    )
+    for ($Index = 0; $Index -lt $Rows.Count; $Index++) {
+        $Form.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition -Property @{ Height = "Auto" }))
+        $Label = New-Object System.Windows.Controls.TextBlock
+        $Label.Text = [string]$Rows[$Index].Label
+        $Label.FontWeight = "SemiBold"
+        $Label.Foreground = Get-Brush "#3A3A3C"
+        $Label.Margin = [System.Windows.Thickness]::new(0, 10, 12, 12)
+        [System.Windows.Controls.Grid]::SetRow($Label, $Index)
+        [System.Windows.Controls.Grid]::SetColumn($Label, 0)
+        $Editor = New-Object System.Windows.Controls.TextBox
+        $Editor.ToolTip = [string]$Rows[$Index].Hint
+        $Editor.Margin = [System.Windows.Thickness]::new(0, 4, 0, 8)
+        $Editor.Padding = [System.Windows.Thickness]::new(10, 8, 10, 8)
+        $Editor.MaxLength = 720
+        [System.Windows.Controls.Grid]::SetRow($Editor, $Index)
+        [System.Windows.Controls.Grid]::SetColumn($Editor, 1)
+        [void]$Form.Children.Add($Label)
+        [void]$Form.Children.Add($Editor)
+        $Editors[[string]$Rows[$Index].Key] = $Editor
+    }
+    Set-SourceMappingProfileEditors $Editors $script:SourceMappingProfile
+    [void]$Layout.Children.Add($Form)
+
+    $Footer = New-Object System.Windows.Controls.Grid
+    $Footer.Margin = [System.Windows.Thickness]::new(0, 16, 0, 0)
+    $Footer.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = "Auto" }))
+    $Footer.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = "Auto" }))
+    $Footer.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = "*" }))
+    $Footer.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = "Auto" }))
+    $Footer.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition -Property @{ Width = "Auto" }))
+    [System.Windows.Controls.Grid]::SetRow($Footer, 2)
+
+    $LoadButton = New-Object System.Windows.Controls.Button
+    $LoadButton.Content = "Carica JSON..."
+    $LoadButton.Style = $Window.FindResource("SecondaryButton")
+    $LoadButton.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    [System.Windows.Controls.Grid]::SetColumn($LoadButton, 0)
+    $SaveButton = New-Object System.Windows.Controls.Button
+    $SaveButton.Content = "Salva JSON..."
+    $SaveButton.Style = $Window.FindResource("SecondaryButton")
+    [System.Windows.Controls.Grid]::SetColumn($SaveButton, 1)
+    $ResetButton = New-Object System.Windows.Controls.Button
+    $ResetButton.Content = "Usa automatico"
+    $ResetButton.Style = $Window.FindResource("SecondaryButton")
+    $ResetButton.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    [System.Windows.Controls.Grid]::SetColumn($ResetButton, 3)
+    $ApplyButton = New-Object System.Windows.Controls.Button
+    $ApplyButton.Content = "Applica profilo"
+    $ApplyButton.Style = $Window.FindResource("PrimaryButton")
+    $ApplyButton.IsDefault = $true
+    [System.Windows.Controls.Grid]::SetColumn($ApplyButton, 4)
+
+    $LoadButton.Add_Click({
+        $Picker = New-Object System.Windows.Forms.OpenFileDialog
+        $Picker.Title = "Carica profilo sorgente"
+        $Picker.Filter = "Profili JSON (*.json)|*.json"
+        $Picker.CheckFileExists = $true
+        try {
+            if ($Picker.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+            $Info = Get-Item -LiteralPath $Picker.FileName -ErrorAction Stop
+            if ($Info.Length -gt 16384) { throw "Il profilo supera il limite di 16 KiB." }
+            $Loaded = [IO.File]::ReadAllText($Picker.FileName) | ConvertFrom-Json
+            $Canonical = Test-SourceMappingProfile $Loaded
+            Set-SourceMappingProfileEditors $Editors $Canonical
+        } catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Profilo non valido", "OK", "Error") | Out-Null
+        } finally {
+            $Picker.Dispose()
+        }
+    })
+    $SaveButton.Add_Click({
+        try {
+            $Canonical = Test-SourceMappingProfile (Get-SourceMappingProfileFromEditors $Editors)
+            $Picker = New-Object System.Windows.Forms.SaveFileDialog
+            $Picker.Title = "Salva profilo sorgente"
+            $Picker.Filter = "Profili JSON (*.json)|*.json"
+            $Picker.DefaultExt = "json"
+            $Picker.AddExtension = $true
+            $Picker.OverwritePrompt = $true
+            $Picker.FileName = "profilo-sorgente.json"
+            try {
+                if ($Picker.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                    $Json = $Canonical | ConvertTo-Json -Depth 6
+                    [IO.File]::WriteAllText($Picker.FileName, $Json, (New-Object System.Text.UTF8Encoding($false)))
+                }
+            } finally {
+                $Picker.Dispose()
+            }
+        } catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Profilo non valido", "OK", "Error") | Out-Null
+        }
+    })
+    $ResetButton.Add_Click({
+        $Dialog.Tag = [pscustomobject]@{ Reset = $true; Profile = $null }
+        $Dialog.DialogResult = $true
+    })
+    $ApplyButton.Add_Click({
+        try {
+            $Canonical = Test-SourceMappingProfile (Get-SourceMappingProfileFromEditors $Editors)
+            $Dialog.Tag = [pscustomobject]@{ Reset = $false; Profile = $Canonical }
+            $Dialog.DialogResult = $true
+        } catch {
+            [System.Windows.MessageBox]::Show($_.Exception.Message, "Profilo non valido", "OK", "Error") | Out-Null
+        }
+    })
+    [void]$Footer.Children.Add($LoadButton)
+    [void]$Footer.Children.Add($SaveButton)
+    [void]$Footer.Children.Add($ResetButton)
+    [void]$Footer.Children.Add($ApplyButton)
+    [void]$Layout.Children.Add($Footer)
+    $Dialog.Content = $Layout
+
+    if ($BuildOnly) {
+        return [pscustomobject]@{
+            Window = $Dialog
+            Editors = $Editors
+            ApplyButton = $ApplyButton
+            ResetButton = $ResetButton
+        }
+    }
+    if ($Dialog.ShowDialog() -ne $true) { return $null }
+    return $Dialog.Tag
+}
+
+function Update-SourceMappingProfileState {
+    if ($null -eq $script:SourceMappingProfile) {
+        $SourceProfileButton.Content = "Profilo sorgente: Automatico"
+        $SourceProfileButton.ToolTip = "Usa gli alias integrati in italiano e inglese"
+    } else {
+        $ProfileName = [string]$script:SourceMappingProfile.name
+        if ($ProfileName.Length -gt 28) { $ProfileName = $ProfileName.Substring(0, 28) + [char]0x2026 }
+        $SourceProfileButton.Content = "Profilo sorgente: $ProfileName"
+        $SourceProfileButton.ToolTip = "Mapping esatto verificato; digest $([string]$script:SourceMappingProfile.digest)"
+    }
+}
+
+function Reset-ReviewForSourceMappingChange {
+    Set-ReviewPasswordsVisible $false
+    $script:ReviewResult = $null
+    $script:AllReviewRows = @()
+    $script:ReviewFilePasswords = @{}
+    $ReviewCandidatesGrid.ItemsSource = $null
+    $ReviewSummary.Text = "Profilo sorgente modificato: ripetere la revisione"
+    $ReviewMetricFiles.Text = [string][char]0x2014
+    $ReviewMetricCandidates.Text = [string][char]0x2014
+    $ReviewMetricReady.Text = [string][char]0x2014
+    $ReviewMetricIncomplete.Text = [string][char]0x2014
+    $ReviewWarningsPanel.Visibility = "Collapsed"
+    Reset-ImportWorkflow
+    $StepReviewNumber.Foreground = Get-Brush "#8E8E93"
+    $StepReviewText.Foreground = Get-Brush "#8E8E93"
+}
+
 function Invoke-SecureExcelReview([string[]]$Files, [hashtable]$Passwords) {
     $PasswordEntries = New-Object System.Collections.Generic.List[object]
     foreach ($RelativePath in @($Passwords.Keys | Sort-Object)) {
@@ -5010,6 +5259,7 @@ function Invoke-SecureExcelReview([string[]]$Files, [hashtable]$Passwords) {
     $Request = [pscustomobject]@{
         files = $Files
         file_passwords = $PasswordEntries.ToArray()
+        source_mapping_profile = $script:SourceMappingProfile
     }
     try {
         $Envelope = Invoke-SecureJsonProcess $PythonExecutable @($ReviewScript, "--secure-json", "--root", $script:InventoryFolder) $Request
@@ -5018,6 +5268,7 @@ function Invoke-SecureExcelReview([string[]]$Files, [hashtable]$Passwords) {
     } finally {
         foreach ($Entry in $PasswordEntries) { $Entry.password = $null }
         $Request.file_passwords = $null
+        $Request.source_mapping_profile = $null
         $PasswordEntries.Clear()
         $Request = $null
     }
@@ -5035,14 +5286,8 @@ function Invoke-SelectedReview {
     if ($Decision -ne [System.Windows.MessageBoxResult]::Yes) { return }
 
     Set-ReviewPasswordsVisible $false
-    $Arguments = New-Object System.Collections.Generic.List[string]
-    $Arguments.Add("--root")
-    $Arguments.Add($script:InventoryFolder)
-    $Arguments.Add("--json")
     $SelectedFiles = New-Object System.Collections.Generic.List[string]
     foreach ($SelectedItem in $FilesGrid.SelectedItems) {
-        $Arguments.Add("--file")
-        $Arguments.Add([string]$SelectedItem.RelativePath)
         $SelectedFiles.Add([string]$SelectedItem.RelativePath)
     }
 
@@ -5053,7 +5298,7 @@ function Invoke-SelectedReview {
     $script:ReviewFilePasswords = @{}
     $ExcelPasswords = @{}
     try {
-        $Result = Invoke-PythonJson $ReviewScript ($Arguments.ToArray())
+        $Result = Invoke-SecureExcelReview ($SelectedFiles.ToArray()) $ExcelPasswords
         $PromptAttempts = 0
         while (@($Result.protected_excel_issues).Count -gt 0) {
             $PromptAttempts++
@@ -5118,6 +5363,8 @@ function Invoke-SelectedReview {
                     Location = [string]$Candidate.location
                     SourceHash = [string]$Candidate.source_sha256
                     Confidence = [string]$Candidate.confidence
+                    SourceMappingDigest = [string]$Candidate.source_mapping_digest
+                    SourceMappingProfile = $Candidate.source_mapping_profile
                 }
                 Update-ReviewRowState $Row
                 $ReviewRows.Add($Row)
@@ -5128,7 +5375,12 @@ function Invoke-SelectedReview {
         Reset-ImportWorkflow
         $ReviewMetricFiles.Text = "$($Result.analyzed_files)/$($Result.selected_files)"
         Update-ReviewMetrics
-        $ReviewSummary.Text = "Revisione locale completata $(Get-Date -Format 'dd/MM/yyyy HH:mm')"
+        $MappingLabel = [string]$Result.source_mapping_profile_name
+        $MappingSuffix = if ([string]$Result.source_mapping_profile_digest) {
+            $MappingDigestPrefix = ([string]$Result.source_mapping_profile_digest).Substring(0, 8).ToUpperInvariant()
+            "; mapping $MappingLabel / $MappingDigestPrefix"
+        } else { "; rilevamento automatico" }
+        $ReviewSummary.Text = "Revisione locale completata $(Get-Date -Format 'dd/MM/yyyy HH:mm')$MappingSuffix"
         Set-ReviewFilters
         Apply-ReviewFilters
 
@@ -5396,6 +5648,18 @@ $ClientFilter.Add_SelectionChanged({ Apply-InventoryFilters })
 $FormatFilter.Add_SelectionChanged({ Apply-InventoryFilters })
 $SearchBox.Add_TextChanged({ Apply-InventoryFilters })
 $FilesGrid.Add_SelectionChanged({ Update-ReviewSelectionState })
+$SourceProfileButton.Add_Click({
+    $ProfileResult = Show-SourceMappingProfileDialog
+    if ($null -eq $ProfileResult) { return }
+    $PreviousDigest = if ($null -eq $script:SourceMappingProfile) { "" } else { [string]$script:SourceMappingProfile.digest }
+    $script:SourceMappingProfile = if ([bool]$ProfileResult.Reset) { $null } else { $ProfileResult.Profile }
+    $CurrentDigest = if ($null -eq $script:SourceMappingProfile) { "" } else { [string]$script:SourceMappingProfile.digest }
+    Update-SourceMappingProfileState
+    if ($PreviousDigest -cne $CurrentDigest) {
+        Reset-ReviewForSourceMappingChange
+        Add-Activity "Profilo sorgente modificato; revisione e piani precedenti sono stati invalidati."
+    }
+})
 $ReviewSelectionButton.Add_Click({ Invoke-SelectedReview })
 $ReviewBackButton.Add_Click({ Show-Page "Inventory"; Apply-InventoryFilters })
 $ReviewStatusFilter.Add_SelectionChanged({ Apply-ReviewFilters })
@@ -5562,6 +5826,7 @@ $Window.Add_Closing({
 
 Update-DestinationControlState
 Update-ImportSessionState
+Update-SourceMappingProfileState
 Add-Activity "Applicazione pronta. Nessun documento $([char]0x00E8) stato letto."
 Update-ConfigurationState
 
@@ -5598,7 +5863,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.26.0"
+        version = "0.27.0"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         width = $PreviewWidth
@@ -5632,7 +5897,7 @@ if ($SelfTest) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
     }
     if (
-        $Window.Title -notmatch "v0\.26\.0" -or
+        $Window.Title -notmatch "v0\.27\.0" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -5727,15 +5992,15 @@ for line in sys.stdin:
         }
     }
     $ReviewBackendTest = Invoke-PythonJson $ReviewScript @("--self-test")
-    if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported -or -not $ReviewBackendTest.unlimited_file_selection -or -not $ReviewBackendTest.unlimited_candidate_collection -or -not $ReviewBackendTest.single_pass_field_detection) {
+    if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported -or -not $ReviewBackendTest.unlimited_file_selection -or -not $ReviewBackendTest.unlimited_candidate_collection -or -not $ReviewBackendTest.single_pass_field_detection -or -not $ReviewBackendTest.source_mapping_profiles) {
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.source_mapping_profile_revalidation -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
@@ -5914,6 +6179,11 @@ for line in sys.stdin:
         throw "La richiesta protetta della password Excel non puo essere costruita nello stato previsto."
     }
     $ExcelPasswordDialogProbe.Window.Close()
+    $SourceProfileDialogProbe = Show-SourceMappingProfileDialog -BuildOnly
+    if ($null -eq $SourceProfileDialogProbe -or $SourceProfileDialogProbe.Editors.Count -ne 5 -or $null -eq $SourceProfileDialogProbe.ApplyButton -or $null -eq $SourceProfileDialogProbe.ResetButton) {
+        throw "La finestra dei profili sorgente non espone mapping, validazione e ripristino automatico."
+    }
+    $SourceProfileDialogProbe.Window.Close()
     $ReviewEditorRowProbe = [pscustomobject]@{
         CandidateId = "review-editor-probe"
         Client = "Cliente Alfa"
@@ -5937,6 +6207,8 @@ for line in sys.stdin:
         SourcePasswordRequired = $false
         SourceRelativePath = "Cliente Alfa/portale.txt"
         SourceHash = ("a" * 64)
+        SourceMappingDigest = ""
+        SourceMappingProfile = $null
     }
     $ReviewEditorProbe = Show-ReviewCandidateEditor $ReviewEditorRowProbe -BuildOnly
     if ($null -eq $ReviewEditorProbe -or $ReviewEditorProbe.Editors.Count -ne 5) {
@@ -5945,10 +6217,10 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.26.0"
+        version = "0.27.0"
         ui = "WPF"
         phases = 4
-        controls = 132
+        controls = 133
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -5965,6 +6237,7 @@ for line in sys.stdin:
         acl_journal_management_ui = "OK"
         review_password_toggle = "OK"
         review_candidate_editor = "OK"
+        source_mapping_profile_ui = "OK"
         protected_excel_password_prompt = "OK"
         persistent_import_session = "OK"
         reconciliation_progress_protocol = "OK"

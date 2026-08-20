@@ -10,6 +10,7 @@ Grazie per l'interesse nel progetto. Le modifiche devono preservare il principio
 - mantieni separate le fasi di inventario, revisione, dry-run e scrittura;
 - non indebolire i controlli fail-closed per aggirare un errore di compatibilità.
 - per modifiche ACL restrittive, conserva sempre il proprietario autenticato, riconcilia gli utenti effettivi `added`/`removed` della simulazione e aggiungi test per downgrade, revoca e recupero idempotente.
+- se cambi lo schema dei profili sorgente, mantieni i file privi di valori dei documenti, aggiorna forma canonica e digest e verifica la stessa mappatura durante revisione, rilettura e pianificazione.
 
 ## Ambiente di sviluppo
 

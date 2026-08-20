@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.26.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.27.0 is a development release: validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -15,6 +15,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 
 - inventario metadati di file TXT, CSV, JSON, XML, XLSX, DOCX e ODT;
 - revisione locale con password mascherate per impostazione predefinita, visualizzazione esplicita temporanea ed editor dei cinque campi importabili;
+- profili locali di mappatura sorgente per associare etichette non standard a titolo, username, password e URL/host, con validazione, digest e anteprima mascherata prima dell'importazione;
 - riconoscimento dei file `.xlsx` protetti da password, con richiesta interattiva e decifratura esclusivamente in memoria;
 - rilevamento automatico di indirizzi IPv4 e IPv6 per il campo URL/host quando manca un URL esplicito;
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
@@ -76,6 +77,8 @@ Al primo utilizzo:
 4. selezionare la cartella locale contenente i documenti da inventariare;
 5. completare revisione, mappatura delle destinazioni, eventuale configurazione dei permessi e dry-run prima di autorizzare la scrittura.
 
+Se i documenti usano intestazioni non riconosciute automaticamente, nella fase **Inventario** aprire **Profilo sorgente: Automatico** prima della revisione. Il profilo personalizzato associa una o più etichette a ciascun campo Passbolt; richiede sempre la password e almeno uno fra username e URL/host. **Carica JSON...** e **Salva JSON...** consentono di riusare soltanto la configurazione delle etichette: il file non contiene valori dei documenti o credenziali. Ogni modifica al profilo invalida la revisione e il piano già costruiti, così la griglia mascherata diventa l'anteprima obbligatoria della nuova mappatura.
+
 Il pulsante **Preflight e dry-run** prepara il piano senza modificare Passbolt e popola la scheda **Preflight**. La conferma resta disabilitata se almeno un controllo è bloccante. Durante la scrittura, la scheda **Attività lotto** mostra soltanto eventi già registrati nel journal locale; non visualizza password, passphrase o MFA. Prima di dichiarare il successo, l'app rilegge ogni risorsa creata e confronta metadati, contenuto decifrato in memoria, cartella e ACL con il piano. La scheda **Verifica finale** conserva soltanto gli esiti booleani e i titoli già presenti nella revisione locale.
 
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
@@ -125,7 +128,7 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 114 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, contratto WPF, otto anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 121 test Python, suite Node/OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, contratto dei 133 controlli WPF, otto anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -268,6 +271,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La versione 0.27.0 introduce profili di mappatura sorgente per esportazioni con intestazioni non standard. Il confronto è esatto dopo normalizzazione, il profilo è privo di valori sorgente e viene legato tramite SHA-256 a candidati, rilettura d'integrità e piano. La revisione mascherata resta l'anteprima obbligatoria; un mapping ambiguo non produce candidati importabili. Il comportamento automatico precedente rimane disponibile e conserva gli identificativi storici necessari ai recuperi già avviati.
 
 La versione 0.26.0 copre anche la perdita completa della risposta a livello di trasporto. Le creazioni di risorsa e cartella registrano un evento incerto durevole quando la richiesta termina con connessione interrotta, timeout o lettura incompleta; il recupero non usa uno stato HTTP fittizio e deve ancora dimostrare `not_applied` oppure `remote_success`. Il laboratorio interrompe deliberatamente la connessione prima e dopo il commit per risorse, cartelle e ACL su entrambi i profili, senza promuovere il risultato sintetico ad attestazione reale.
 

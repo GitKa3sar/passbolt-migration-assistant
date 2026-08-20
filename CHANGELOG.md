@@ -2,6 +2,31 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.27.0 - 2026-08-20
+
+### Added
+
+- aggiunto alla fase Inventario un editor per profili di mappatura sorgente, con associazioni esplicite di etichette a titolo, username, password e URL/host;
+- aggiunti caricamento e salvataggio locale dei profili JSON, validazione canonica schema 1, limiti bounded e anteprima immediata attraverso la revisione mascherata;
+- aggiunto il supporto CLI `--source-profile` e `--profile-check` per revisioni ripetibili e validazione senza aprire l'interfaccia.
+
+### Changed
+
+- le revisioni con profilo personalizzato usano soltanto corrispondenze esatte dopo normalizzazione e non applicano euristiche implicite o rilevamento IP;
+- digest e documento canonico del profilo accompagnano ogni candidato e vengono ricontrollati durante la rilettura del sorgente; il digest entra anche nel piano OpenPGP;
+- il cambio del profilo invalida revisione e piani precedenti, mentre il comportamento automatico e gli identificativi storici restano invariati quando non è selezionato alcun profilo;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.27.0`, 121 test Python e 133 controlli WPF.
+
+### Security
+
+- i profili contengono esclusivamente nomi di campo normalizzati: valori, password e contenuto dei documenti non vengono salvati nel JSON;
+- alias duplicati, sovrapposti fra campi, sconosciuti, fuori limite o incoerenti con il digest vengono rifiutati; colonne multiple per lo stesso campo producono un avviso fail-closed e nessun candidato;
+- la password viene ancora riestratta soltanto per l'handoff immediato in memoria e deve provenire dallo stesso profilo verificato usato durante la revisione.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; questa evoluzione interna non anticipa la distribuzione Windows.
+
 ## 0.26.0 - 2026-08-19
 
 ### Added

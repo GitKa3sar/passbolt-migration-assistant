@@ -54,6 +54,8 @@ from passbolt_review import (
     REVIEWABLE_EXTENSIONS,
     SECRET_KEYS,
     ReviewError,
+    SourceMappingProfile,
+    _candidate_fields,
     _find_field,
     _is_ole_compound_file,
     _make_candidate,
@@ -61,10 +63,11 @@ from passbolt_review import (
     _records_for_file,
     _safe_selected_path,
     _sha256,
+    normalize_source_mapping_profile,
 )
 
 
-APP_VERSION = "0.26.0"
+APP_VERSION = "0.27.0"
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 64 * 1024 * 1024
 MAX_BRIDGE_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -92,6 +95,8 @@ class SelectedCandidate:
     reviewed_uri: str
     password_overridden: bool
     source_password_required: bool
+    source_mapping_digest: str
+    source_mapping_profile: SourceMappingProfile | None
 
 
 def _candidate_request(value: object) -> SelectedCandidate:
@@ -112,6 +117,15 @@ def _candidate_request(value: object) -> SelectedCandidate:
     reviewed_uri = str(value.get("reviewed_uri", uri)).strip()
     password_overridden = value.get("password_overridden", False)
     source_password_required = value.get("source_password_required", False)
+    try:
+        source_mapping_profile = normalize_source_mapping_profile(
+            value.get("source_mapping_profile")
+        )
+    except ReviewError as exc:
+        raise ImportPreparationError(
+            "Il profilo di mappatura del candidato non è valido."
+        ) from exc
+    source_mapping_digest = str(value.get("source_mapping_digest", "")).strip().lower()
     if not candidate_id or len(candidate_id) > 200:
         raise ImportPreparationError("Un candidato non contiene un identificatore valido.")
     if not relative_path or len(relative_path) > 4096:
@@ -142,6 +156,15 @@ def _candidate_request(value: object) -> SelectedCandidate:
         raise ImportPreparationError("Lo stato della password modificata non è valido.")
     if not isinstance(source_password_required, bool):
         raise ImportPreparationError("Lo stato di protezione del file Excel non è valido.")
+    if source_mapping_profile is None:
+        if source_mapping_digest:
+            raise ImportPreparationError(
+                "Il candidato dichiara un mapping senza il relativo profilo."
+            )
+    elif source_mapping_digest != source_mapping_profile.digest:
+        raise ImportPreparationError(
+            "Il digest del mapping del candidato non corrisponde al profilo."
+        )
     return SelectedCandidate(
         candidate_id=candidate_id,
         source_relative_path=relative_path,
@@ -158,6 +181,8 @@ def _candidate_request(value: object) -> SelectedCandidate:
         reviewed_uri=reviewed_uri,
         password_overridden=password_overridden,
         source_password_required=source_password_required,
+        source_mapping_digest=source_mapping_digest,
+        source_mapping_profile=source_mapping_profile,
     )
 
 
@@ -246,6 +271,12 @@ def _extract_resources_impl(
     for supplied_path, wanted in by_path.items():
         wanted_by_id = {candidate.candidate_id: candidate for candidate in wanted}
         remaining_ids = set(wanted_by_id)
+        profile_digests = {candidate.source_mapping_digest for candidate in wanted}
+        if len(profile_digests) != 1:
+            raise ImportPreparationError(
+                "Uno stesso file sorgente non può usare profili di mappatura differenti."
+            )
+        source_mapping_profile = wanted[0].source_mapping_profile
         try:
             path, relative_path = _safe_selected_path(root_path, supplied_path)
             if path.stat().st_size > MAX_FILE_BYTES:
@@ -281,6 +312,7 @@ def _extract_resources_impl(
                 path,
                 extension,
                 file_password=file_passwords.get(relative_path),
+                source_mapping_profile=source_mapping_profile,
             )
             try:
                 for location, record in records:
@@ -291,6 +323,7 @@ def _extract_resources_impl(
                         client=client,
                         location=location,
                         source_password_required=source_password_required,
+                        source_mapping_profile=source_mapping_profile,
                     )
                     if candidate is None or candidate.candidate_id not in remaining_ids:
                         continue
@@ -303,6 +336,8 @@ def _extract_resources_impl(
                         or candidate.username != request.reviewed_username
                         or candidate.uri != request.reviewed_uri
                         or candidate.source_password_required != request.source_password_required
+                        or candidate.source_mapping_digest
+                        != request.source_mapping_digest
                     ):
                         raise ImportPreparationError(
                             "I metadati di un candidato non corrispondono più alla revisione."
@@ -317,9 +352,14 @@ def _extract_resources_impl(
                         if request.password_overridden:
                             secret = overrides[request.candidate_id]
                         else:
-                            secret_found, secret = _find_field(
-                                record, SECRET_KEYS, allow_prefix=True
-                            )
+                            if source_mapping_profile is None:
+                                secret_found, secret = _find_field(
+                                    record, SECRET_KEYS, allow_prefix=True
+                                )
+                            else:
+                                secret_found, secret = _candidate_fields(
+                                    record, source_mapping_profile
+                                )[2]
                             if not secret_found or not secret:
                                 raise ImportPreparationError(
                                     "La password di un candidato pronto non è più disponibile."
@@ -2210,6 +2250,7 @@ def main() -> int:
                     "recoverable_archive_protocol": True,
                     "explicit_reveal_supported": True,
                     "protected_excel_integrity_supported": True,
+                    "source_mapping_profile_revalidation": True,
                     "permission_editor_protocol": True,
                     "existing_acl_viewer_protocol": True,
                     "existing_acl_dry_run_protocol": True,

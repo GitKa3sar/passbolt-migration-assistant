@@ -6,9 +6,9 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.23.x | Sì |
-| 0.22.x | No |
-| < 0.22 | No |
+| 0.27.x | Sì |
+| 0.26.x | No |
+| < 0.26 | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultima versione pubblicata.
 
@@ -83,3 +83,5 @@ La versione 0.24.0 tratta conservativamente gli HTTP 5xx ricevuti dopo una richi
 La versione 0.25.0 estende questa proprietà alla creazione cartella seguita da risorse. Una cartella post-commit viene riutilizzata come destinazione soltanto dopo una classificazione autenticata `remote_success` che ne lega ID e destinazione al digest del recupero; il bridge non invia una seconda creazione e non accetta corrispondenze multiple. Se lo stato è `not_applied`, ripete una sola creazione e usa l'ID appena restituito. I fault e le prove restano confinati al laboratorio loopback effimero con soli dati sintetici.
 
 La versione 0.26.0 applica la stessa classificazione conservativa alle interruzioni di trasporto prive di risposta HTTP. Connessione fallita, timeout e lettura incompleta durante una creazione producono un evento durevole `unknown` con il solo codice enumerato, senza stato HTTP sintetico; la ripresa autenticata resta l'unico percorso che può dimostrare `not_applied` o `remote_success`. I nuovi fault chiudono deliberatamente il socket prima o dopo il commit soltanto nel simulatore loopback effimero e l'accettazione verifica che il ramo post-commit non ripeta risorse, cartelle o ACL.
+
+La versione 0.27.0 aggiunge profili di mappatura sorgente che contengono soltanto nomi di campo normalizzati. Il backend rifiuta proprietà sconosciute, limiti superati, alias duplicati o sovrapposti e digest incoerenti; la presenza di più colonne configurate per lo stesso campo non consente di scegliere implicitamente un valore. Profilo e digest accompagnano il candidato e vengono ricontrollati durante la rilettura, mentre il bridge lega il digest al piano. Password e altri valori dei documenti non vengono serializzati nel profilo e continuano a essere riestratti soltanto per l'handoff locale immediato.

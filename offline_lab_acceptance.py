@@ -23,7 +23,7 @@ from offline_lab_smoke import OfflineLabSmokeError, load_ready_file, read_lab_st
 from passbolt_integration_matrix import JsonLineBridge, MatrixError, locate_node
 
 
-APP_VERSION = "0.26.0"
+APP_VERSION = "0.27.0"
 STATEFUL_SCENARIOS = (
     "import_root_resource",
     "import_new_client_folder",

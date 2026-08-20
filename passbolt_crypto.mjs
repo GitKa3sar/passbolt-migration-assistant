@@ -25,7 +25,7 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.26.0';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.27.0';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -763,6 +763,7 @@ function safeCandidates(value) {
     const uri = String(item.uri ?? '').trim();
     const client = String(item.client ?? '').trim();
     const sourceSha256 = String(item.source_sha256 ?? '').trim().toLowerCase();
+    const sourceMappingDigest = String(item.source_mapping_digest ?? '').trim().toLowerCase();
     const sourceAtRoot = item.source_at_root;
     assert(candidateId && candidateId.length <= 200, 'INVALID_CANDIDATE', 'Un candidato non contiene un identificatore valido.');
     assert(!seen.has(candidateId), 'DUPLICATE_CANDIDATE_ID', 'Il piano contiene due volte lo stesso candidato.');
@@ -771,6 +772,7 @@ function safeCandidates(value) {
     assert(client && client.length <= 256, 'INVALID_CLIENT', 'Ogni candidato deve indicare un cliente valido.');
     assert(typeof sourceAtRoot === 'boolean', 'INVALID_CLIENT', 'Ogni candidato deve indicare se il documento si trova nella radice sorgente.');
     assert(!sourceSha256 || /^[0-9a-f]{64}$/.test(sourceSha256), 'INVALID_CANDIDATE', 'L’hash sorgente di un candidato non e valido.');
+    assert(!sourceMappingDigest || /^[0-9a-f]{64}$/.test(sourceMappingDigest), 'INVALID_CANDIDATE', 'Il digest del profilo sorgente non e valido.');
     assert(!/[\u0000-\u001f\u007f]/.test(title + username + uri + client), 'INVALID_CANDIDATE', 'Titolo, username, URL o cliente contengono caratteri di controllo non consentiti.');
     seen.add(candidateId);
     return {
@@ -781,6 +783,7 @@ function safeCandidates(value) {
       username,
       uri,
       ...(sourceSha256 ? { source_sha256: sourceSha256 } : {}),
+      ...(sourceMappingDigest ? { source_mapping_digest: sourceMappingDigest } : {}),
     };
   });
 }
@@ -5120,6 +5123,17 @@ async function selfTest() {
     uri: `https://example.test/${index}`,
   })));
   assert(unlimitedCandidateProbe.length === 64, 'SELF_TEST_FAILED', 'La selezione senza limite numerico non e disponibile.');
+  const sourceMappingDigest = 'a'.repeat(64);
+  const sourceMappingProbe = safeCandidates([{
+    candidate_id: 'source-mapping-candidate',
+    client: '(radice)',
+    source_at_root: true,
+    title: 'Profilo sorgente',
+    username: 'utente',
+    uri: 'https://mapping.example.invalid',
+    source_mapping_digest: sourceMappingDigest,
+  }]);
+  assert(sourceMappingProbe[0].source_mapping_digest === sourceMappingDigest, 'SELF_TEST_FAILED', 'Il digest del profilo sorgente non entra nel piano.');
   const indexedPlanningCandidates = Array.from({ length: 512 }, (_, index) => ({
     candidate_id: `indexed-candidate-${index}`,
     title: `Candidato indicizzato ${index}`,
@@ -5226,6 +5240,7 @@ async function selfTest() {
     official_minimal_totp_payload_contract: true,
     unlimited_candidate_selection: true,
     indexed_large_batch_planning: true,
+    source_mapping_digest_bound: true,
     passbolt_secret_schema: true,
     passbolt_string_secret_schema: true,
     duplicate_detection: true,
