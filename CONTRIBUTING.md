@@ -17,6 +17,8 @@ Grazie per l'interesse nel progetto. Le modifiche devono preservare il principio
 
 Sono richiesti Windows PowerShell 5.1, Python 3.11+, Node.js 18+ e pnpm 11.19.0.
 
+`PassboltApp.ps1` contiene testi Unicode destinati a Windows PowerShell 5.1 e deve restare codificato in UTF-8 con BOM; il quality gate verifica sia il marcatore sia la validità dell'UTF-8.
+
 ```powershell
 pnpm install --frozen-lockfile --ignore-scripts
 python -m pip install --requirement requirements-test.txt

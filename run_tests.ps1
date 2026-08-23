@@ -115,6 +115,32 @@ function Test-PowerShellSyntax {
     }
 }
 
+function Test-WindowsPowerShellSourceEncoding {
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+
+    Write-Host ""
+    Write-Host "== Codifica sorgenti Windows PowerShell ==" -ForegroundColor Cyan
+    $StrictUtf8 = New-Object System.Text.UTF8Encoding($true, $true)
+    foreach ($RelativePath in $Paths) {
+        $FullPath = Join-Path $ProjectRoot $RelativePath
+        $Bytes = [IO.File]::ReadAllBytes($FullPath)
+        if (
+            $Bytes.Length -lt 3 -or
+            $Bytes[0] -ne 0xEF -or
+            $Bytes[1] -ne 0xBB -or
+            $Bytes[2] -ne 0xBF
+        ) {
+            throw "$RelativePath deve essere UTF-8 con BOM per conservare i caratteri Unicode in Windows PowerShell 5.1."
+        }
+        try {
+            [void]$StrictUtf8.GetString($Bytes, 3, $Bytes.Length - 3)
+        } catch {
+            throw "$RelativePath non contiene UTF-8 valido: $($_.Exception.Message)"
+        }
+        Write-Host "OK  $RelativePath"
+    }
+}
+
 function Test-PngDimensions {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -190,6 +216,9 @@ try {
     $env:PYTHONDONTWRITEBYTECODE = "1"
     $env:PYTHONUTF8 = "1"
 
+    Test-WindowsPowerShellSourceEncoding @(
+        "PassboltApp.ps1"
+    )
     Test-PowerShellSyntax @(
         "PassboltApp.ps1",
         "run_passbolt_app.ps1",

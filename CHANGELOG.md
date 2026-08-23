@@ -7,7 +7,8 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 ### Fixed
 
 - corretta la verifica della firma della sfida GPGAuth quando l'orologio del server è avanti di pochi secondi rispetto a Windows, usando come riferimento alternativo soltanto l'header `Date` della medesima risposta HTTPS;
-- distinti gli errori temporali `AUTH_CHALLENGE_CLOCK_UNVERIFIED` e `AUTH_CHALLENGE_CLOCK_SKEW` dalla firma crittograficamente non valida e resa la diagnostica WPF esplicita sugli orologi di client e server.
+- distinti gli errori temporali `AUTH_CHALLENGE_CLOCK_UNVERIFIED` e `AUTH_CHALLENGE_CLOCK_SKEW` dalla firma crittograficamente non valida e resa la diagnostica WPF esplicita sugli orologi di client e server;
+- conservati correttamente i caratteri italiani nei messaggi WPF eseguiti da Windows PowerShell 5.1, mantenendo `PassboltApp.ps1` in UTF-8 con BOM e verificandone la codifica nel quality gate.
 
 ### Security
 

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$SelfTest,
     [string]$RenderPreviewPath = "",
     [ValidateSet("Configuration", "Inventory", "Review", "Import")]
