@@ -2,6 +2,157 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- ridefinito il perimetro della release 0.28.1 come Passbolt v4-only: interfaccia, protocollo locale e matrice usano esclusivamente formati v4 espliciti;
+- i profili v5 attivi e i server che espongono plugin, endpoint o resource type v5 vengono rifiutati fail-closed; i report v5 storici restano consultabili ma non costituiscono un pass della release;
+- il quality gate esegue l'accettazione stateful v4 e regressioni negative dedicate al rifiuto di formati e server v5.
+
+### Known limitations
+
+- il supporto Passbolt v5 è temporaneamente non disponibile per il difetto folder-history upstream tracciato in [passbolt_api #617](https://github.com/passbolt/passbolt_api/issues/617); la proposta [#618](https://github.com/passbolt/passbolt_api/pull/618) dovrà essere integrata e distribuita ufficialmente prima di una nuova decisione di supporto;
+- la precedente matrice v5 `14/16` non viene reinterpretata. Il nuovo candidato richiede una nuova attestazione reale Passbolt v4 `16/16` prima della distribuzione.
+
+## 0.28.1 - 2026-08-20
+
+### Fixed
+
+- corretta la verifica della firma della sfida GPGAuth quando l'orologio del server è avanti di pochi secondi rispetto a Windows, usando come riferimento alternativo soltanto l'header `Date` della medesima risposta HTTPS;
+- distinti gli errori temporali `AUTH_CHALLENGE_CLOCK_UNVERIFIED` e `AUTH_CHALLENGE_CLOCK_SKEW` dalla firma crittograficamente non valida e resa la diagnostica WPF esplicita sugli orologi di client e server;
+- conservati correttamente i caratteri italiani nei messaggi WPF eseguiti da Windows PowerShell 5.1, mantenendo `PassboltApp.ps1` in UTF-8 con BOM e verificandone la codifica nel quality gate.
+
+### Security
+
+- la verifica stretta resta il primo percorso e la tolleranza è limitata a 300 secondi; firma matematica, firmatario fissato, validità della chiave e policy hash non vengono disabilitati;
+- aggiunte regressioni per tolleranza bounded, scarto eccessivo, data HTTP malformata, sfida non firmata e firma prodotta da una chiave diversa.
+
+### Changed
+
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.28.1`; il gate finale su istanze Passbolt v4/v5 reali resta esterno e non viene attestato da questa correzione locale.
+
+## 0.28.0 - 2026-08-20
+
+### Added
+
+- aggiunti progetti locali di preparazione schema 1 per salvare e ripristinare origine HTTPS, cartella sorgente, profilo di mappatura, file selezionati e sole prove tecniche dei candidati pronti;
+- aggiunti **Apri progetto...** nella configurazione e **Salva progetto...** in inventario e revisione, con ripristino differito delle selezioni dopo inventario e rilettura esplicita;
+- aggiunto `passbolt_project.py`, con payload e busta a campi chiusi, forma canonica, limiti in byte, digest SHA-256 e CLI locale a JSON protetto.
+
+### Changed
+
+- i progetti `.pbproj` vengono cifrati con Windows DPAPI `CurrentUser` e scritti tramite file temporaneo sincronizzato e sostituzione atomica;
+- il ripristino chiude la sessione corrente, azzera fingerprint e stato remoto e richiede nuovamente verifica della connessione, inventario e revisione; i candidati vengono riselezionati soltanto se ID, hash sorgente e stato Pronto coincidono;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.28.0`, 129 test Python e 136 controlli WPF.
+
+### Security
+
+- fingerprint fidate, chiavi, passphrase, MFA, cookie, sessioni, password Excel, valori e correzioni delle credenziali, destinazioni Passbolt, ACL, dry-run, attestazioni e journal non vengono serializzati nel progetto;
+- busta e payload sono validati separatamente prima e dopo DPAPI; proprietà sconosciute o duplicate, Base64 e digest incoerenti, attraversamenti di percorso e prove tecniche non valide vengono rifiutati fail-closed;
+- i progetti sono protetti dal profilo dell'utente Windows corrente, non hanno portabilità garantita e non vengono trattati come backup o come prova della matrice reale.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; questa evoluzione locale non anticipa la distribuzione Windows.
+
+## 0.27.0 - 2026-08-20
+
+### Added
+
+- aggiunto alla fase Inventario un editor per profili di mappatura sorgente, con associazioni esplicite di etichette a titolo, username, password e URL/host;
+- aggiunti caricamento e salvataggio locale dei profili JSON, validazione canonica schema 1, limiti bounded e anteprima immediata attraverso la revisione mascherata;
+- aggiunto il supporto CLI `--source-profile` e `--profile-check` per revisioni ripetibili e validazione senza aprire l'interfaccia.
+
+### Changed
+
+- le revisioni con profilo personalizzato usano soltanto corrispondenze esatte dopo normalizzazione e non applicano euristiche implicite o rilevamento IP;
+- digest e documento canonico del profilo accompagnano ogni candidato e vengono ricontrollati durante la rilettura del sorgente; il digest entra anche nel piano OpenPGP;
+- il cambio del profilo invalida revisione e piani precedenti, mentre il comportamento automatico e gli identificativi storici restano invariati quando non è selezionato alcun profilo;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.27.0`, 121 test Python e 133 controlli WPF.
+
+### Security
+
+- i profili contengono esclusivamente nomi di campo normalizzati: valori, password e contenuto dei documenti non vengono salvati nel JSON;
+- alias duplicati, sovrapposti fra campi, sconosciuti, fuori limite o incoerenti con il digest vengono rifiutati; colonne multiple per lo stesso campo producono un avviso fail-closed e nessun candidato;
+- la password viene ancora riestratta soltanto per l'handoff immediato in memoria e deve provenire dallo stesso profilo verificato usato durante la revisione.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; questa evoluzione interna non anticipa la distribuzione Windows.
+
+## 0.26.0 - 2026-08-19
+
+### Added
+
+- aggiunti sei fault monouso di disconnessione pre/post-commit per creazione risorsa, creazione cartella e applicazione ACL;
+- estesa l'accettazione stateful v4/v5 con entrambi i rami di recupero anche quando la richiesta termina senza alcuno stato HTTP;
+- aggiunte regressioni mirate affinché le eccezioni di trasporto durante le creazioni producano un evento durevole `operation_failed` con esito `unknown`.
+
+### Changed
+
+- una creazione interrotta a livello di trasporto viene restituita come lotto parzialmente applicato e richiede la stessa rilettura autenticata già prevista per gli HTTP 5xx;
+- i diciotto scenari stateful esercitano ora ventiquattro percorsi di fault complessivi: dodici per profilo, equamente distribuiti fra risposta HTTP 500 e disconnessione;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.26.0`.
+
+### Security
+
+- la diagnostica delle disconnessioni conserva soltanto un codice enumerato e non inventa uno stato HTTP assente;
+- i fault post-commit devono chiudersi come `remote_success` senza una seconda mutazione, mentre quelli pre-commit richiedono `not_applied` prima di una sola ripetizione;
+- tutte le interruzioni di trasporto restano confinate al listener loopback effimero e usano esclusivamente dati, identità e chiavi sintetici.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; la distribuzione Windows seguirà soltanto dopo le relative attestazioni.
+
+## 0.25.0 - 2026-08-19
+
+### Added
+
+- aggiunto il fault monouso `next-folder-create-after-commit-500`, che persiste la nuova cartella nel simulatore e sostituisce soltanto la risposta finale con HTTP 500;
+- estesa l'accettazione stateful con i rami `not_applied` e `remote_success` della creazione cartella su entrambi i profili v4/v5;
+- aggiunte regressioni mirate per gli HTTP 4xx/5xx della creazione cartella e per il riuso della destinazione riconciliata.
+
+### Changed
+
+- il recupero reinserisce nella mappa delle destinazioni una cartella creata remotamente ma priva di risposta conclusiva, così le risorse successive vengono create nella cartella verificata senza crearne una seconda;
+- i diciotto scenari stateful esercitano ora dodici percorsi di fault complessivi: sei per profilo, distribuiti fra creazione risorsa, creazione cartella e applicazione ACL;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.25.0`.
+
+### Security
+
+- una cartella classificata `remote_success` viene riutilizzata soltanto se la rilettura autenticata ne dimostra in modo univoco destinazione e identità tecnica;
+- il ramo `not_applied` ripete una sola creazione, mentre il ramo post-commit completa la risorsa senza una seconda `POST /folders.json`;
+- fault, documenti, identità e credenziali restano esclusivamente sintetici e confinati al listener loopback effimero.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; la distribuzione Windows non viene anticipata dagli esiti offline.
+
+## 0.24.0 - 2026-08-19
+
+### Added
+
+- aggiunti i fault monouso `next-resource-create-after-commit-500` e `next-share-after-commit-500`, che applicano la mutazione nel simulatore e sostituiscono soltanto la risposta finale con HTTP 500;
+- estesa l'accettazione stateful affinché i recuperi di import e ACL esercitino, su entrambi i profili v4/v5, sia `not_applied` con una sola riscrittura sia `remote_success` con chiusura senza seconda mutazione;
+- aggiunti al riepilogo del quality gate otto percorsi di fault di recupero, mantenendo separato il conteggio dei diciotto scenari operativi della matrice.
+
+### Changed
+
+- gli errori HTTP 5xx durante la creazione di cartelle o risorse vengono registrati con esito `unknown`, perché la risposta del server non dimostra che la mutazione non sia stata applicata;
+- gli errori HTTP 4xx restano `confirmed` e sono coperti da una regressione dedicata, mentre risorse già presenti e ACL già coincidenti vengono riconciliate tramite la rilettura autenticata esistente;
+- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.24.0`.
+
+### Security
+
+- un HTTP 5xx non autorizza più automaticamente la ripetizione di una creazione: il recupero deve prima dimostrare lo stato remoto e blocca conflitti o duplicati ambigui;
+- i nuovi fault post-commit restano confinati al listener loopback e il test verifica che `remote_success` completi il journal con zero riscritture;
+- payload di avanzamento e report continuano a escludere credenziali, chiavi, contenuti cifrati e metadati delle risorse.
+
+### Roadmap
+
+- resta esterno il gate della matrice completa su istanze Passbolt v4/v5 reali; dopo le relative attestazioni seguiranno pacchetto Windows riproducibile, firma/verifica degli artefatti e guida di aggiornamento.
+
 ## 0.23.0 - 2026-08-14
 
 ### Added

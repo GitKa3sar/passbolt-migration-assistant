@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the existing read-only v4/v5 integration matrix against the offline lab."""
+"""Run the read-only v4 integration matrix against the offline lab."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from passbolt_integration_matrix import (
 )
 
 
-APP_VERSION = "0.23.0"
+APP_VERSION = "0.28.1"
 MAX_READY_BYTES = 128 * 1024
 LOCAL_URL_PATTERN = re.compile(r"^https://localhost:[1-9][0-9]{0,4}$")
 
@@ -63,8 +63,8 @@ def load_ready_file(path: str | Path) -> dict[str, Any]:
         raise OfflineLabSmokeError("Il file ready ha una struttura inattesa.")
     if document.get("schema_version") != 1 or document.get("contains_real_credentials") is not False:
         raise OfflineLabSmokeError("Il laboratorio non dichiara un'identita' sintetica valida.")
-    if document.get("profile") not in {"v4", "v5"}:
-        raise OfflineLabSmokeError("Il profilo del laboratorio non e' supportato.")
+    if document.get("profile") != "v4":
+        raise OfflineLabSmokeError("Questa release accetta soltanto il profilo laboratorio v4.")
     if document.get("fault") != "none":
         raise OfflineLabSmokeError("Lo smoke test richiede un laboratorio senza fault injection.")
     if not LOCAL_URL_PATTERN.fullmatch(str(document.get("base_url", ""))):

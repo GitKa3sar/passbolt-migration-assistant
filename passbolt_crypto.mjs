@@ -25,7 +25,9 @@ const MAX_ACL_OBJECTS = 2_000;
 const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.23.0';
+const MAX_GPG_AUTH_CLOCK_SKEW_SECONDS = 300;
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.28.1';
+const RELEASE_COMPATIBILITY_PROFILE = 'passbolt-v4-only';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -376,28 +378,102 @@ async function verifyServerOwnership(session, serverPublicKey, userFingerprint) 
   assert(returned === token, 'SERVER_OWNERSHIP_MISMATCH', 'La prova GPGAuth del server non corrisponde. Login interrotto.');
 }
 
-async function decryptServerChallenge(armoredChallenge, privateKey, serverPublicKey) {
+function isFutureSignatureError(error) {
+  let current = error;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if (String(current.message ?? current).includes('Signature creation time is in the future')) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+function boundedGpgAuthServerDate(value, localDate) {
+  const header = String(value ?? '').trim();
+  if (!/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(header)) {
+    return null;
+  }
+  const timestamp = Date.parse(header);
+  if (!Number.isFinite(timestamp)) return null;
+  const serverDate = new Date(timestamp);
+  if (serverDate.toUTCString() !== header) return null;
+  const skewSeconds = Math.round((timestamp - localDate.getTime()) / 1000);
+  return { date: serverDate, skewSeconds };
+}
+
+async function verifyServerChallengeAtDate(armoredChallenge, privateKey, serverPublicKey, date = undefined) {
+  const decrypted = await openpgp.decrypt({
+    message: await openpgp.readMessage({ armoredMessage: armoredChallenge }),
+    decryptionKeys: privateKey,
+    verificationKeys: serverPublicKey,
+    format: 'utf8',
+    ...(date === undefined ? {} : { date }),
+  });
+  assert(Array.isArray(decrypted.signatures) && decrypted.signatures.length > 0, 'AUTH_CHALLENGE_UNSIGNED', 'La sfida GPGAuth non contiene una firma del server.');
+  await Promise.all(decrypted.signatures.map((signature) => signature.verified));
+  return decrypted;
+}
+
+async function decryptServerChallenge(armoredChallenge, privateKey, serverPublicKey, serverDateHeader = '', localDate = new Date()) {
   let message;
   try {
     message = await openpgp.readMessage({ armoredMessage: armoredChallenge });
   } catch {
     throw new SafeError('AUTH_CHALLENGE_INVALID', 'La sfida GPGAuth ricevuta non e un messaggio OpenPGP valido.');
   }
-  let decrypted;
+  // Classify private-key/decryption failures separately before evaluating the
+  // server signature. The cleartext is never returned unless verification
+  // below succeeds.
   try {
-    decrypted = await openpgp.decrypt({
+    await openpgp.decrypt({
       message,
       decryptionKeys: privateKey,
-      verificationKeys: serverPublicKey,
       format: 'utf8',
     });
   } catch {
-    throw new SafeError('AUTH_CHALLENGE_DECRYPT_FAILED', 'Impossibile decifrare o verificare la sfida GPGAuth.');
+    throw new SafeError('AUTH_CHALLENGE_DECRYPT_FAILED', 'Impossibile decifrare la sfida GPGAuth con la chiave utente.');
   }
-  assert(Array.isArray(decrypted.signatures) && decrypted.signatures.length > 0, 'AUTH_CHALLENGE_UNSIGNED', 'La sfida GPGAuth non contiene una firma del server.');
+
+  let decrypted;
+  let strictError;
   try {
-    await Promise.all(decrypted.signatures.map((signature) => signature.verified));
-  } catch {
+    decrypted = await verifyServerChallengeAtDate(armoredChallenge, privateKey, serverPublicKey);
+  } catch (error) {
+    if (error instanceof SafeError) throw error;
+    strictError = error;
+  }
+
+  if (!decrypted) {
+    if (!isFutureSignatureError(strictError)) {
+      throw new SafeError('AUTH_CHALLENGE_BAD_SIGNATURE', 'La firma della sfida GPGAuth non e valida.');
+    }
+
+    // GnuPG signs with the server clock, while OpenPGP.js verifies against the
+    // client clock. Retry only against the IMF-fixdate of this same HTTPS
+    // response and only inside a small bounded skew. Signature mathematics,
+    // signer identity, key validity and hash-policy checks remain enabled.
+    const serverTime = boundedGpgAuthServerDate(serverDateHeader, localDate);
+    if (!serverTime) {
+      throw new SafeError(
+        'AUTH_CHALLENGE_CLOCK_UNVERIFIED',
+        'La firma GPGAuth usa un orario futuro e Passbolt non ha fornito un riferimento temporale HTTP valido.',
+      );
+    }
+    if (Math.abs(serverTime.skewSeconds) > MAX_GPG_AUTH_CLOCK_SKEW_SECONDS) {
+      throw new SafeError(
+        'AUTH_CHALLENGE_CLOCK_SKEW',
+        'Gli orologi del PC e del server Passbolt sono troppo distanti per verificare in sicurezza la sfida GPGAuth.',
+        { clock_skew_seconds: serverTime.skewSeconds },
+      );
+    }
+    try {
+      decrypted = await verifyServerChallengeAtDate(armoredChallenge, privateKey, serverPublicKey, serverTime.date);
+    } catch (error) {
+      if (error instanceof SafeError) throw error;
+      throw new SafeError('AUTH_CHALLENGE_BAD_SIGNATURE', 'La firma della sfida GPGAuth non e valida.');
+    }
+  }
+
+  if (!decrypted) {
     throw new SafeError('AUTH_CHALLENGE_BAD_SIGNATURE', 'La firma della sfida GPGAuth non e valida.');
   }
   const token = String(decrypted.data ?? '').trim();
@@ -521,7 +597,12 @@ async function authenticate(session, keyMaterial, expectedFingerprint, mfaTotp =
     assert(challengeHeader, 'AUTH_CHALLENGE_MISSING', apiMessage(stageOne.document, 'Passbolt non ha restituito la sfida GPGAuth per questo utente.'));
     authPhase = 'challenge_decryption';
     const challenge = decodeHeaderValue(challengeHeader);
-    const token = await decryptServerChallenge(challenge, keyMaterial.privateKey, serverPublicKey);
+    const token = await decryptServerChallenge(
+      challenge,
+      keyMaterial.privateKey,
+      serverPublicKey,
+      stageOne.headers.get('date'),
+    );
 
     authPhase = 'challenge_response';
     const stageTwoData = {
@@ -747,6 +828,49 @@ function settingsValue(settings, path, fallback = undefined) {
   return current;
 }
 
+function requireV4OnlyFormats(resourceFormatValue, folderFormatValue, { allowNoFolder = false } = {}) {
+  const resourceFormat = String(resourceFormatValue ?? '').trim().toLowerCase();
+  const folderFormat = String(folderFormatValue ?? '').trim().toLowerCase();
+  const allowedFolderFormats = allowNoFolder ? new Set(['v4', 'none']) : new Set(['v4']);
+  assert(
+    resourceFormat === 'v4' && allowedFolderFormats.has(folderFormat),
+    'PASSBOLT_V5_DISABLED',
+    'Questa release supporta esclusivamente server e formati Passbolt v4; i formati automatici o v5 sono disabilitati in modo fail-closed.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+}
+
+async function assertV4OnlyServer(session) {
+  const [settingsResponse, metadataResponse, resourceTypesResponse] = await Promise.all([
+    session.request('/settings.json?api-version=v2', { allowError: true }),
+    session.request('/metadata/types/settings.json?api-version=v2', { allowError: true }),
+    session.request('/resource-types.json?api-version=v2', { allowError: true }),
+  ]);
+  assert(
+    settingsResponse.status >= 200 && settingsResponse.status < 300
+      && resourceTypesResponse.status >= 200 && resourceTypesResponse.status < 300,
+    'SERVER_COMPATIBILITY_CHECK_FAILED',
+    'Impossibile attestare che il server appartenga al profilo Passbolt v4 supportato da questa release.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+  const settings = apiBody(settingsResponse.document) ?? {};
+  const metadataEnabled = Boolean(settingsValue(settings, ['passbolt', 'plugins', 'metadata', 'enabled'], false));
+  const metadataRouteAvailable = metadataResponse.status >= 200 && metadataResponse.status < 300;
+  const v5ResourceTypeAdvertised = simplifyResourceTypes(resourceTypesResponse.document)
+    .some((resourceType) => resourceType.slug.startsWith('v5-'));
+  assert(
+    !metadataEnabled && !metadataRouteAvailable && !v5ResourceTypeAdvertised,
+    'PASSBOLT_V5_SERVER_DISABLED',
+    'Questa release e limitata a Passbolt v4 e rifiuta i server che espongono capability v5.',
+    {
+      compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+      metadata_plugin_enabled: metadataEnabled,
+      metadata_route_available: metadataRouteAvailable,
+      v5_resource_type_advertised: v5ResourceTypeAdvertised,
+    },
+  );
+}
+
 function normalizeComparable(value) {
   return String(value ?? '').trim().toLocaleLowerCase('it-IT');
 }
@@ -763,6 +887,7 @@ function safeCandidates(value) {
     const uri = String(item.uri ?? '').trim();
     const client = String(item.client ?? '').trim();
     const sourceSha256 = String(item.source_sha256 ?? '').trim().toLowerCase();
+    const sourceMappingDigest = String(item.source_mapping_digest ?? '').trim().toLowerCase();
     const sourceAtRoot = item.source_at_root;
     assert(candidateId && candidateId.length <= 200, 'INVALID_CANDIDATE', 'Un candidato non contiene un identificatore valido.');
     assert(!seen.has(candidateId), 'DUPLICATE_CANDIDATE_ID', 'Il piano contiene due volte lo stesso candidato.');
@@ -771,6 +896,7 @@ function safeCandidates(value) {
     assert(client && client.length <= 256, 'INVALID_CLIENT', 'Ogni candidato deve indicare un cliente valido.');
     assert(typeof sourceAtRoot === 'boolean', 'INVALID_CLIENT', 'Ogni candidato deve indicare se il documento si trova nella radice sorgente.');
     assert(!sourceSha256 || /^[0-9a-f]{64}$/.test(sourceSha256), 'INVALID_CANDIDATE', 'L’hash sorgente di un candidato non e valido.');
+    assert(!sourceMappingDigest || /^[0-9a-f]{64}$/.test(sourceMappingDigest), 'INVALID_CANDIDATE', 'Il digest del profilo sorgente non e valido.');
     assert(!/[\u0000-\u001f\u007f]/.test(title + username + uri + client), 'INVALID_CANDIDATE', 'Titolo, username, URL o cliente contengono caratteri di controllo non consentiti.');
     seen.add(candidateId);
     return {
@@ -781,6 +907,7 @@ function safeCandidates(value) {
       username,
       uri,
       ...(sourceSha256 ? { source_sha256: sourceSha256 } : {}),
+      ...(sourceMappingDigest ? { source_mapping_digest: sourceMappingDigest } : {}),
     };
   });
 }
@@ -2330,6 +2457,15 @@ function confirmedFailure(operation) {
     && operation.recorded_outcome?.outcome === 'confirmed';
 }
 
+function writeFailureOutcome(status) {
+  const normalizedStatus = Number(status);
+  return Number.isInteger(normalizedStatus)
+    && normalizedStatus >= 400
+    && normalizedStatus < 500
+    ? 'confirmed'
+    : 'unknown';
+}
+
 function recoveryConflict(operation, code) {
   return {
     operation_id: operation.operation_id,
@@ -2561,6 +2697,18 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     (folder.action === 'create' && folderRetryKeys.has(folder.destination_key))
     || (folder.action === 'repair_share' && (folderRetryKeys.has(folder.destination_key) || repairFolderDestinationHashSet.has(technicalDigest(folder.destination_key))))
   ));
+  const remotelyCreatedFolderHashes = new Set(
+    classifications
+      .filter((item) => item.resolution === 'remote_success'
+        && operationsById.get(item.operation_id)?.action === 'create_folder')
+      .map((item) => item.destination_key_hash),
+  );
+  const recoveredFolders = runtime.destinationFolders.filter((folder) => (
+    folder.action === 'reuse'
+    && remotelyCreatedFolderHashes.has(technicalDigest(folder.destination_key))
+    && folderRetryKeys.has(folder.destination_key)
+  ));
+  const recoveryFolders = [...retryFolders, ...recoveredFolders];
   const verificationDigest = digestPlan(classifications.map(({ recovery_id: ignored, ...item }) => item));
   const recoveryPlanDigest = digestPlan({
     batch_id: recovery.batch_id,
@@ -2569,6 +2717,7 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     create_candidate_ids: createCandidateIds,
     repair_resource_candidate_ids: repairResourceCandidateIds,
     retry_folder_hashes: retryFolders.map((folder) => technicalDigest(folder.destination_key)).sort(),
+    recovered_folder_hashes: recoveredFolders.map((folder) => technicalDigest(folder.destination_key)).sort(),
   });
   return {
     recovery,
@@ -2580,6 +2729,7 @@ function classifyRecovery(recoveryValue, candidates, capabilities, runtime, curr
     repairResourceCandidateIds,
     resourceCandidateIds,
     retryFolders,
+    recoveryFolders,
     retryActionCount: createCandidateIds.length + repairResourceCandidateIds.length + retryFolders.length,
   };
 }
@@ -3095,6 +3245,7 @@ async function inspectKey(input) {
 }
 
 async function readiness(input) {
+  requireV4OnlyFormats(input.resource_format, input.folder_format);
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
   const candidates = safeCandidates(input.candidates);
@@ -3102,6 +3253,7 @@ async function readiness(input) {
   const session = new PassboltSession(baseUrl);
   try {
     const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
+    await assertV4OnlyServer(session);
     const capabilities = await readCapabilities(
       session,
       user,
@@ -3711,17 +3863,44 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       destination_key_hash: technicalDigest(folder.destination_key),
       ...(folder.shared ? { permission_mask_hash: permissionMaskDigest(folder.share_permissions) } : {}),
     });
-    const response = await session.request('/folders.json?api-version=v2&contain[permission]=1', {
-      method: 'POST',
-      body: payload,
-      allowError: true,
-    });
+    let response;
+    try {
+      response = await session.request('/folders.json?api-version=v2&contain[permission]=1', {
+        method: 'POST',
+        body: payload,
+        allowError: true,
+      });
+    } catch (error) {
+      const causeCode = error instanceof SafeError ? error.code : 'INTERNAL_ERROR';
+      const httpStatus = error instanceof SafeError && Number.isInteger(error.details?.http_status)
+        ? error.details.http_status
+        : null;
+      await progress('operation_failed', {
+        operation_id: createFolderOperationId,
+        object_type: 'folder',
+        error_code: causeCode,
+        outcome: 'unknown',
+        ...(httpStatus === null ? {} : { http_status: httpStatus }),
+      });
+      throw new SafeError(
+        'IMPORT_PARTIAL_FAILURE',
+        `La creazione della cartella ${folder.name} non ha restituito un esito verificabile. Lo stato remoto deve essere controllato prima di ripetere la scrittura.`,
+        {
+          created_folders: createdFolders,
+          reconciled_folders: reconciledFolders,
+          created,
+          failed_folder_name: folder.name,
+          cause_code: causeCode,
+          ...(httpStatus === null ? {} : { http_status: httpStatus }),
+        },
+      );
+    }
     if (response.status < 200 || response.status >= 300) {
       await progress('operation_failed', {
         operation_id: createFolderOperationId,
         object_type: 'folder',
         error_code: 'FOLDER_CREATE_FAILED',
-        outcome: 'confirmed',
+        outcome: writeFailureOutcome(response.status),
         http_status: response.status,
       });
       throw new SafeError(
@@ -3834,18 +4013,46 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       destination_key_hash: technicalDigest(planned.destination_key),
       ...(planned.shared ? { permission_mask_hash: permissionMaskDigest(planned.share_permissions) } : {}),
     });
-    const response = await session.request('/resources.json?api-version=v2&contain[permission]=1', {
-      method: 'POST',
-      body: payload,
-      allowError: true,
-    });
+    let response;
+    try {
+      response = await session.request('/resources.json?api-version=v2&contain[permission]=1', {
+        method: 'POST',
+        body: payload,
+        allowError: true,
+      });
+    } catch (error) {
+      const causeCode = error instanceof SafeError ? error.code : 'INTERNAL_ERROR';
+      const httpStatus = error instanceof SafeError && Number.isInteger(error.details?.http_status)
+        ? error.details.http_status
+        : null;
+      await progress('operation_failed', {
+        operation_id: createResourceOperationId,
+        object_type: 'resource',
+        candidate_id: resource.candidate_id,
+        error_code: causeCode,
+        outcome: 'unknown',
+        ...(httpStatus === null ? {} : { http_status: httpStatus }),
+      });
+      throw new SafeError(
+        'IMPORT_PARTIAL_FAILURE',
+        `La creazione di ${resource.title} non ha restituito un esito verificabile. Lo stato remoto deve essere controllato prima di ripetere la scrittura.`,
+        {
+          created_folders: createdFolders,
+          reconciled_folders: reconciledFolders,
+          created,
+          failed_candidate_id: resource.candidate_id,
+          cause_code: causeCode,
+          ...(httpStatus === null ? {} : { http_status: httpStatus }),
+        },
+      );
+    }
     if (response.status < 200 || response.status >= 300) {
       await progress('operation_failed', {
         operation_id: createResourceOperationId,
         object_type: 'resource',
         candidate_id: resource.candidate_id,
         error_code: 'RESOURCE_CREATE_FAILED',
-        outcome: 'confirmed',
+        outcome: writeFailureOutcome(response.status),
         http_status: response.status,
       });
       throw new SafeError(
@@ -4131,6 +4338,7 @@ async function verifyCreatedResources(
 }
 
 async function executeImport(input) {
+  requireV4OnlyFormats(input.resource_format, input.folder_format);
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
   const candidates = safeCandidates(input.candidates);
@@ -4138,6 +4346,7 @@ async function executeImport(input) {
   const session = new PassboltSession(baseUrl);
   try {
     const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
+    await assertV4OnlyServer(session);
     const analysis = await analyzeCapabilities(
       session,
       user,
@@ -4244,6 +4453,7 @@ class PersistentImportSession {
     const session = new PassboltSession(baseUrl);
     try {
       const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
+      await assertV4OnlyServer(session);
       const sessionId = randomUUID();
       this.state = {
         sessionId,
@@ -4263,6 +4473,7 @@ class PersistentImportSession {
         server_fingerprint: expectedFingerprint,
         user_key_fingerprint: key.fingerprint,
         user: safeUser(user),
+        compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
         secrets_serialized: false,
       };
     } catch (error) {
@@ -4281,6 +4492,7 @@ class PersistentImportSession {
   }
 
   async readiness(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format);
     const state = this.requireState(input);
     await verifyPersistentSession(state.session, String(state.user.id));
     const candidates = safeCandidates(input.candidates);
@@ -4684,6 +4896,7 @@ class PersistentImportSession {
   }
 
   async recoveryReadiness(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
     assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il lotto locale da recuperare non e valido.');
@@ -4757,6 +4970,7 @@ class PersistentImportSession {
   }
 
   async recoveryImport(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
     const state = this.requireState(input);
     const saved = state.recoveryReadiness;
     assert(saved, 'RECOVERY_READINESS_REQUIRED', 'Eseguire prima la verifica autenticata del lotto.');
@@ -4802,7 +5016,7 @@ class PersistentImportSession {
     const progress = async (eventType, payload) => this.emitProgress(reconciliationBatchId, eventType, payload);
     try {
       const createPlan = capabilities.candidates.filter((candidate) => createCandidateIdSet.has(candidate.candidate_id));
-      const recoveryRuntime = { ...runtime, folders: plan.retryFolders };
+      const recoveryRuntime = { ...runtime, folders: plan.recoveryFolders };
       const { created, createdFolders, reconciledFolders } = await createPlannedContent(
         state.session,
         createPlan,
@@ -4890,6 +5104,7 @@ class PersistentImportSession {
   }
 
   async import(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format);
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
     assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il registro locale di riconciliazione non e stato inizializzato.');
@@ -5030,6 +5245,13 @@ class PersistentImportSession {
 }
 
 async function selfTest() {
+  let v5FormatRejected = false;
+  try {
+    requireV4OnlyFormats('v5', 'v5');
+  } catch (error) {
+    v5FormatRejected = error instanceof SafeError && error.code === 'PASSBOLT_V5_DISABLED';
+  }
+  assert(v5FormatRejected, 'SELF_TEST_FAILED', 'Il profilo v4-only non rifiuta i formati v5.');
   const bomInputProbe = JSON.parse(stripUtf8Bom('\ufeff{"ok":true}'));
   assert(bomInputProbe.ok === true, 'SELF_TEST_FAILED', 'La normalizzazione del BOM UTF-8 non e disponibile.');
   const passphrase = `self-test-${randomUUID()}`;
@@ -5042,6 +5264,17 @@ async function selfTest() {
     uri: `https://example.test/${index}`,
   })));
   assert(unlimitedCandidateProbe.length === 64, 'SELF_TEST_FAILED', 'La selezione senza limite numerico non e disponibile.');
+  const sourceMappingDigest = 'a'.repeat(64);
+  const sourceMappingProbe = safeCandidates([{
+    candidate_id: 'source-mapping-candidate',
+    client: '(radice)',
+    source_at_root: true,
+    title: 'Profilo sorgente',
+    username: 'utente',
+    uri: 'https://mapping.example.invalid',
+    source_mapping_digest: sourceMappingDigest,
+  }]);
+  assert(sourceMappingProbe[0].source_mapping_digest === sourceMappingDigest, 'SELF_TEST_FAILED', 'Il digest del profilo sorgente non entra nel piano.');
   const indexedPlanningCandidates = Array.from({ length: 512 }, (_, index) => ({
     candidate_id: `indexed-candidate-${index}`,
     title: `Candidato indicizzato ${index}`,
@@ -5087,6 +5320,24 @@ async function selfTest() {
   });
   await Promise.all(decrypted.signatures.map((signature) => signature.verified));
   assert(decrypted.data === marker, 'SELF_TEST_FAILED', 'Il test OpenPGP locale non e riuscito.');
+  const authClockLocalDate = new Date();
+  const authClockServerDate = new Date((Math.floor(authClockLocalDate.getTime() / 1000) * 1000) + 30_000);
+  const authClockToken = 'gpgauthv1.3.0|36|22222222-2222-4222-8222-222222222222|gpgauthv1.3.0';
+  const authClockChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authClockToken }),
+    encryptionKeys: publicKey,
+    signingKeys: privateKey,
+    date: authClockServerDate,
+    format: 'armored',
+  });
+  const verifiedAuthClockToken = await decryptServerChallenge(
+    authClockChallenge,
+    privateKey,
+    publicKey,
+    authClockServerDate.toUTCString(),
+    authClockLocalDate,
+  );
+  assert(verifiedAuthClockToken === authClockToken, 'SELF_TEST_FAILED', 'La tolleranza temporale limitata GPGAuth non e disponibile.');
   const formEncodedArmor = encodeURIComponent(encrypted).replace(/%20/g, '+');
   assert(decodeHeaderValue(formEncodedArmor) === encrypted, 'SELF_TEST_FAILED', 'La decodifica form-urlencoded degli header GPGAuth non e riuscita.');
   const secretMessage = await encryptSecret(
@@ -5139,15 +5390,19 @@ async function selfTest() {
   assert(batchDuplicatePlan[0].action === 'create' && batchDuplicatePlan[1].duplicate_kind === 'batch', 'SELF_TEST_FAILED', 'Il test dei duplicati interni al lotto non e riuscito.');
   return {
     command: 'self-test',
+    compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+    v5_format_rejected: v5FormatRejected,
     openpgp_version: '6.3.1',
     encryption: true,
     decryption: true,
     signature_verification: true,
+    gpgauth_bounded_clock_verification: true,
     gpgauth_header_form_decoding: true,
     official_wrapped_gpgauth_payload_contract: true,
     official_minimal_totp_payload_contract: true,
     unlimited_candidate_selection: true,
     indexed_large_batch_planning: true,
+    source_mapping_digest_bound: true,
     passbolt_secret_schema: true,
     passbolt_string_secret_schema: true,
     duplicate_detection: true,
@@ -5272,6 +5527,7 @@ if (import.meta.url === invokedPath) {
 export {
   PassboltSession,
   PersistentImportSession,
+  assertV4OnlyServer,
   analyzeCapabilities,
   authenticate,
   buildCandidatePlan,
@@ -5279,10 +5535,12 @@ export {
   buildResourcePayload,
   classifyRecovery,
   createPlannedContent,
+  decryptServerChallenge,
   verifyCreatedResources,
   encryptSecret,
   buildAclObjectCatalog,
   buildAclChangePlan,
   permissionMaskDigest,
   readCapabilities,
+  requireV4OnlyFormats,
 };

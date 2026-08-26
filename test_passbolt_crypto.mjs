@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import * as openpgp from 'openpgp';
 import {
   PassboltSession,
   PersistentImportSession,
+  assertV4OnlyServer,
   analyzeCapabilities,
   authenticate,
   buildCandidatePlan,
@@ -13,6 +15,7 @@ import {
   buildResourcePayload,
   classifyRecovery,
   createPlannedContent,
+  decryptServerChallenge,
   verifyCreatedResources,
   encryptSecret,
   permissionMaskDigest,
@@ -61,6 +64,50 @@ function encodeGpgAuthHeader(value) {
 }
 
 async function main() {
+  const v4OnlyWorker = new PersistentImportSession();
+  await assert.rejects(
+    v4OnlyWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v5',
+      folder_format: 'v5',
+    }),
+    (error) => error?.code === 'PASSBOLT_V5_DISABLED',
+  );
+  const compatibilitySession = (v5) => ({
+    async request(path) {
+      if (path.startsWith('/settings.json')) {
+        return {
+          status: 200,
+          document: JSON.parse(apiSuccess({
+            passbolt: { plugins: { metadata: { enabled: v5 } } },
+          })),
+        };
+      }
+      if (path.startsWith('/metadata/types/settings.json')) {
+        return {
+          status: v5 ? 200 : 404,
+          document: JSON.parse(v5
+            ? apiSuccess({ default_resource_types: 'v5' })
+            : apiError('Route not available.')),
+        };
+      }
+      if (path.startsWith('/resource-types.json')) {
+        return {
+          status: 200,
+          document: JSON.parse(apiSuccess(v5
+            ? [{ id: 'v5-id', slug: 'v5-default' }]
+            : [{ id: 'v4-id', slug: 'password-and-description' }])),
+        };
+      }
+      throw new Error(`Unexpected compatibility path: ${path}`);
+    },
+  });
+  await assert.doesNotReject(assertV4OnlyServer(compatibilitySession(false)));
+  await assert.rejects(
+    assertV4OnlyServer(compatibilitySession(true)),
+    (error) => error?.code === 'PASSBOLT_V5_SERVER_DISABLED',
+  );
+
   const recoveryCandidate = {
     candidate_id: '0123456789abcdef',
     source_sha256: '1'.repeat(64),
@@ -190,6 +237,79 @@ async function main() {
   const changedPermissionPlan = classifyRecovery(shareRecoveryState, [recoveryCandidate], changedShareCapabilities, ownerOnlyRuntime, 'current-user-id');
   assert.equal(changedPermissionPlan.conflicts.some((item) => item.code === 'RECOVERY_INTENDED_PERMISSION_CHANGED'), true);
 
+  const folderRecoveryCandidate = {
+    ...recoveryCandidate,
+    candidate_id: 'fedcba9876543210',
+    client: 'Cliente recuperato',
+    source_at_root: false,
+  };
+  const recoveredFolderId = 'remote-recovered-folder';
+  const recoveredDestinationKey = 'client:root:cliente recuperato';
+  const recoveredDestinationHash = createHash('sha256').update(recoveredDestinationKey, 'utf8').digest('hex');
+  const folderRecoveryState = {
+    ...recoveryState,
+    folder_format: 'v4',
+    destination_mode: 'client_folders',
+    candidates: [{
+      candidate_id: folderRecoveryCandidate.candidate_id,
+      source_sha256: folderRecoveryCandidate.source_sha256,
+    }],
+    operations: [{
+      operation_id: 'fa4608bd-f2b4-42d4-9f92-6731c7ed9815',
+      object_type: 'folder',
+      action: 'create_folder',
+      destination_key_hash: recoveredDestinationHash,
+      recorded_outcome: {
+        event_type: 'operation_failed',
+        operation_id: 'fa4608bd-f2b4-42d4-9f92-6731c7ed9815',
+        object_type: 'folder',
+        error_code: 'FOLDER_CREATE_FAILED',
+        outcome: 'unknown',
+        http_status: 500,
+      },
+    }],
+  };
+  const recoveredFolderPlan = {
+    destination_key: recoveredDestinationKey,
+    action: 'reuse',
+    folder_id: recoveredFolderId,
+    share_permissions: [],
+  };
+  const folderRecoveryCapabilities = {
+    ...recoveryCapabilities,
+    folder_format_selected: 'v4',
+    destination_mode: 'client_folders',
+    candidates: [{
+      ...folderRecoveryCandidate,
+      action: 'create',
+      destination_key: recoveredDestinationKey,
+      folder_action: 'reuse',
+      folder_id: recoveredFolderId,
+      shared: false,
+      duplicate_kind: null,
+      duplicate_resource_id: null,
+    }],
+  };
+  const folderRecoveryRuntime = {
+    destinationFolders: [recoveredFolderPlan],
+    existingFolders: [{ id: recoveredFolderId, permissions: [] }],
+    existingResources: [],
+  };
+  const recoveredFolderRecovery = classifyRecovery(
+    folderRecoveryState,
+    [folderRecoveryCandidate],
+    folderRecoveryCapabilities,
+    folderRecoveryRuntime,
+    'current-user-id',
+  );
+  assert.equal(recoveredFolderRecovery.conflicts.length, 0);
+  assert.equal(recoveredFolderRecovery.classifications[0].resolution, 'remote_success');
+  assert.equal(recoveredFolderRecovery.classifications[0].folder_id, recoveredFolderId);
+  assert.deepEqual(recoveredFolderRecovery.retryFolders, []);
+  assert.deepEqual(recoveredFolderRecovery.recoveryFolders, [recoveredFolderPlan]);
+  assert.deepEqual(recoveredFolderRecovery.resourceCandidateIds, [folderRecoveryCandidate.candidate_id]);
+  assert.equal(recoveredFolderRecovery.retryActionCount, 1);
+
   const serverGenerated = await openpgp.generateKey({
     type: 'ecc',
     curve: 'curve25519',
@@ -246,6 +366,89 @@ async function main() {
   const groupRecipientFingerprint = groupRecipientPublicKey.getFingerprint().toUpperCase();
   const metadataFingerprint = metadataPublicKey.getFingerprint().toUpperCase();
   const authToken = 'gpgauthv1.3.0|36|11111111-1111-4111-8111-111111111111|gpgauthv1.3.0';
+  const authClockProbeLocalDate = new Date();
+  const boundedAuthServerDate = new Date((Math.floor(authClockProbeLocalDate.getTime() / 1000) * 1000) + 30_000);
+  const boundedFutureChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    signingKeys: serverPrivateKey,
+    date: boundedAuthServerDate,
+    format: 'armored',
+  });
+  assert.equal(
+    await decryptServerChallenge(
+      boundedFutureChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      boundedAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    authToken,
+  );
+
+  const excessiveAuthServerDate = new Date((Math.floor(authClockProbeLocalDate.getTime() / 1000) * 1000) + 600_000);
+  const excessiveFutureChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    signingKeys: serverPrivateKey,
+    date: excessiveAuthServerDate,
+    format: 'armored',
+  });
+  await assert.rejects(
+    decryptServerChallenge(
+      excessiveFutureChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      excessiveAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_CLOCK_SKEW'
+      && Number.isInteger(error?.details?.clock_skew_seconds)
+      && error.details.clock_skew_seconds > 300,
+  );
+  await assert.rejects(
+    decryptServerChallenge(
+      boundedFutureChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      'invalid-date',
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_CLOCK_UNVERIFIED',
+  );
+
+  const wrongSignerChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    signingKeys: directRecipientPrivateKey,
+    date: boundedAuthServerDate,
+    format: 'armored',
+  });
+  await assert.rejects(
+    decryptServerChallenge(
+      wrongSignerChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      boundedAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_BAD_SIGNATURE',
+  );
+  const unsignedChallenge = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: authToken }),
+    encryptionKeys: userPublicKey,
+    format: 'armored',
+  });
+  await assert.rejects(
+    decryptServerChallenge(
+      unsignedChallenge,
+      userPrivateKey,
+      serverPublicKey,
+      boundedAuthServerDate.toUTCString(),
+      authClockProbeLocalDate,
+    ),
+    (error) => error?.code === 'AUTH_CHALLENGE_UNSIGNED',
+  );
   let authenticated = false;
   let completedLoginCount = 0;
   let identityMode = 'redirect-success';
@@ -1737,8 +1940,102 @@ async function main() {
       ['operation_intent', 'folder_created', 'operation_intent', 'operation_failed'],
     );
     assert.equal(failingProgress.at(-1).payload.error_code, 'RESOURCE_CREATE_FAILED');
-    assert.equal(failingProgress.at(-1).payload.outcome, 'confirmed');
+    assert.equal(failingProgress.at(-1).payload.outcome, 'unknown');
     assert.equal(failingProgress.at(-1).payload.http_status, 500);
+
+    const disconnectedResourceProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        {
+          async request(path) {
+            if (path.startsWith('/folders.json')) {
+              return { status: 200, document: { body: { id: 'transport-folder-id' } } };
+            }
+            throw new Error('Simulated transport interruption.');
+          },
+        },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => disconnectedResourceProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 1
+        && error?.details?.created?.length === 0
+        && error?.details?.cause_code === 'INTERNAL_ERROR',
+    );
+    assert.deepEqual(
+      disconnectedResourceProgress.map((event) => event.eventType),
+      ['operation_intent', 'folder_created', 'operation_intent', 'operation_failed'],
+    );
+    assert.equal(disconnectedResourceProgress.at(-1).payload.error_code, 'INTERNAL_ERROR');
+    assert.equal(disconnectedResourceProgress.at(-1).payload.outcome, 'unknown');
+    assert.equal(Object.hasOwn(disconnectedResourceProgress.at(-1).payload, 'http_status'), false);
+
+    const rejectedFolderProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { return { status: 409, document: { header: { message: 'Simulated conflict.' } } }; } },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => rejectedFolderProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 0,
+    );
+    assert.deepEqual(
+      rejectedFolderProgress.map((event) => event.eventType),
+      ['operation_intent', 'operation_failed'],
+    );
+    assert.equal(rejectedFolderProgress.at(-1).payload.error_code, 'FOLDER_CREATE_FAILED');
+    assert.equal(rejectedFolderProgress.at(-1).payload.outcome, 'confirmed');
+    assert.equal(rejectedFolderProgress.at(-1).payload.http_status, 409);
+
+    const uncertainFolderProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { return { status: 500, document: { header: { message: 'Simulated uncertainty.' } } }; } },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => uncertainFolderProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 0,
+    );
+    assert.deepEqual(
+      uncertainFolderProgress.map((event) => event.eventType),
+      ['operation_intent', 'operation_failed'],
+    );
+    assert.equal(uncertainFolderProgress.at(-1).payload.error_code, 'FOLDER_CREATE_FAILED');
+    assert.equal(uncertainFolderProgress.at(-1).payload.outcome, 'unknown');
+    assert.equal(uncertainFolderProgress.at(-1).payload.http_status, 500);
+
+    const disconnectedFolderProgress = [];
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { throw new Error('Simulated transport interruption.'); } },
+        newFolderAnalysis.capabilities.candidates,
+        [plannedResource],
+        newFolderAnalysis.runtime,
+        keyMaterial,
+        async (eventType, payload) => disconnectedFolderProgress.push({ eventType, payload }),
+      ),
+      (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+        && error?.details?.created_folders?.length === 0
+        && error?.details?.cause_code === 'INTERNAL_ERROR',
+    );
+    assert.deepEqual(
+      disconnectedFolderProgress.map((event) => event.eventType),
+      ['operation_intent', 'operation_failed'],
+    );
+    assert.equal(disconnectedFolderProgress.at(-1).payload.error_code, 'INTERNAL_ERROR');
+    assert.equal(disconnectedFolderProgress.at(-1).payload.outcome, 'unknown');
+    assert.equal(Object.hasOwn(disconnectedFolderProgress.at(-1).payload, 'http_status'), false);
 
     await session.request('/auth/logout.json?api-version=v2', { method: 'POST' });
     assert.equal(authenticated, false);
@@ -2445,7 +2742,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
       permission_mode: 'custom',
       permission_template: customPermissionTemplate,
     });
@@ -2529,7 +2826,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'direct_folder',
-      folder_format: 'auto',
+      folder_format: 'v4',
       destination_folder_id: 'folder-shared-id',
       permission_mode: 'custom',
       permission_template: customPermissionTemplate,
@@ -2544,7 +2841,7 @@ async function main() {
         candidates: persistentCandidates,
         resource_format: 'v4',
         destination_mode: 'root',
-        folder_format: 'auto',
+        folder_format: 'v4',
         permission_mode: 'custom',
         permission_template: [{ aro: 'User', aro_foreign_key: 'user-id', type: 1 }],
       }),
@@ -2556,7 +2853,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
     });
     const secondPersistentReadiness = await persistentWorker.readiness({
       command: 'session-readiness',
@@ -2564,7 +2861,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
     });
     assert.equal(firstPersistentReadiness.session_id, 'persistent-test-session');
     assert.equal(secondPersistentReadiness.authentication, 'GPGAuth + TOTP');
@@ -2586,7 +2883,7 @@ async function main() {
       }],
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
       plan_digest: secondPersistentReadiness.plan_digest,
       confirmation: 'IMPORTA 1',
     });
@@ -2666,6 +2963,8 @@ async function main() {
     await assert.rejects(
       persistentWorker.readiness({
         session_id: 'wrong-session-id',
+        resource_format: 'v4',
+        folder_format: 'v4',
         candidates: persistentCandidates,
       }),
       (error) => error?.code === 'IMPORT_SESSION_ID_MISMATCH',
@@ -2678,6 +2977,8 @@ async function main() {
         gpgauth_stage0: true,
         gpgauth_stage1: true,
         gpgauth_stage2: true,
+        gpgauth_bounded_clock_skew: true,
+        gpgauth_bad_signature_fail_closed: true,
         official_wrapped_gpgauth_payload: officialWrappedGpgAuthPayloadCount >= 2,
         same_origin_redirect: true,
         cross_origin_redirect_blocked: true,
@@ -2690,7 +2991,9 @@ async function main() {
         reconciliation_progress_envelopes: true,
         batch_dashboard_progress_protocol: true,
         authenticated_preflight_checks: true,
-        post_import_verification_v4_v5_acl: true,
+        release_v4_only_format_rejection: true,
+        release_v5_server_rejection: true,
+        post_import_verification_v4_acl: true,
         authenticated_recovery_classification: true,
         recovery_conflicts_blocked: true,
         mfa_reused_without_reprompt: true,
@@ -2699,14 +3002,14 @@ async function main() {
         indexed_large_batch_planning: true,
         duplicate_detection: true,
         v4_resource_creation: true,
-        v5_shared_metadata_key_verified: true,
-        v5_personal_metadata_key: true,
-        v5_duplicate_metadata_decryption: true,
-        v5_resource_creation: true,
-        v5_metadata_and_secret_encrypted: true,
+        dormant_internal_v5_shared_metadata_key_verified: true,
+        dormant_internal_v5_personal_metadata_key: true,
+        dormant_internal_v5_duplicate_metadata_decryption: true,
+        dormant_internal_v5_resource_creation: true,
+        dormant_internal_v5_metadata_and_secret_encrypted: true,
         v4_folder_creation: true,
-        v5_folder_metadata_decryption: true,
-        v5_folder_creation: true,
+        dormant_internal_v5_folder_metadata_decryption: true,
+        dormant_internal_v5_folder_creation: true,
         folder_parent_id_assignment: true,
         folder_catalog_paths: true,
         selected_parent_folder: true,
@@ -2714,7 +3017,7 @@ async function main() {
         per_client_destination_mapping: true,
         per_client_mapping_in_digest: true,
         per_client_root_destination: true,
-        v5_per_client_destination_mapping: true,
+        dormant_internal_v5_per_client_destination_mapping: true,
         destination_folder_in_digest: true,
         readonly_destination_filtered: true,
         shared_destination_permission_mask: true,
@@ -2732,7 +3035,7 @@ async function main() {
         shared_recipient_deduplication: true,
         shared_recipient_key_validation: true,
         shared_secret_multi_recipient_encryption: true,
-        shared_v5_metadata_key_enforced: true,
+        dormant_internal_shared_v5_metadata_key_enforced: true,
         shared_simulation_before_apply: true,
         shared_partial_failure_reconciliation: true,
         shared_child_folder_permission_inheritance: true,
@@ -2743,7 +3046,7 @@ async function main() {
         empty_personal_child_folder_reconciled: true,
         nonempty_personal_child_folder_blocked: true,
         duplicate_personal_child_folders_identified: true,
-        shared_v5_folder_metadata_key_enforced: true,
+        dormant_internal_shared_v5_folder_metadata_key_enforced: true,
         duplicate_destination_classification: true,
         duplicate_elsewhere_blocked: true,
         partial_failure_reconciliation: true,

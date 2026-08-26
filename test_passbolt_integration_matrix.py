@@ -11,7 +11,7 @@ FINGERPRINT = "0123456789ABCDEF0123456789ABCDEF01234567"
 
 
 class FakeBridge:
-    def __init__(self, resource_format="v5", folder_format="v5"):
+    def __init__(self, resource_format="v4", folder_format="v4"):
         self.resource_format = resource_format
         self.folder_format = folder_format
         self.requests = []
@@ -80,15 +80,24 @@ class NullRootFolderFormatBridge(FakeBridge):
         return response
 
 
+class GpgAuthOnlyBridge(FakeBridge):
+    def request(self, request):
+        response = super().request(request)
+        if request["command"] == "session-open":
+            response["result"]["authentication"] = "GPGAuth"
+            response["result"]["mfa_provider"] = None
+        return response
+
+
 class IntegrationMatrixTests(unittest.TestCase):
     def profile(self, **overrides):
         values = {
-            "instance_id": "v5-lab",
+            "instance_id": "v4-lab",
             "enabled": True,
             "base_url": "https://private-passbolt.example.test",
             "expected_server_fingerprint": FINGERPRINT,
-            "expected_resource_format": "v5",
-            "expected_folder_format": "v5",
+            "expected_resource_format": "v4",
+            "expected_folder_format": "v4",
         }
         values.update(overrides)
         return matrix.InstanceProfile(**values)
@@ -112,12 +121,12 @@ class IntegrationMatrixTests(unittest.TestCase):
                         "schema_version": 1,
                         "instances": [
                             {
-                                "id": "v5-lab",
+                                "id": "v4-lab",
                                 "enabled": True,
                                 "base_url": "https://passbolt.example.test",
                                 "expected_server_fingerprint": FINGERPRINT,
-                                "expected_resource_format": "v5",
-                                "expected_folder_format": "v5",
+                                "expected_resource_format": "v4",
+                                "expected_folder_format": "v4",
                             }
                         ],
                     }
@@ -125,8 +134,21 @@ class IntegrationMatrixTests(unittest.TestCase):
                 encoding="utf-8",
             )
             profiles = matrix.load_config(path)
-            self.assertEqual(profiles[0].expected_resource_format, "v5")
+            self.assertEqual(profiles[0].expected_resource_format, "v4")
             document = json.loads(path.read_text(encoding="utf-8"))
+            document["instances"][0]["expected_resource_format"] = "v5"
+            document["instances"][0]["expected_folder_format"] = "v5"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(matrix.MatrixError, "esclusivamente"):
+                matrix.load_config(path)
+            document["instances"][0]["enabled"] = False
+            path.write_text(json.dumps(document), encoding="utf-8")
+            disabled_profiles = matrix.load_config(path)
+            self.assertFalse(disabled_profiles[0].enabled)
+            document = json.loads(path.read_text(encoding="utf-8"))
+            document["instances"][0]["enabled"] = True
+            document["instances"][0]["expected_resource_format"] = "v4"
+            document["instances"][0]["expected_folder_format"] = "v4"
             document["instances"][0]["expected_server_fingerprint"] = "0" * 40
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(matrix.MatrixError):
@@ -177,6 +199,21 @@ class IntegrationMatrixTests(unittest.TestCase):
         self.assertEqual(scenario["status"], "passed")
         self.assertIsNone(scenario["metrics"]["folder_format_selected"])
 
+    def test_gpg_auth_only_login_preserves_null_mfa_provider(self):
+        report = matrix.run_instance(
+            self.profile(),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "",
+            probe_runner=self.probe,
+            bridge_factory=lambda: GpgAuthOnlyBridge(),
+        )
+        scenario = next(item for item in report["scenarios"] if item["name"] == "authenticated_login")
+        self.assertEqual(scenario["status"], "passed")
+        self.assertEqual(scenario["metrics"]["authentication"], "GPGAuth")
+        self.assertIsNone(scenario["metrics"]["mfa_provider"])
+        matrix.validate_report_document(report)
+
     def test_bridge_receives_secrets_only_in_session_open(self):
         bridge = FakeBridge()
         matrix.run_instance(
@@ -203,7 +240,7 @@ class IntegrationMatrixTests(unittest.TestCase):
             "passphrase",
             "123456",
             probe_runner=self.probe,
-            bridge_factory=lambda: FakeBridge(resource_format="v4", folder_format="v4"),
+            bridge_factory=lambda: FakeBridge(resource_format="v5", folder_format="v5"),
         )
         statuses = {item["name"]: item["status"] for item in report["scenarios"]}
         self.assertEqual(statuses["authenticated_login"], "passed")

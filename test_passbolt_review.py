@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
 
-from passbolt_review import analyze_files
+from passbolt_review import ReviewError, analyze_files
 
 
 def write_encrypted_xlsx(path: Path, document_password: str, credential_password: str) -> None:
@@ -97,6 +97,178 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(candidate.uri, "db.internal.test")
         self.assertTrue(candidate.secret_present)
         self.assertNotIn("db-secret", json.dumps(asdict(result)))
+
+    def test_custom_source_mapping_profile_recognizes_nonstandard_fields(self) -> None:
+        source = self.root / "Cliente Alfa" / "vendor-export.csv"
+        source.write_text(
+            "display_label,account_name,credential_value,target_endpoint\n"
+            "Portale vendor,utente-vendor,segreto-vendor,https://vendor.test\n",
+            encoding="utf-8",
+        )
+        profile = {
+            "schema_version": 1,
+            "name": "Export vendor",
+            "fields": {
+                "title": ["display_label"],
+                "username": ["account_name"],
+                "secret": ["credential_value"],
+                "uri": ["target_endpoint"],
+            },
+        }
+
+        automatic = analyze_files(self.root, ["Cliente Alfa/vendor-export.csv"])
+        mapped = analyze_files(
+            self.root,
+            ["Cliente Alfa/vendor-export.csv"],
+            source_mapping_profile=profile,
+        )
+
+        self.assertEqual(automatic.candidate_count, 0)
+        self.assertEqual(mapped.candidate_count, 1)
+        candidate = mapped.candidates[0]
+        self.assertEqual(candidate.title, "Portale vendor")
+        self.assertEqual(candidate.username, "utente-vendor")
+        self.assertEqual(candidate.uri, "https://vendor.test")
+        self.assertRegex(candidate.source_mapping_digest, r"^[0-9a-f]{64}$")
+        self.assertEqual(
+            candidate.source_mapping_profile["digest"],
+            candidate.source_mapping_digest,
+        )
+        self.assertEqual(
+            mapped.source_mapping_profile_digest, candidate.source_mapping_digest
+        )
+        self.assertNotIn("segreto-vendor", json.dumps(asdict(mapped)))
+
+    def test_source_mapping_profile_rejects_ambiguous_aliases(self) -> None:
+        source = self.root / "Cliente Alfa" / "ambiguous.json"
+        source.write_text("{}", encoding="utf-8")
+        profile = {
+            "schema_version": 1,
+            "name": "Profilo ambiguo",
+            "fields": {
+                "title": [],
+                "username": ["account"],
+                "secret": ["account"],
+                "uri": [],
+            },
+        }
+
+        with self.assertRaises(ReviewError):
+            analyze_files(
+                self.root,
+                ["Cliente Alfa/ambiguous.json"],
+                source_mapping_profile=profile,
+            )
+
+    def test_source_mapping_profile_rejects_two_matching_columns(self) -> None:
+        source = self.root / "Cliente Alfa" / "ambiguous-columns.csv"
+        source.write_text(
+            "account_name,login_id,credential_value\n"
+            "utente-a,utente-b,segreto\n",
+            encoding="utf-8",
+        )
+        profile = {
+            "schema_version": 1,
+            "name": "Profilo colonne ambigue",
+            "fields": {
+                "title": [],
+                "username": ["account_name", "login_id"],
+                "secret": ["credential_value"],
+                "uri": [],
+            },
+        }
+
+        result = analyze_files(
+            self.root,
+            ["Cliente Alfa/ambiguous-columns.csv"],
+            source_mapping_profile=profile,
+        )
+
+        self.assertEqual(result.candidate_count, 0)
+        self.assertTrue(
+            any("accountname" in warning and "loginid" in warning for warning in result.warnings)
+        )
+
+    def test_source_mapping_profile_check_returns_canonical_digest(self) -> None:
+        profile = {
+            "schema_version": 1,
+            "name": "Profilo CLI",
+            "fields": {
+                "title": ["Entry Name"],
+                "username": ["Login ID"],
+                "secret": ["Credential Value"],
+                "uri": ["Target Endpoint"],
+            },
+        }
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("passbolt_review.py")),
+                "--profile-check",
+            ],
+            input=json.dumps(profile).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+        envelope = json.loads(completed.stdout)
+        self.assertTrue(envelope["ok"])
+        canonical = envelope["result"]["profile"]
+        self.assertEqual(canonical["fields"]["username"], ["loginid"])
+        self.assertRegex(canonical["digest"], r"^[0-9a-f]{64}$")
+
+    def test_source_mapping_profile_file_cli_reviews_without_secret(self) -> None:
+        source = self.root / "Cliente Alfa" / "cli-vendor.csv"
+        secret = "segreto-cli-non-serializzato"
+        source.write_text(
+            "account_name,credential_value,target_endpoint\n"
+            f"utente-cli,{secret},https://cli-vendor.test\n",
+            encoding="utf-8",
+        )
+        profile_path = self.root / "source-profile.json"
+        profile_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "name": "Profilo CLI file",
+                    "fields": {
+                        "title": [],
+                        "username": ["account_name"],
+                        "secret": ["credential_value"],
+                        "uri": ["target_endpoint"],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("passbolt_review.py")),
+                "--root",
+                str(self.root),
+                "--file",
+                "Cliente Alfa/cli-vendor.csv",
+                "--source-profile",
+                str(profile_path),
+                "--json",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+        document = json.loads(completed.stdout)
+        self.assertEqual(document["candidate_count"], 1)
+        self.assertEqual(document["source_mapping_profile_name"], "Profilo CLI file")
+        self.assertNotIn(secret, completed.stdout.decode("utf-8"))
 
     def test_ip_address_label_populates_uri(self) -> None:
         source = self.root / "Cliente Alfa" / "router.txt"
