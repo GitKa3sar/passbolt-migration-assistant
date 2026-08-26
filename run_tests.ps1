@@ -173,6 +173,7 @@ function Test-PngDimensions {
 
 Push-Location $ProjectRoot
 $TemporaryPreviewDirectory = $false
+$UiPreviewCount = 0
 $PreviousAppPython = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_PYTHON")
 $PreviousAppNode = [Environment]::GetEnvironmentVariable("PASSBOLT_APP_NODE")
 try {
@@ -273,20 +274,33 @@ try {
         }
         $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
         [void][IO.Directory]::CreateDirectory($ArtifactDirectory)
-        $PreviewCases = @(
+        $PreviewCases = New-Object System.Collections.Generic.List[object]
+        @(
             [pscustomobject]@{ Page = "Configuration"; Width = 1360; Height = 860; Dpi = 96 },
             [pscustomobject]@{ Page = "Inventory"; Width = 1360; Height = 860; Dpi = 96 },
             [pscustomobject]@{ Page = "Review"; Width = 1360; Height = 860; Dpi = 96 },
             [pscustomobject]@{ Page = "Import"; Width = 1360; Height = 860; Dpi = 96 },
-            [pscustomobject]@{ Page = "Configuration"; Width = 1160; Height = 740; Dpi = 96 },
-            [pscustomobject]@{ Page = "Import"; Width = 1160; Height = 740; Dpi = 120 },
-            [pscustomobject]@{ Page = "Import"; Width = 1160; Height = 740; Dpi = 144 },
-            [pscustomobject]@{ Page = "Import"; Width = 1160; Height = 740; Dpi = 192 }
-        )
+            [pscustomobject]@{ Page = "Configuration"; Width = 1160; Height = 740; Dpi = 96 }
+        ) | ForEach-Object { [void]$PreviewCases.Add($_) }
+        foreach ($Dpi in @(96, 120, 144, 192)) {
+            foreach ($ImportWorkspace in @("new_import", "recovery", "existing_acl")) {
+                foreach ($ImportState in @("initial", "populated")) {
+                    [void]$PreviewCases.Add([pscustomobject]@{
+                        Page = "Import"
+                        Width = 1160
+                        Height = 740
+                        Dpi = $Dpi
+                        ImportWorkspace = $ImportWorkspace
+                        ImportState = $ImportState
+                    })
+                }
+            }
+        }
         foreach ($PreviewCase in $PreviewCases) {
-            $FileName = "$($PreviewCase.Page.ToLowerInvariant())-$($PreviewCase.Width)x$($PreviewCase.Height)-dpi$($PreviewCase.Dpi).png"
+            $ImportSuffix = if ($PreviewCase.PSObject.Properties.Name -contains "ImportWorkspace") { "-$($PreviewCase.ImportWorkspace)-$($PreviewCase.ImportState)" } else { "" }
+            $FileName = "$($PreviewCase.Page.ToLowerInvariant())$ImportSuffix-$($PreviewCase.Width)x$($PreviewCase.Height)-dpi$($PreviewCase.Dpi).png"
             $PreviewPath = Join-Path $ArtifactDirectory $FileName
-            Invoke-Checked "Anteprima UI $FileName" "powershell.exe" @(
+            $PreviewArguments = @(
                 "-NoProfile",
                 "-STA",
                 "-ExecutionPolicy", "Bypass",
@@ -297,9 +311,17 @@ try {
                 "-RenderPreviewHeight", ([string]$PreviewCase.Height),
                 "-RenderPreviewDpi", ([string]$PreviewCase.Dpi)
             )
+            if ($PreviewCase.PSObject.Properties.Name -contains "ImportWorkspace") {
+                $PreviewArguments += @(
+                    "-RenderPreviewImportTab", [string]$PreviewCase.ImportWorkspace,
+                    "-RenderPreviewImportState", [string]$PreviewCase.ImportState
+                )
+            }
+            Invoke-Checked "Anteprima UI $FileName" "powershell.exe" $PreviewArguments
             $ExpectedPixelWidth = [int][math]::Ceiling($PreviewCase.Width * $PreviewCase.Dpi / 96.0)
             $ExpectedPixelHeight = [int][math]::Ceiling($PreviewCase.Height * $PreviewCase.Dpi / 96.0)
             Test-PngDimensions $PreviewPath $ExpectedPixelWidth $ExpectedPixelHeight
+            $UiPreviewCount++
         }
     }
 
@@ -320,7 +342,7 @@ try {
         offline_stateful_scenarios = 9
         offline_recovery_fault_paths = 12
         wpf_controls = 136
-        ui_preview_count = $(if ($SkipUiPreviews) { 0 } else { 8 })
+        ui_preview_count = $UiPreviewCount
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })
         secrets_serialized = $false
         status = "OK"

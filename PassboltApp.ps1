@@ -3,6 +3,10 @@
     [string]$RenderPreviewPath = "",
     [ValidateSet("Configuration", "Inventory", "Review", "Import")]
     [string]$RenderPreviewPage = "Configuration",
+    [ValidateSet("new_import", "recovery", "existing_acl")]
+    [string]$RenderPreviewImportTab = "new_import",
+    [ValidateSet("initial", "populated")]
+    [string]$RenderPreviewImportState = "initial",
     [ValidateRange(1160, 3840)]
     [int]$RenderPreviewWidth = 1360,
     [ValidateRange(740, 2160)]
@@ -135,6 +139,9 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                 CornerRadius="10" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#003F7D" /><Setter TargetName="ButtonChrome" Property="BorderThickness" Value="3" /></Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -168,6 +175,36 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="CommandBar" TargetType="Border">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="BorderBrush" Value="#D9E2EC" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="10,8" />
+        </Style>
+        <Style x:Key="NavigationButton" TargetType="Button">
+            <Setter Property="Background" Value="#F2F2F7" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="10,9" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="NavigationChrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="NavigationChrome" Property="Background" Value="#E9EEF5" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="NavigationChrome" Property="BorderBrush" Value="#003F7D" /><Setter TargetName="NavigationChrome" Property="BorderThickness" Value="3" /></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.58" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style TargetType="TextBox">
             <Setter Property="BorderBrush" Value="#D1D1D6" />
             <Setter Property="BorderThickness" Value="1" />
@@ -188,8 +225,8 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <ScrollViewer x:Name="PART_ContentHost" />
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="#007AFF" /></Trigger>
                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="#AEAEB2" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="#0066D6" /><Setter TargetName="InputChrome" Property="BorderThickness" Value="3" /></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="InputChrome" Property="Background" Value="#F2F2F7" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -216,8 +253,8 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <ScrollViewer x:Name="PART_ContentHost" />
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="PasswordChrome" Property="BorderBrush" Value="#007AFF" /></Trigger>
                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="PasswordChrome" Property="BorderBrush" Value="#AEAEB2" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="PasswordChrome" Property="BorderBrush" Value="#0066D6" /><Setter TargetName="PasswordChrome" Property="BorderThickness" Value="3" /></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter TargetName="PasswordChrome" Property="Background" Value="#F2F2F7" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -265,8 +302,8 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             </Popup>
                         </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="#007AFF" /></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Background" Value="#F2F2F7" /><Setter Property="Foreground" Value="#8E8E93" /></Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="#0066D6" /><Setter Property="BorderThickness" Value="3" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -285,6 +322,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemChrome" Property="Background" Value="#F2F2F7" /></Trigger>
                             <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemChrome" Property="Background" Value="#EAF3FF" /><Setter Property="Foreground" Value="#0066D6" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ItemChrome" Property="BorderBrush" Value="#0066D6" /><Setter TargetName="ItemChrome" Property="BorderThickness" Value="2" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -306,6 +344,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <Trigger Property="IsChecked" Value="True"><Setter TargetName="CheckChrome" Property="Background" Value="#007AFF" /><Setter TargetName="CheckChrome" Property="BorderBrush" Value="#007AFF" /><Setter TargetName="CheckMark" Property="Visibility" Value="Visible" /></Trigger>
                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CheckChrome" Property="BorderBrush" Value="#007AFF" /></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.68" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="CheckChrome" Property="BorderBrush" Value="#003F7D" /><Setter TargetName="CheckChrome" Property="BorderThickness" Value="3" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -330,6 +369,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ToggleChrome" Property="Background" Value="#F2F2F7" /></Trigger>
                             <Trigger Property="IsChecked" Value="True"><Setter TargetName="ToggleChrome" Property="Background" Value="#EAF3FF" /><Setter TargetName="ToggleChrome" Property="BorderBrush" Value="#8FC2FF" /><Setter Property="Foreground" Value="#0066D6" /></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ToggleChrome" Property="BorderBrush" Value="#003F7D" /><Setter TargetName="ToggleChrome" Property="BorderThickness" Value="3" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -368,7 +408,9 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
             <Setter Property="Padding" Value="11,0" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Style.Triggers>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="#0066D6" /><Setter Property="BorderThickness" Value="2" /></Trigger>
+            </Style.Triggers>
         </Style>
         <Style TargetType="DataGridRow">
             <Setter Property="BorderThickness" Value="0" />
@@ -376,6 +418,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#F2F7FF" /></Trigger>
                 <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#DCEBFF" /><Setter Property="Foreground" Value="#1D1D1F" /></Trigger>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="#0066D6" /><Setter Property="BorderThickness" Value="2" /></Trigger>
             </Style.Triggers>
         </Style>
         <Style TargetType="TabControl">
@@ -413,6 +456,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="TabChrome" Property="Background" Value="#F2F2F7" /></Trigger>
                             <Trigger Property="IsSelected" Value="True"><Setter TargetName="TabChrome" Property="Background" Value="#FFFFFF" /><Setter Property="Foreground" Value="#1D1D1F" /></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5" /></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="TabChrome" Property="BorderBrush" Value="#003F7D" /><Setter TargetName="TabChrome" Property="BorderThickness" Value="3" /></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -444,14 +488,14 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </StackPanel>
             </Grid>
             <StackPanel Grid.Row="1" Margin="10,0">
-                <Border x:Name="StepConfiguration" Background="#FFFFFF" CornerRadius="12" Padding="10,9" Margin="0,3" Cursor="Hand">
+                <Button x:Name="StepConfiguration" Style="{StaticResource NavigationButton}" Background="#FFFFFF" Margin="0,3" AutomationProperties.Name="Apri fase 01, preparazione locale">
                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#EAF3FF" CornerRadius="9"><TextBlock x:Name="StepConfigurationNumber" Text="01" Foreground="#007AFF" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepConfigurationText" Grid.Column="1" Text="Configurazione" Foreground="#1D1D1F" FontWeight="SemiBold" VerticalAlignment="Center" /></Grid>
-                </Border>
-                <Border x:Name="StepInventory" Padding="10,9" Margin="0,3" CornerRadius="12" Cursor="Hand">
+                </Button>
+                <Button x:Name="StepInventory" Style="{StaticResource NavigationButton}" Margin="0,3" IsEnabled="False" AutomationProperties.Name="Apri fase 02, inventario file">
                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepInventoryNumber" Text="02" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepInventoryText" Grid.Column="1" Text="Inventario file" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid>
-                </Border>
-                <Border x:Name="StepReview" Padding="10,9" Margin="0,3" CornerRadius="12" Cursor="Hand"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepReviewNumber" Text="03" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepReviewText" Grid.Column="1" Text="Revisione" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid></Border>
-                <Border x:Name="StepImport" Padding="10,9" Margin="0,3" CornerRadius="12" Cursor="Hand"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepImportNumber" Text="04" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepImportText" Grid.Column="1" Text="Importazione" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid></Border>
+                </Button>
+                <Button x:Name="StepReview" Style="{StaticResource NavigationButton}" Margin="0,3" IsEnabled="False" AutomationProperties.Name="Apri fase 03, revisione"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepReviewNumber" Text="03" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepReviewText" Grid.Column="1" Text="Revisione" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid></Button>
+                <Button x:Name="StepImport" Style="{StaticResource NavigationButton}" Margin="0,3" IsEnabled="False" AutomationProperties.Name="Apri fase 04, operazioni Passbolt"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Width="27" Height="27" Background="#E5E5EA" CornerRadius="9"><TextBlock x:Name="StepImportNumber" Text="04" Foreground="#8E8E93" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border><TextBlock x:Name="StepImportText" Grid.Column="1" Text="Operazioni Passbolt" Foreground="#8E8E93" VerticalAlignment="Center" /></Grid></Button>
             </StackPanel>
             <Border Grid.Row="2" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="14" Padding="16" Margin="14,18">
                 <StackPanel>
@@ -468,47 +512,23 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Grid Grid.Row="0" Margin="0,0,0,24">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel>
-                            <TextBlock Text="Configurazione" Style="{StaticResource PageTitle}" />
-                            <TextBlock Text="Verifica l&#x2019;istanza Passbolt e indica la cartella principale dei documenti clienti." Style="{StaticResource PageSubtitle}" />
+                            <TextBlock Text="Preparazione locale" Style="{StaticResource PageTitle}" />
+                            <TextBlock Text="Scegli la cartella sorgente. Inventario e revisione funzionano senza collegarsi a Passbolt." Style="{StaticResource PageSubtitle}" TextWrapping="Wrap" />
                         </StackPanel>
                         <Button x:Name="OpenProjectButton" Grid.Column="1" Content="Apri progetto..." Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" ToolTip="Ripristina una preparazione protetta per l'utente Windows corrente; connessione e contenuti saranno verificati di nuovo" />
                         <Border Grid.Column="2" Style="{StaticResource StatusPill}">
-                            <TextBlock Text="DRY-RUN ATTIVO" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
+                            <TextBlock Text="NESSUNA CONNESSIONE REMOTA" Foreground="#196C2E" FontSize="11" FontWeight="SemiBold" />
                         </Border>
                     </Grid>
 
                     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="24,20">
                         <StackPanel>
-                            <TextBlock Text="1. Connessione Passbolt" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Inserisci l'URL. L'app rileva la fingerprint OpenPGP del server e ne richiede la conferma prima di procedere; il controllo pubblico non esegue alcun login." Foreground="{StaticResource MutedBrush}" Margin="0,5,0,16" TextWrapping="Wrap" />
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBox x:Name="PassboltUrl" ToolTip="URL base HTTPS, ad esempio https://passbolt.example.com" />
-                                <Button x:Name="VerifyButton" Grid.Column="1" Content="Verifica connessione" Style="{StaticResource PrimaryButton}" Margin="12,0,0,0" />
-                            </Grid>
-                            <Grid Margin="0,10,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="Fingerprint rilevata" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
-                                <Border Grid.Column="1" Background="#F5F5F7" BorderBrush="#E5E5EA" BorderThickness="1" CornerRadius="10" Padding="12,9">
-                                    <TextBlock x:Name="DetectedFingerprint" Text="Non ancora rilevata" Foreground="#3A3A3C" FontFamily="Cascadia Mono, Consolas" FontSize="11" TextWrapping="Wrap" />
-                                </Border>
-                            </Grid>
-                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                <Ellipse x:Name="ConnectionDot" Width="9" Height="9" Fill="#98A5B1" Margin="0,0,7,0" />
-                                <TextBlock x:Name="ConnectionStatus" Text="Non verificata" Foreground="{StaticResource MutedBrush}" />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <Border Grid.Row="2" Style="{StaticResource Card}" Padding="24,20">
-                        <StackPanel>
-                            <TextBlock Text="2. Cartella documenti clienti" Style="{StaticResource SectionTitle}" />
-                            <TextBlock Text="Ogni cartella di primo livello viene considerata un cliente. I file nella radice restano separati." Foreground="{StaticResource MutedBrush}" Margin="0,5,0,16" />
+                            <TextBlock Text="1. Cartella documenti clienti" Style="{StaticResource SectionTitle}" />
+                            <TextBlock Text="Ogni cartella di primo livello viene considerata un cliente. I file nella radice restano separati." Foreground="{StaticResource MutedBrush}" Margin="0,5,0,16" TextWrapping="Wrap" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBox x:Name="ClientFolder" />
@@ -518,14 +538,18 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                 <Ellipse x:Name="FolderDot" Width="9" Height="9" Fill="#98A5B1" Margin="0,0,7,0" />
                                 <TextBlock x:Name="FolderStatus" Text="Nessuna cartella selezionata" Foreground="{StaticResource MutedBrush}" />
                             </StackPanel>
+                            <Border Height="1" Background="#E5E5EA" Margin="0,18,0,16" />
+                            <TextBlock Text="Destinazione prevista (facoltativa)" FontWeight="SemiBold" />
+                            <TextBlock Text="Puoi indicare ora l'URL HTTPS da conservare nel progetto locale oppure completarlo in fase 04. Serve solo per salvare un progetto; nessuna verifica viene eseguita qui." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,4,0,10" TextWrapping="Wrap" />
+                            <TextBox x:Name="PlannedPassboltUrl" AutomationProperties.Name="URL Passbolt pianificato" ToolTip="URL base HTTPS, ad esempio https://passbolt.example.com; verrà verificato solo in fase 04" />
                         </StackPanel>
                     </Border>
 
-                    <Grid Grid.Row="3" Margin="0,4,0,0">
+                    <Grid Grid.Row="2" Margin="0,4,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel VerticalAlignment="Center">
-                            <CheckBox Content="Modalit&#xE0; simulazione obbligatoria" IsChecked="True" IsEnabled="False" />
-                            <TextBlock Text="La fase successiva raccoglie esclusivamente metadati dei file." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="27,4,0,0" />
+                            <CheckBox Content="Preparazione locale" IsChecked="True" IsEnabled="False" />
+                            <TextBlock Text="La fase successiva raccoglie esclusivamente metadati dei file; Passbolt verrà verificato in fase 04." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="27,4,0,0" />
                         </StackPanel>
                         <Button x:Name="ContinueButton" Grid.Column="1" Content="Continua all&#x2019;inventario  &#x2192;" Style="{StaticResource PrimaryButton}" IsEnabled="False" Padding="22,12" />
                     </Grid>
@@ -666,92 +690,129 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </Grid>
             </Grid>
 
-            <Grid x:Name="ImportPage" Visibility="Collapsed" Margin="34,28,34,26">
+            <Grid x:Name="ImportPage" Visibility="Collapsed" Margin="28,20,28,20">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <Grid Grid.Row="0" Margin="0,0,0,14">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Grid Grid.Row="0" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel>
-                        <TextBlock Text="Importazione controllata" Style="{StaticResource PageTitle}" />
+                        <TextBlock x:Name="ImportPageTitle" Text="Importazione controllata" Style="{StaticResource PageTitle}" />
                         <TextBlock x:Name="ImportSummary" Text="Prepara i candidati dalla revisione" Style="{StaticResource PageSubtitle}" FontSize="12" />
                     </StackPanel>
-                    <Border Grid.Column="1" Style="{StaticResource StatusPill}">
-                        <TextBlock Text="GPGAuth + OPENPGP LOCALE" Foreground="#248A3D" FontSize="10" FontWeight="SemiBold" />
+                    <Button x:Name="AclWorkspaceButton" Grid.Column="1" Content="Gestisci ACL esistenti" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" ToolTip="Apre uno spazio separato dalla migrazione per consultare, simulare e applicare ACL sugli oggetti esistenti" />
+                    <Border Grid.Column="2" Style="{StaticResource StatusPill}">
+                        <TextBlock Text="PASSBOLT V4-ONLY" Foreground="#196C2E" FontSize="11" FontWeight="SemiBold" />
                     </Border>
                 </Grid>
 
-                <Border Grid.Row="1" Style="{StaticResource InfoBanner}" Margin="0,0,0,14">
-                    <TextBlock Text="Release v4-only: sono ammessi esclusivamente server Passbolt v4 e formati v4 espliciti; i server o i formati v5 vengono rifiutati. Chiave privata, passphrase, MFA e sessione restano esclusivamente in memoria e si chiudono su richiesta, alla chiusura dell'app o dopo 30 minuti di inattivita." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" LineHeight="17" />
-                </Border>
-
-                <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,16">
+                <Border Grid.Row="1" Style="{StaticResource Card}" Padding="16,13" Margin="0">
                     <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="28" /><ColumnDefinition Width="1.08*" /></Grid.ColumnDefinitions>
-                        <Border Grid.Column="1" Width="1" Background="#E5E5EA" HorizontalAlignment="Center" />
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="1.05*" /><ColumnDefinition Width="22" /><ColumnDefinition Width="0.95*" /></Grid.ColumnDefinitions>
+                        <Border x:Name="Phase04SettingsSeparator" Grid.Column="1" Width="1" Background="#E5E5EA" HorizontalAlignment="Center" />
 
                         <Grid Grid.Column="0">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="105" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Sessione sicura" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
-                            <TextBlock Grid.Row="1" Text="Chiave privata" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
-                            <TextBox x:Name="PrivateKeyPath" Grid.Row="1" Grid.Column="1" ToolTip="File ASCII-armored della chiave privata Passbolt" />
-                            <Button x:Name="BrowseKeyButton" Grid.Row="1" Grid.Column="2" Content="Scegli file" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" />
-                            <TextBlock Grid.Row="2" Text="Passphrase" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <PasswordBox x:Name="KeyPassphrase" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" ToolTip="Usata solo per aprire la sessione; non viene salvata e il campo viene subito cancellato" />
-                            <TextBlock Grid.Row="3" Text="MFA (TOTP)" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <PasswordBox x:Name="MfaTotpCode" Grid.Row="3" Grid.Column="1" Margin="0,8,0,0" MaxLength="6" ToolTip="Usato solo per aprire la sessione; non viene salvato e il campo viene subito cancellato" />
-                            <Button x:Name="ImportSessionButton" Grid.Row="3" Grid.Column="2" Content="Avvia sessione" Style="{StaticResource SecondaryButton}" Margin="8,8,0,0" />
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,9">
+                                <TextBlock Text="Passbolt e sessione sicura" Style="{StaticResource SectionTitle}" FontSize="16" />
+                                <TextBlock Text="Verifica il server e conferma la fingerprint, poi apri GPGAuth. Credenziali e identit&#xE0; OpenPGP restano solo in memoria." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <TextBlock Grid.Row="1" Text="Server" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                            <TextBox x:Name="PassboltUrl" Grid.Row="1" Grid.Column="1" AutomationProperties.Name="URL HTTPS Passbolt" ToolTip="URL base HTTPS, ad esempio https://passbolt.example.com" MinHeight="34" Padding="10,6" />
+                            <Button x:Name="VerifyButton" Grid.Row="1" Grid.Column="2" Content="Verifica" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" MinHeight="34" Padding="13,6" FontSize="12" IsEnabled="False" />
+                            <Border Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Background="#F5F5F7" BorderBrush="#E5E5EA" BorderThickness="1" CornerRadius="9" Padding="9,6" Margin="0,6,0,0">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse x:Name="ConnectionDot" Width="8" Height="8" Fill="#98A5B1" Margin="0,0,7,0" />
+                                        <TextBlock x:Name="ConnectionStatus" Text="Server non verificato" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="DetectedFingerprint" Grid.Row="1" Text="Fingerprint: non ancora rilevata" Foreground="#3A3A3C" FontFamily="Cascadia Mono, Consolas" FontSize="10" TextTrimming="CharacterEllipsis" ToolTip="Fingerprint OpenPGP del server rilevata durante la verifica pubblica" Margin="15,2,0,0" />
+                                </Grid>
+                            </Border>
+                            <TextBlock Grid.Row="3" Text="Chiave privata" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,6,0,0" />
+                            <TextBox x:Name="PrivateKeyPath" Grid.Row="3" Grid.Column="1" AutomationProperties.Name="Percorso chiave privata OpenPGP" ToolTip="File ASCII-armored della chiave privata Passbolt" MinHeight="34" Padding="10,6" Margin="0,6,0,0" />
+                            <Button x:Name="BrowseKeyButton" Grid.Row="3" Grid.Column="2" Content="Scegli file" Style="{StaticResource SecondaryButton}" Margin="8,6,0,0" MinHeight="34" Padding="13,6" FontSize="12" />
+                            <Grid Grid.Row="4" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /><ColumnDefinition Width="76" /><ColumnDefinition Width="76" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock Text="Passphrase" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+                                <PasswordBox x:Name="KeyPassphrase" Grid.Column="1" AutomationProperties.Name="Passphrase chiave privata" ToolTip="Usata solo per aprire la sessione; non viene salvata e il campo viene subito cancellato" MinHeight="34" Padding="10,6" />
+                                <TextBlock Grid.Column="2" Text="MFA (TOTP)" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                <PasswordBox x:Name="MfaTotpCode" Grid.Column="3" AutomationProperties.Name="Codice MFA TOTP" MaxLength="6" ToolTip="Usato solo per aprire la sessione; non viene salvato e il campo viene subito cancellato" MinHeight="34" Padding="10,6" />
+                                <Button x:Name="ImportSessionButton" Grid.Column="4" Content="Avvia sessione" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" MinHeight="34" Padding="13,6" FontSize="12" />
+                            </Grid>
                         </Grid>
 
-                        <Grid Grid.Column="2">
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="135" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="Destinazione e formato" Style="{StaticResource SectionTitle}" Margin="0,0,0,10" />
+                        <Grid x:Name="MigrationDestinationPanel" Grid.Column="2">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="105" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,9">
+                                <TextBlock Text="Destinazione migrazione" Style="{StaticResource SectionTitle}" FontSize="16" />
+                                <TextBlock Text="Il preflight verifica destinazione e permessi prima di ogni scrittura. Server e formati v5 vengono rifiutati." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
                             <TextBlock Grid.Row="1" Text="Destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
-                            <ComboBox x:Name="DestinationMode" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" SelectedIndex="0" ToolTip="Crea o riutilizza una cartella per ogni cliente; in un contenitore condiviso eredita la maschera dei permessi verificata">
+                            <ComboBox x:Name="DestinationMode" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" AutomationProperties.Name="Modalità destinazione migrazione" SelectedIndex="0" ToolTip="Crea o riutilizza una cartella per ogni cliente; in un contenitore condiviso eredita la maschera dei permessi verificata" MinHeight="34" Padding="10,6">
                                 <ComboBoxItem Content="Cartelle per cliente nel contenitore scelto" Tag="client_folders" />
                                 <ComboBoxItem Content="Mappatura distinta per ogni cliente" Tag="client_mapping" />
                                 <ComboBoxItem Content="Direttamente nella cartella scelta" Tag="direct_folder" />
                                 <ComboBoxItem Content="Radice personale Passbolt" Tag="root" />
                             </ComboBox>
                             <TextBlock Grid.Row="2" Text="Cartella Passbolt" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <ComboBox x:Name="DestinationFolder" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" SelectedIndex="0" MaxDropDownHeight="300" ToolTip="Il primo dry-run carica le cartelle Passbolt accessibili">
+                            <ComboBox x:Name="DestinationFolder" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" AutomationProperties.Name="Cartella Passbolt di destinazione" Margin="0,8,0,0" SelectedIndex="0" MaxDropDownHeight="300" ToolTip="Il primo dry-run carica le cartelle Passbolt accessibili" MinHeight="34" Padding="10,6">
                                 <ComboBoxItem Content="Radice personale Passbolt" Tag="" />
                             </ComboBox>
-                            <Button x:Name="ConfigureClientMappingsButton" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Content="Mappa clienti" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" Visibility="Collapsed" />
+                            <Button x:Name="ConfigureClientMappingsButton" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Content="Mappa clienti" Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" Visibility="Collapsed" MinHeight="34" Padding="13,6" FontSize="12" />
                             <TextBlock Grid.Row="3" Text="Permessi" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
                             <TextBlock x:Name="PermissionModeStatus" Grid.Row="3" Grid.Column="1" Text="Ereditati dalla destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,8,0" TextWrapping="Wrap" ToolTip="I permessi personalizzati vengono applicati soltanto alle nuove cartelle e risorse; il proprietario autenticato resta sempre Owner" />
-                            <Button x:Name="ConfigurePermissionsButton" Grid.Row="3" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" />
-                            <TextBlock Grid.Row="4" Text="Formato cartelle" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <ComboBox x:Name="FolderFormat" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Questa release crea esclusivamente cartelle v4; v5 e la selezione automatica sono disabilitati">
-                                <ComboBoxItem Content="v4 - unico formato supportato" Tag="v4" />
-                            </ComboBox>
-                            <TextBlock Grid.Row="5" Text="Formato risorse" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <ComboBox x:Name="ResourceFormat" Grid.Row="5" Grid.Column="1" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Questa release crea esclusivamente risorse v4; v5 e la selezione automatica sono disabilitati">
-                                <ComboBoxItem Content="v4 - unico formato supportato" Tag="v4" />
-                            </ComboBox>
-                            <Button x:Name="DryRunButton" Grid.Row="5" Grid.Column="2" Content="Preflight e dry-run" Style="{StaticResource PrimaryButton}" Margin="8,8,0,0" IsEnabled="False" />
+                            <Button x:Name="ConfigurePermissionsButton" Grid.Row="3" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" MinHeight="34" Padding="13,6" FontSize="12" />
+                            <TextBlock Grid.Row="4" Text="Formato" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <Border Grid.Row="4" Grid.Column="1" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="9" Padding="10,7" Margin="0,8,8,0">
+                                <TextBlock Text="Cartelle e risorse: v4" Foreground="#196C2E" FontSize="11" FontWeight="SemiBold" />
+                            </Border>
+                            <Button x:Name="DryRunButton" Grid.Row="4" Grid.Column="2" Content="Preflight e dry-run" Style="{StaticResource PrimaryButton}" Margin="0,8,0,0" IsEnabled="False" MinHeight="34" Padding="13,6" FontSize="12" />
+                        </Grid>
+                        <Grid x:Name="AclContextPanel" Grid.Column="2" Visibility="Collapsed">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Margin="0,0,0,9">
+                                <TextBlock Text="Contesto ACL separato" Style="{StaticResource SectionTitle}" FontSize="16" />
+                                <TextBlock Text="Le opzioni di destinazione della migrazione non si applicano agli oggetti esistenti." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <Border Grid.Row="1" Style="{StaticResource InfoBanner}" Padding="11,8" Margin="0,0,0,7">
+                                <TextBlock Text="1. Il catalogo viene letto senza richieste di scrittura." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
+                            </Border>
+                            <Border Grid.Row="2" Style="{StaticResource InfoBanner}" Padding="11,8" Margin="0,0,0,7">
+                                <TextBlock Text="2. Ogni piano confronta una ACL desiderata con uno snapshot remoto fresco." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
+                            </Border>
+                            <Border Grid.Row="3" Background="#FFF8E1" BorderBrush="#F2C94C" BorderThickness="1" CornerRadius="9" Padding="11,8">
+                                <TextBlock Text="3. L'applicazione resta bloccata fino alla conferma esatta; riduzioni e revoche richiedono una conferma rafforzata." Foreground="#754C00" FontSize="11" TextWrapping="Wrap" />
+                            </Border>
                         </Grid>
                     </Grid>
                 </Border>
 
-                <ScrollViewer Grid.Row="3" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,12,0,0">
-                <TabControl x:Name="ImportModeTabs" MinHeight="340" Margin="0,0,4,0">
-                    <TabItem Header="Nuova importazione">
-                        <Grid Margin="8,10,8,8">
+                <Grid Grid.Row="2" MinHeight="0" Margin="0,10,0,0">
+                    <Grid x:Name="MigrationWorkspace">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <ToggleButton x:Name="NewImportModeButton" Grid.Column="0" Content="Nuova importazione" IsChecked="True" MinHeight="34" Padding="14,7" />
+                            <ToggleButton x:Name="RecoveryModeButton" Grid.Column="1" Content="Recupero import interrotto" Margin="8,0,0,0" MinHeight="34" Padding="14,7" />
+                            <TextBlock Grid.Column="2" Text="Percorso di migrazione" Foreground="#66737F" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                        </Grid>
+                        <Grid Grid.Row="1" Margin="0,8,0,0">
+                    <Grid x:Name="NewImportWorkspace">
+                        <Grid Margin="6,0,6,6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Grid Grid.Row="0" Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,0"><StackPanel><TextBlock Text="Selezionati" Foreground="#66737F" /><TextBlock x:Name="ImportMetricSelected" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
-                                <Border Grid.Column="1" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Da creare" Foreground="#66737F" /><TextBlock x:Name="ImportMetricCreate" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
-                                <Border Grid.Column="2" Style="{StaticResource Card}" Margin="5,0"><StackPanel><TextBlock Text="Duplicati esatti" Foreground="#66737F" /><TextBlock x:Name="ImportMetricDuplicates" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
-                                <Border Grid.Column="3" Style="{StaticResource Card}" Margin="5,0,0,0"><StackPanel><TextBlock Text="Cartelle nuove" Foreground="#66737F" /><TextBlock x:Name="ImportMetricExisting" Text="&#x2014;" FontSize="22" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
+                                <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,0" Padding="12,8"><StackPanel><TextBlock Text="Selezionati" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="ImportMetricSelected" Text="&#x2014;" FontSize="18" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
+                                <Border Grid.Column="1" Style="{StaticResource Card}" Margin="5,0" Padding="12,8"><StackPanel><TextBlock Text="Da creare" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="ImportMetricCreate" Text="&#x2014;" FontSize="18" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
+                                <Border Grid.Column="2" Style="{StaticResource Card}" Margin="5,0" Padding="12,8"><StackPanel><TextBlock Text="Duplicati esatti" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="ImportMetricDuplicates" Text="&#x2014;" FontSize="18" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
+                                <Border Grid.Column="3" Style="{StaticResource Card}" Margin="5,0,0,0" Padding="12,8"><StackPanel><TextBlock Text="Cartelle nuove" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="ImportMetricExisting" Text="&#x2014;" FontSize="18" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
                             </Grid>
                             <TabControl x:Name="ImportWorkspaceTabs" Grid.Row="1">
                                 <TabItem Header="Piano">
@@ -847,17 +908,19 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                     </Border>
                                 </TabItem>
                             </TabControl>
-                            <Grid Grid.Row="2" Margin="0,12,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="260" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Button x:Name="ImportBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
-                                <TextBlock x:Name="ConfirmationHint" Grid.Column="1" Text="Prima esegui il dry-run." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
-                                <TextBox x:Name="ImportConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase di conferma esatta" Margin="6,0" />
-                                <Button x:Name="ExecuteImportButton" Grid.Column="3" Content="Importa in Passbolt" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                            </Grid>
+                            <Border Grid.Row="2" Style="{StaticResource CommandBar}" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="240" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Button x:Name="ImportBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" MinHeight="36" Padding="14,7" FontSize="12" />
+                                    <TextBlock x:Name="ConfirmationHint" Grid.Column="1" Text="Prima esegui il dry-run." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="12,0" TextWrapping="Wrap" />
+                                    <TextBox x:Name="ImportConfirmation" Grid.Column="2" AutomationProperties.Name="Conferma esatta importazione" IsEnabled="False" ToolTip="Digita la frase di conferma esatta" Margin="4,0" MinHeight="36" Padding="10,7" />
+                                    <Button x:Name="ExecuteImportButton" Grid.Column="3" Content="Importa in Passbolt" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" MinHeight="36" Padding="14,7" FontSize="12" />
+                                </Grid>
+                            </Border>
                         </Grid>
-                    </TabItem>
-                    <TabItem Header="Recupero import interrotto">
-                        <Grid Margin="8,10,8,8">
+                    </Grid>
+                    <Grid x:Name="RecoveryWorkspace" Visibility="Collapsed">
+                        <Grid Margin="6,0,6,6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Border Grid.Row="0" Style="{StaticResource InfoBanner}">
                                 <Grid>
@@ -887,31 +950,34 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                     <Border Grid.Row="0" Style="{StaticResource Card}" Padding="12,9">
                                         <TextBlock x:Name="RecoveryStatus" Text="Aggiorna l'elenco e seleziona un lotto." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" />
                                     </Border>
-                                    <Grid Grid.Row="1" Margin="0,10,0,0">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,5,5"><StackPanel><TextBlock Text="Operazioni verificate" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricVerified" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
-                                        <Border Grid.Row="0" Grid.Column="1" Style="{StaticResource Card}" Margin="5,0,0,5"><StackPanel><TextBlock Text="Gi&#xE0; riuscite" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricRemoteSuccess" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
-                                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}" Margin="0,5,5,0"><StackPanel><TextBlock Text="Da applicare" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricNotApplied" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
-                                        <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource Card}" Margin="5,5,0,0"><StackPanel><TextBlock Text="Conflitti" Foreground="#66737F" FontSize="11" /><TextBlock x:Name="RecoveryMetricConflicts" Text="&#x2014;" FontSize="20" FontWeight="Bold" Foreground="#C43D4B" /></StackPanel></Border>
+                                    <Grid Grid.Row="1" Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,3,0" Padding="9,7"><StackPanel><TextBlock Text="Verificate" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="RecoveryMetricVerified" Text="&#x2014;" FontSize="17" FontWeight="Bold" Foreground="#1F2933" /></StackPanel></Border>
+                                        <Border Grid.Column="1" Style="{StaticResource Card}" Margin="3,0" Padding="9,7"><StackPanel><TextBlock Text="Gi&#xE0; riuscite" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="RecoveryMetricRemoteSuccess" Text="&#x2014;" FontSize="17" FontWeight="Bold" Foreground="#16875D" /></StackPanel></Border>
+                                        <Border Grid.Column="2" Style="{StaticResource Card}" Margin="3,0" Padding="9,7"><StackPanel><TextBlock Text="Da applicare" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="RecoveryMetricNotApplied" Text="&#x2014;" FontSize="17" FontWeight="Bold" Foreground="#B7791F" /></StackPanel></Border>
+                                        <Border Grid.Column="3" Style="{StaticResource Card}" Margin="3,0,0,0" Padding="9,7"><StackPanel><TextBlock Text="Conflitti" Foreground="#66737F" FontSize="10" /><TextBlock x:Name="RecoveryMetricConflicts" Text="&#x2014;" FontSize="17" FontWeight="Bold" Foreground="#C43D4B" /></StackPanel></Border>
                                     </Grid>
-                                    <Border Grid.Row="2" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="12" Padding="14,10" Margin="0,10,0,0">
+                                    <Border Grid.Row="2" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="12" Padding="11,8" Margin="0,8,0,0">
                                         <TextBlock x:Name="RecoverySafetyStatus" Text="Nessuna cancellazione, spostamento o sovrascrittura viene pianificata dal recupero." Foreground="#248A3D" FontSize="11" TextWrapping="Wrap" />
                                     </Border>
                                 </Grid>
                             </Grid>
-                            <Grid Grid.Row="2" Margin="0,12,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="245" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Button x:Name="RecoveryBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
-                                <TextBlock x:Name="RecoveryConfirmationHint" Grid.Column="1" Text="Seleziona un lotto recuperabile." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
-                                <TextBox x:Name="RecoveryConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase RECUPERA N esatta" Margin="6,0" />
-                                <Button x:Name="VerifyRecoveryButton" Grid.Column="3" Content="Verifica lotto" Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                                <Button x:Name="ExecuteRecoveryButton" Grid.Column="4" Content="Recupera" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                            </Grid>
+                            <Border Grid.Row="2" Style="{StaticResource CommandBar}" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Button x:Name="RecoveryBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" MinHeight="36" Padding="14,7" FontSize="12" />
+                                    <TextBlock x:Name="RecoveryConfirmationHint" Grid.Column="1" Text="Seleziona un lotto recuperabile." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="12,0" TextWrapping="Wrap" />
+                                    <TextBox x:Name="RecoveryConfirmation" Grid.Column="2" AutomationProperties.Name="Conferma esatta recupero" IsEnabled="False" ToolTip="Digita la frase RECUPERA N esatta" Margin="4,0" MinHeight="36" Padding="10,7" />
+                                    <Button x:Name="VerifyRecoveryButton" Grid.Column="3" Content="Verifica lotto" Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" MinHeight="36" Padding="14,7" FontSize="12" />
+                                    <Button x:Name="ExecuteRecoveryButton" Grid.Column="4" Content="Recupera" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" MinHeight="36" Padding="14,7" FontSize="12" />
+                                </Grid>
+                            </Border>
                         </Grid>
-                    </TabItem>
-                    <TabItem Header="Permessi esistenti">
-                        <Grid Margin="8,10,8,8">
+                    </Grid>
+                        </Grid>
+                    </Grid>
+                    <Grid x:Name="ExistingAclWorkspace" Visibility="Collapsed">
+                        <Grid Margin="6,0,6,6">
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                             <Border Grid.Row="0" Style="{StaticResource InfoBanner}">
                                 <Grid>
@@ -920,12 +986,12 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                         <TextBlock Text="Permessi degli oggetti esistenti" FontWeight="SemiBold" Foreground="#1D1D1F" />
                                         <TextBlock Text="Consulta, simula e applica una ACL desiderata. Riduzioni e revoche richiedono una conferma rafforzata e il controllo degli utenti effettivamente coinvolti." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
                                     </StackPanel>
-                                    <ComboBox x:Name="AclTypeFilter" Grid.Column="1" Margin="10,0,0,0" SelectedIndex="0" ToolTip="Filtra per tipo di oggetto">
+                                    <ComboBox x:Name="AclTypeFilter" Grid.Column="1" AutomationProperties.Name="Filtro tipo oggetto ACL" Margin="10,0,0,0" SelectedIndex="0" ToolTip="Filtra per tipo di oggetto">
                                         <ComboBoxItem Content="Tutti gli oggetti" Tag="all" />
                                         <ComboBoxItem Content="Solo cartelle" Tag="folder" />
                                         <ComboBoxItem Content="Solo risorse" Tag="resource" />
                                     </ComboBox>
-                                    <TextBox x:Name="AclSearchBox" Grid.Column="2" Margin="8,0,0,0" ToolTip="Cerca per nome, percorso o ID" />
+                                    <TextBox x:Name="AclSearchBox" Grid.Column="2" AutomationProperties.Name="Cerca oggetti ACL" Margin="8,0,0,0" ToolTip="Cerca per nome, percorso o ID" />
                                     <Button x:Name="RefreshAclButton" Grid.Column="3" Content="Leggi permessi" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" />
                                 </Grid>
                             </Border>
@@ -979,20 +1045,22 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                     </Border>
                                 </Grid>
                             </Grid>
-                            <Grid Grid.Row="2" Margin="0,12,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="225" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Button x:Name="AclBackButton" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" />
-                                <TextBlock x:Name="AclViewerStatus" Grid.Column="1" Text="Avvia la sessione sicura, quindi leggi i permessi esistenti." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="14,0" TextWrapping="Wrap" />
-                                <TextBox x:Name="AclConfirmation" Grid.Column="2" IsEnabled="False" ToolTip="Digita la frase di conferma mostrata nel piano" Margin="6,0" />
-                                <Button x:Name="AclPlanButton" Grid.Column="3" Content="Simula modifica..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                                <Button x:Name="ApplyAclButton" Grid.Column="4" Content="Applica ACL" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                                <Button x:Name="RecoverAclButton" Grid.Column="5" Content="Recupera ACL..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="8,0,0,0" />
-                                <Button x:Name="ManageAclJournalsButton" Grid.Column="6" Content="Gestisci journal..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" ToolTip="Elenca, filtra, descrive e archivia i journal ACL locali senza cancellarli" />
-                            </Grid>
+                            <Border Grid.Row="2" Style="{StaticResource CommandBar}" Margin="0,10,0,0">
+                                <Grid>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="210" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="AclViewerStatus" Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2" Text="Avvia la sessione sicura, quindi leggi i permessi esistenti." Foreground="#66737F" FontSize="11" VerticalAlignment="Center" Margin="2,0,10,0" TextWrapping="Wrap" />
+                                    <TextBox x:Name="AclConfirmation" Grid.Row="0" Grid.Column="2" Grid.ColumnSpan="5" AutomationProperties.Name="Conferma esatta modifica ACL" HorizontalAlignment="Right" Width="210" IsEnabled="False" ToolTip="Digita la frase di conferma mostrata nel piano" MinHeight="34" Padding="10,6" />
+                                    <Button x:Name="AclBackButton" Grid.Row="1" Grid.Column="0" Content="&#x2190;  Torna alla revisione" Style="{StaticResource SecondaryButton}" Margin="0,6,0,0" MinHeight="34" Padding="12,6" FontSize="12" />
+                                    <Button x:Name="AclPlanButton" Grid.Row="1" Grid.Column="3" Content="Simula modifica..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="6,6,0,0" MinHeight="34" Padding="11,6" FontSize="12" />
+                                    <Button x:Name="ApplyAclButton" Grid.Row="1" Grid.Column="4" Content="Applica ACL" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="6,6,0,0" MinHeight="34" Padding="11,6" FontSize="12" />
+                                    <Button x:Name="RecoverAclButton" Grid.Row="1" Grid.Column="5" Content="Recupera ACL..." Style="{StaticResource SecondaryButton}" IsEnabled="False" Margin="6,6,0,0" MinHeight="34" Padding="11,6" FontSize="12" />
+                                    <Button x:Name="ManageAclJournalsButton" Grid.Row="1" Grid.Column="6" Content="Gestisci journal..." Style="{StaticResource SecondaryButton}" Margin="6,6,0,0" ToolTip="Elenca, filtra, descrive e archivia i journal ACL locali senza cancellarli" MinHeight="34" Padding="11,6" FontSize="12" />
+                                </Grid>
+                            </Border>
                         </Grid>
-                    </TabItem>
-                </TabControl>
-                </ScrollViewer>
+                    </Grid>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>
@@ -1024,6 +1092,7 @@ $StepImport = Get-Control "StepImport"
 $StepImportNumber = Get-Control "StepImportNumber"
 $StepImportText = Get-Control "StepImportText"
 $SafeModeText = Get-Control "SafeModeText"
+$PlannedPassboltUrl = Get-Control "PlannedPassboltUrl"
 $PassboltUrl = Get-Control "PassboltUrl"
 $DetectedFingerprint = Get-Control "DetectedFingerprint"
 $VerifyButton = Get-Control "VerifyButton"
@@ -1072,21 +1141,29 @@ $ReviewBackButton = Get-Control "ReviewBackButton"
 $SaveReviewProjectButton = Get-Control "SaveReviewProjectButton"
 $PrepareImportButton = Get-Control "PrepareImportButton"
 $ImportPage = Get-Control "ImportPage"
+$ImportPageTitle = Get-Control "ImportPageTitle"
 $ImportSummary = Get-Control "ImportSummary"
-$ImportModeTabs = Get-Control "ImportModeTabs"
+$AclWorkspaceButton = Get-Control "AclWorkspaceButton"
+$MigrationWorkspace = Get-Control "MigrationWorkspace"
+$NewImportModeButton = Get-Control "NewImportModeButton"
+$RecoveryModeButton = Get-Control "RecoveryModeButton"
+$NewImportWorkspace = Get-Control "NewImportWorkspace"
+$RecoveryWorkspace = Get-Control "RecoveryWorkspace"
+$ExistingAclWorkspace = Get-Control "ExistingAclWorkspace"
 $ImportWorkspaceTabs = Get-Control "ImportWorkspaceTabs"
 $PrivateKeyPath = Get-Control "PrivateKeyPath"
 $BrowseKeyButton = Get-Control "BrowseKeyButton"
 $KeyPassphrase = Get-Control "KeyPassphrase"
 $MfaTotpCode = Get-Control "MfaTotpCode"
 $ImportSessionButton = Get-Control "ImportSessionButton"
+$Phase04SettingsSeparator = Get-Control "Phase04SettingsSeparator"
+$MigrationDestinationPanel = Get-Control "MigrationDestinationPanel"
+$AclContextPanel = Get-Control "AclContextPanel"
 $DestinationMode = Get-Control "DestinationMode"
 $DestinationFolder = Get-Control "DestinationFolder"
 $ConfigureClientMappingsButton = Get-Control "ConfigureClientMappingsButton"
 $PermissionModeStatus = Get-Control "PermissionModeStatus"
 $ConfigurePermissionsButton = Get-Control "ConfigurePermissionsButton"
-$FolderFormat = Get-Control "FolderFormat"
-$ResourceFormat = Get-Control "ResourceFormat"
 $DryRunButton = Get-Control "DryRunButton"
 $ImportMetricSelected = Get-Control "ImportMetricSelected"
 $ImportMetricCreate = Get-Control "ImportMetricCreate"
@@ -1148,6 +1225,9 @@ $AclBackButton = Get-Control "AclBackButton"
 $script:ConnectionVerified = $false
 $script:VerifiedUrl = ""
 $script:VerifiedFingerprint = ""
+$script:Phase04Workspace = "new_import"
+$script:LastMigrationWorkspace = "new_import"
+$script:SynchronizingPassboltUrl = $false
 $script:InventoryResult = $null
 $script:InventoryFolder = ""
 $script:AllInventoryRows = @()
@@ -1430,8 +1510,9 @@ function Get-LocalProjectCandidateSelection([switch]$ReviewContext) {
 }
 
 function Save-LocalPreparationProject([switch]$ReviewContext) {
-    if (-not $script:ConnectionVerified -or -not $script:VerifiedUrl) {
-        [System.Windows.MessageBox]::Show("Verificare prima la connessione Passbolt. La fingerprint non verra' salvata nel progetto.", "Connessione non verificata", "OK", "Warning") | Out-Null
+    $PlannedServerOrigin = $PlannedPassboltUrl.Text.Trim()
+    if (-not $PlannedServerOrigin) {
+        [System.Windows.MessageBox]::Show("Indicare l'URL HTTPS della destinazione prevista. Il valore verra' validato solo localmente e la fingerprint non verra' salvata nel progetto.", "Destinazione non indicata", "OK", "Warning") | Out-Null
         return
     }
     if ($null -eq $script:InventoryResult -or -not $script:InventoryFolder) {
@@ -1452,7 +1533,7 @@ function Save-LocalPreparationProject([switch]$ReviewContext) {
             kind = "passbolt-migration-preparation"
             app_version = "0.28.1"
             saved_at_utc = $SavedAtUtc
-            server_origin = [string]$script:VerifiedUrl
+            server_origin = [string]$PlannedServerOrigin
             source_root = [string]$script:InventoryFolder
             source_mapping_profile = $script:SourceMappingProfile
             selected_files = $SelectedFiles
@@ -1510,7 +1591,7 @@ function Restore-LocalPreparationProject([object]$Project) {
     $script:ConnectionVerified = $false
     $script:VerifiedUrl = ""
     $script:VerifiedFingerprint = ""
-    $DetectedFingerprint.Text = "Non ancora rilevata"
+    $DetectedFingerprint.Text = "Fingerprint: non ancora rilevata"
     $ConnectionDot.Fill = Get-Brush "#98A5B1"
     $ConnectionStatus.Text = "Da verificare dopo il ripristino"
     $ConnectionStatus.Foreground = Get-Brush "#C77D00"
@@ -1530,13 +1611,14 @@ function Restore-LocalPreparationProject([object]$Project) {
     $ReviewCandidatesGrid.ItemsSource = $null
     Reset-ImportWorkflow
     Update-SourceMappingProfileState
+    $PlannedPassboltUrl.Text = [string]$Project.server_origin
     $PassboltUrl.Text = [string]$Project.server_origin
     $ClientFolder.Text = [string]$Project.source_root
     $MetricClients.Text = [string][char]0x2014
     $MetricFiles.Text = [string][char]0x2014
     $MetricSize.Text = [string][char]0x2014
     $MetricIgnored.Text = [string][char]0x2014
-    $InventoryRoot.Text = "Progetto ripristinato: verificare connessione e rieseguire l'inventario"
+    $InventoryRoot.Text = "Progetto ripristinato: rieseguire l'inventario locale"
     $ReviewSummary.Text = "Il progetto richiede una nuova revisione locale"
     $ReviewMetricFiles.Text = [string][char]0x2014
     $ReviewMetricCandidates.Text = [string][char]0x2014
@@ -1547,7 +1629,7 @@ function Restore-LocalPreparationProject([object]$Project) {
     Show-Page "Configuration"
     Update-ConfigurationState
     $DigestPrefix = ([string]$Project.digest).Substring(0, 8).ToUpperInvariant()
-    Add-Activity "Progetto locale ripristinato (digest $DigestPrefix); connessione, inventario e revisione restano da verificare."
+    Add-Activity "Progetto locale ripristinato (digest $DigestPrefix); inventario e revisione restano da ricostruire localmente, la connessione verra' verificata in fase 04."
 }
 
 function Open-LocalPreparationProject {
@@ -1591,10 +1673,10 @@ function Open-LocalPreparationProject {
         $AvailabilityMessage = if ($MissingSource) {
             "La cartella sorgente salvata non e' disponibile: selezionarne una valida prima di continuare."
         } else {
-            "Verificare nuovamente la connessione, quindi continuare: inventario e selezioni saranno ricostruiti senza aprire automaticamente i documenti."
+            "Continuare con l'inventario locale: le selezioni saranno ricostruite senza aprire automaticamente i documenti."
         }
         [System.Windows.MessageBox]::Show(
-            "Il progetto e' stato decifrato per l'utente Windows corrente.`n`n$AvailabilityMessage`n`nLa fingerprint non e' stata ripristinata e richiede una nuova conferma indipendente.",
+            "Il progetto e' stato decifrato per l'utente Windows corrente.`n`n$AvailabilityMessage`n`nLa destinazione non e' stata contattata. La fingerprint verra' rilevata e richiedera' una nuova conferma indipendente in fase 04.",
             "Progetto locale ripristinato",
             "OK",
             $(if ($MissingSource) { "Warning" } else { "Information" })
@@ -1797,6 +1879,48 @@ function Get-ImportSessionIdentityText {
     return "Sessione attiva: $DisplayName <$($Info.user.username)> | chiave $($Info.user_key_fingerprint) | $($Info.authentication) | timeout inattivita $($script:ImportSessionIdleTimeoutMinutes) min"
 }
 
+function Show-Phase04Workspace(
+    [ValidateSet("new_import", "recovery", "existing_acl")]
+    [string]$Workspace,
+    [switch]$SkipRefresh
+) {
+    $script:Phase04Workspace = $Workspace
+    $IsAclWorkspace = $Workspace -eq "existing_acl"
+    $MigrationWorkspace.Visibility = if ($IsAclWorkspace) { "Collapsed" } else { "Visible" }
+    $ExistingAclWorkspace.Visibility = if ($IsAclWorkspace) { "Visible" } else { "Collapsed" }
+    $MigrationDestinationPanel.Visibility = if ($IsAclWorkspace) { "Collapsed" } else { "Visible" }
+    $AclContextPanel.Visibility = if ($IsAclWorkspace) { "Visible" } else { "Collapsed" }
+    $NewImportWorkspace.Visibility = if ($Workspace -eq "new_import") { "Visible" } else { "Collapsed" }
+    $RecoveryWorkspace.Visibility = if ($Workspace -eq "recovery") { "Visible" } else { "Collapsed" }
+    $NewImportModeButton.IsChecked = $Workspace -eq "new_import"
+    $RecoveryModeButton.IsChecked = $Workspace -eq "recovery"
+
+    if ($IsAclWorkspace) {
+        $ImportPageTitle.Text = "Gestione permessi esistenti"
+        $ImportSummary.Text = "Spazio separato dalla migrazione per consultare, simulare e applicare ACL"
+        $AclWorkspaceButton.Content = "Torna alla migrazione"
+        Update-AclViewerState
+        return
+    }
+
+    $script:LastMigrationWorkspace = $Workspace
+    $AclWorkspaceButton.Content = "Gestisci ACL esistenti"
+    if ($Workspace -eq "recovery") {
+        $ImportPageTitle.Text = "Recupero import interrotto"
+        $ImportSummary.Text = "Associa i registri locali ai sorgenti prima di ogni verifica remota"
+        if (-not $SkipRefresh -and $script:RecoveryBatches.Count -eq 0 -and $null -eq $script:RecoveryPlan) {
+            Refresh-RecoveryBatches -Quiet
+        }
+    } else {
+        $ImportPageTitle.Text = "Importazione controllata"
+        $ImportSummary.Text = if ($script:ImportCandidates.Count -gt 0) {
+            "$($script:ImportCandidates.Count) candidati pronti selezionati dalla revisione"
+        } else {
+            "Prepara i candidati dalla revisione"
+        }
+    }
+}
+
 function Update-ImportSessionState {
     $Active = Test-ImportSessionActive
     $PrivateKeyPath.IsEnabled = -not $Active
@@ -1889,7 +2013,7 @@ function Test-TerminalImportSessionError($Envelope) {
 
 function Open-ImportSession {
     if (-not $script:ConnectionVerified -or -not $script:VerifiedUrl -or -not $script:VerifiedFingerprint) {
-        [System.Windows.MessageBox]::Show("La connessione Passbolt non e' verificata. Tornare alla configurazione.", "Connessione non verificata", "OK", "Warning") | Out-Null
+        [System.Windows.MessageBox]::Show("Verificare il server e confermare la fingerprint nella parte superiore della fase 04.", "Connessione non verificata", "OK", "Warning") | Out-Null
         return
     }
     if (($script:ImportCandidates.Count -lt 1 -and $script:RecoveryCandidates.Count -lt 1) -or -not (Test-Path -LiteralPath $script:InventoryFolder -PathType Container)) {
@@ -3782,7 +3906,6 @@ function Update-DestinationControlState {
     $Mode = [string]$DestinationMode.SelectedItem.Tag
     $DestinationFolder.IsEnabled = ($Mode -in @("client_folders", "direct_folder"))
     $DestinationFolder.Visibility = if ($Mode -eq "client_mapping") { "Collapsed" } else { "Visible" }
-    $FolderFormat.IsEnabled = ($Mode -eq "client_folders")
     Update-ClientMappingButtonState
 }
 
@@ -4502,14 +4625,14 @@ function Open-ImportPreparation {
     $StepImportText.Foreground = Get-Brush "#3A3A3C"
     Add-Activity "Preparazione importazione: $($script:ImportCandidates.Count) candidati, nessun segreto registrato."
     Update-ImportSessionState
-    $ImportModeTabs.SelectedIndex = 0
+    Show-Phase04Workspace "new_import"
     Show-Page "Import"
     Refresh-RecoveryBatches -Quiet
 }
 
 function Invoke-ImportReadiness {
     if (-not $script:ConnectionVerified -or -not $script:VerifiedUrl -or -not $script:VerifiedFingerprint) {
-        [System.Windows.MessageBox]::Show("La connessione Passbolt non e' verificata. Tornare alla configurazione.", "Connessione non verificata", "OK", "Warning") | Out-Null
+        [System.Windows.MessageBox]::Show("Verificare il server e confermare la fingerprint nella parte superiore della fase 04.", "Connessione non verificata", "OK", "Warning") | Out-Null
         return
     }
     if ($script:ImportCandidates.Count -lt 1) {
@@ -4528,10 +4651,8 @@ function Invoke-ImportReadiness {
     $ReadinessSourceFilePasswords = @()
     $Envelope = $null
     $CloseSessionForError = $false
-    $RequestedResourceFormat = [string]$ResourceFormat.SelectedItem.Tag
-    if ($RequestedResourceFormat -ne "v4") { $RequestedResourceFormat = "v4" }
-    $RequestedFolderFormat = [string]$FolderFormat.SelectedItem.Tag
-    if ($RequestedFolderFormat -ne "v4") { $RequestedFolderFormat = "v4" }
+    $RequestedResourceFormat = "v4"
+    $RequestedFolderFormat = "v4"
     $RequestedDestinationMode = [string]$DestinationMode.SelectedItem.Tag
     if ($RequestedDestinationMode -notin @("client_folders", "client_mapping", "direct_folder", "root")) { $RequestedDestinationMode = "client_folders" }
     $RequestedDestinationFolderId = if ($RequestedDestinationMode -eq "client_mapping") { "" } else { Get-SelectedDestinationFolderId }
@@ -5087,9 +5208,10 @@ function Update-ConfigurationState {
         $FolderStatus.Foreground = Get-Brush "#6E6E73"
     }
 
-    $CanContinue = $script:ConnectionVerified -and $FolderIsValid
+    $CanContinue = $FolderIsValid
     $ContinueButton.IsEnabled = $CanContinue
-    $InventoryCanBeSaved = $CanContinue -and $null -ne $script:InventoryResult -and $script:InventoryFolder -eq $ClientFolder.Text.Trim()
+    $StepInventory.IsEnabled = $CanContinue
+    $InventoryCanBeSaved = $CanContinue -and [bool]$PlannedPassboltUrl.Text.Trim() -and $null -ne $script:InventoryResult -and $script:InventoryFolder -eq $ClientFolder.Text.Trim()
     $SaveInventoryProjectButton.IsEnabled = $InventoryCanBeSaved
     $SaveReviewProjectButton.IsEnabled = $InventoryCanBeSaved -and $null -ne $script:ReviewResult
     if ($CanContinue) {
@@ -5178,6 +5300,8 @@ function Show-Page([ValidateSet("Configuration", "Inventory", "Review", "Import"
             $StepImportText.Foreground = Get-Brush "#8E8E93"
         }
     }
+    $StepReview.IsEnabled = ($Page -eq "Review" -or $null -ne $script:ReviewResult)
+    $StepImport.IsEnabled = ($Page -eq "Import" -or $script:ImportCandidates.Count -gt 0)
 }
 
 function Set-InventoryFilters($Result) {
@@ -5854,7 +5978,28 @@ function Invoke-Inventory {
     }
 }
 
+$PlannedPassboltUrl.Add_TextChanged({
+    if (-not $script:SynchronizingPassboltUrl) {
+        $script:SynchronizingPassboltUrl = $true
+        try {
+            if ($PassboltUrl.Text -cne $PlannedPassboltUrl.Text) { $PassboltUrl.Text = $PlannedPassboltUrl.Text }
+        } finally {
+            $script:SynchronizingPassboltUrl = $false
+        }
+    }
+    Update-ConfigurationState
+})
+
 $PassboltUrl.Add_TextChanged({
+    if (-not $script:SynchronizingPassboltUrl) {
+        $script:SynchronizingPassboltUrl = $true
+        try {
+            if ($PlannedPassboltUrl.Text -cne $PassboltUrl.Text) { $PlannedPassboltUrl.Text = $PassboltUrl.Text }
+        } finally {
+            $script:SynchronizingPassboltUrl = $false
+        }
+    }
+    $VerifyButton.IsEnabled = [bool]$PassboltUrl.Text.Trim()
     if ($script:VerifiedUrl -and $PassboltUrl.Text.Trim() -ne $script:VerifiedUrl) {
         if (Test-ImportSessionActive) {
             Stop-ImportSession "Sessione chiusa perche' l'URL Passbolt e' stato modificato." $false
@@ -5862,7 +6007,7 @@ $PassboltUrl.Add_TextChanged({
         $script:ConnectionVerified = $false
         $script:VerifiedUrl = ""
         $script:VerifiedFingerprint = ""
-        $DetectedFingerprint.Text = "Non ancora rilevata"
+        $DetectedFingerprint.Text = "Fingerprint: non ancora rilevata"
         Reset-ImportPlan "URL Passbolt modificato. Ripetere connessione e dry-run."
         $script:ClientDestinationMap = @{}
         $script:PermissionMode = "inherited"
@@ -5872,7 +6017,7 @@ $PassboltUrl.Add_TextChanged({
         Update-PermissionEditorState
         Update-DestinationFolderOptions @() "" $false
         $ConnectionDot.Fill = Get-Brush "#AEAEB2"
-        $ConnectionStatus.Text = "URL modificato: ripetere la verifica"
+        $ConnectionStatus.Text = "URL modificato: ripeti la verifica"
         $ConnectionStatus.Foreground = Get-Brush "#6E6E73"
         Update-ConfigurationState
     }
@@ -5892,7 +6037,7 @@ $VerifyButton.Add_Click({
         if ($DetectedValue -notmatch '^[0-9A-F]{40}$') {
             throw "La fingerprint rilevata dal server non e' valida."
         }
-        $DetectedFingerprint.Text = $DetectedValue
+        $DetectedFingerprint.Text = "Fingerprint: $DetectedValue"
         $ConfirmationMessage = "Fingerprint OpenPGP rilevata:`n`n$DetectedValue`n`nIl valore e' stato fornito dall'istanza appena contattata. Il rilevamento automatico non dimostra da solo l'identita' del server. Alla prima connessione, confrontarlo con l'amministratore tramite un canale indipendente.`n`nConfermare questa fingerprint per la sessione corrente?"
         $Confirmation = [System.Windows.MessageBox]::Show($ConfirmationMessage, "Conferma fingerprint Passbolt", "YesNo", "Warning")
         if ([string]$Confirmation -ne "Yes") {
@@ -5919,7 +6064,7 @@ $VerifyButton.Add_Click({
         $script:VerifiedFingerprint = $DetectedValue
         if ($null -ne $script:ImportPlan) { Reset-ImportPlan "Connessione riverificata. Ripetere il dry-run autenticato." }
         $ConnectionDot.Fill = Get-Brush "#248A3D"
-        $ConnectionStatus.Text = "Connesso - fingerprint confermata: $DetectedValue"
+        $ConnectionStatus.Text = "Server verificato e fingerprint confermata"
         $ConnectionStatus.Foreground = Get-Brush "#248A3D"
         Add-Activity "Passbolt raggiungibile; healthcheck verificato e fingerprint rilevata confermata dall'utente."
     } catch {
@@ -5930,7 +6075,7 @@ $VerifyButton.Add_Click({
         $script:ConnectionVerified = $false
         $script:VerifiedUrl = ""
         $script:VerifiedFingerprint = ""
-        $DetectedFingerprint.Text = "Non disponibile"
+        $DetectedFingerprint.Text = "Fingerprint: non disponibile"
         Reset-ImportPlan "Verifica pubblica non riuscita. Ripetere connessione e dry-run."
         $ConnectionDot.Fill = Get-Brush "#D70015"
         $ConnectionStatus.Text = "Verifica non riuscita"
@@ -5938,7 +6083,7 @@ $VerifyButton.Add_Click({
         Add-Activity "Verifica Passbolt non riuscita: $FailureMessage"
         [System.Windows.MessageBox]::Show($FailureMessage, "Connessione non riuscita", "OK", "Error") | Out-Null
     } finally {
-        $VerifyButton.IsEnabled = $true
+        $VerifyButton.IsEnabled = [bool]$PassboltUrl.Text.Trim()
         Update-ConfigurationState
         Update-ImportSessionState
     }
@@ -5986,8 +6131,8 @@ $BrowseButton.Add_Click({
 })
 
 $ContinueButton.Add_Click({
-    if (-not ($script:ConnectionVerified -and (Test-SelectedFolder))) {
-        [System.Windows.MessageBox]::Show("Completare la verifica della connessione e selezionare una cartella valida.", "Configurazione incompleta", "OK", "Warning") | Out-Null
+    if (-not (Test-SelectedFolder)) {
+        [System.Windows.MessageBox]::Show("Selezionare una cartella locale valida.", "Preparazione incompleta", "OK", "Warning") | Out-Null
         return
     }
     Show-Page "Inventory"
@@ -6002,17 +6147,17 @@ $OpenProjectButton.Add_Click({ Open-LocalPreparationProject })
 $SaveInventoryProjectButton.Add_Click({ Save-LocalPreparationProject })
 $SaveReviewProjectButton.Add_Click({ Save-LocalPreparationProject -ReviewContext })
 $BackButton.Add_Click({ Show-Page "Configuration"; Update-ConfigurationState })
-$StepConfiguration.Add_MouseLeftButtonUp({ Show-Page "Configuration"; Update-ConfigurationState })
-$StepInventory.Add_MouseLeftButtonUp({
-    if ($script:ConnectionVerified -and (Test-SelectedFolder)) {
+$StepConfiguration.Add_Click({ Show-Page "Configuration"; Update-ConfigurationState })
+$StepInventory.Add_Click({
+    if (Test-SelectedFolder) {
         Show-Page "Inventory"
         if ($null -eq $script:InventoryResult -or $script:InventoryFolder -ne $ClientFolder.Text.Trim()) { Invoke-Inventory }
     }
 })
-$StepReview.Add_MouseLeftButtonUp({
+$StepReview.Add_Click({
     if ($null -ne $script:ReviewResult) { Show-Page "Review" }
 })
-$StepImport.Add_MouseLeftButtonUp({
+$StepImport.Add_Click({
     if ($script:ImportCandidates.Count -gt 0) { Show-Page "Import" }
 })
 $RefreshButton.Add_Click({ Invoke-Inventory })
@@ -6063,13 +6208,14 @@ $ManageAclJournalsButton.Add_Click({ Show-AclJournalManager })
 $AclTypeFilter.Add_SelectionChanged({ Update-AclObjectFilter })
 $AclSearchBox.Add_TextChanged({ Update-AclObjectFilter })
 $AclObjectsGrid.Add_SelectionChanged({ Update-AclPermissionDetail })
-$ImportModeTabs.Add_SelectionChanged({
-    param($Sender, $EventArgs)
-    if ($EventArgs.OriginalSource -ne $ImportModeTabs) { return }
-    if ($ImportModeTabs.SelectedIndex -eq 1 -and $script:RecoveryBatches.Count -eq 0 -and $null -eq $script:RecoveryPlan) {
-        Refresh-RecoveryBatches -Quiet
+$NewImportModeButton.Add_Click({ Show-Phase04Workspace "new_import" })
+$RecoveryModeButton.Add_Click({ Show-Phase04Workspace "recovery" })
+$AclWorkspaceButton.Add_Click({
+    if ($script:Phase04Workspace -eq "existing_acl") {
+        Show-Phase04Workspace $script:LastMigrationWorkspace
+    } else {
+        Show-Phase04Workspace "existing_acl"
     }
-    if ($ImportModeTabs.SelectedIndex -eq 2) { Update-AclViewerState }
 })
 
 $BrowseKeyButton.Add_Click({
@@ -6099,18 +6245,6 @@ $PrivateKeyPath.Add_TextChanged({
 })
 $KeyPassphrase.Add_PasswordChanged({ Update-ImportSessionState })
 $MfaTotpCode.Add_PasswordChanged({ Update-ImportSessionState })
-$ResourceFormat.Add_SelectionChanged({
-    if ($null -ne $script:ImportPlan) {
-        Reset-ImportPlan "Il formato risorsa e' cambiato. Ripetere il dry-run."
-        Add-Activity "Formato risorsa modificato; il piano precedente e' stato invalidato."
-    }
-})
-$FolderFormat.Add_SelectionChanged({
-    if ($null -ne $script:ImportPlan) {
-        Reset-ImportPlan "Il formato cartelle e' cambiato. Ripetere il dry-run."
-        Add-Activity "Formato cartelle modificato; il piano precedente e' stato invalidato."
-    }
-})
 $DestinationMode.Add_SelectionChanged({
     Update-DestinationControlState
     if ($null -ne $script:ImportPlan) {
@@ -6213,10 +6347,72 @@ if ($RenderPreviewPath) {
     $PreviewPixelWidth = [int][math]::Ceiling($PreviewWidth * $RenderPreviewDpi / 96.0)
     $PreviewPixelHeight = [int][math]::Ceiling($PreviewHeight * $RenderPreviewDpi / 96.0)
     Show-Page $RenderPreviewPage
+    if ($RenderPreviewPage -eq "Import") {
+        Show-Phase04Workspace $RenderPreviewImportTab -SkipRefresh
+        if ($RenderPreviewImportState -eq "populated") {
+            $PassboltUrl.Text = "https://passbolt.example.test"
+            $ConnectionDot.Fill = Get-Brush "#196C2E"
+            $ConnectionStatus.Text = "Server verificato e fingerprint confermata"
+            $DetectedFingerprint.Text = "Fingerprint: 0123456789ABCDEF0123456789ABCDEF01234567"
+            $PrivateKeyPath.Text = "C:\Synthetic\operator-private.asc"
+            $ImportSessionButton.Content = "Chiudi sessione"
+            $ImportMetricSelected.Text = "24"
+            $ImportMetricCreate.Text = "21"
+            $ImportMetricDuplicates.Text = "3"
+            $ImportMetricExisting.Text = "6"
+            $ImportIdentity.Text = "Sessione sintetica attiva: operatore@example.test | GPGAuth verificato"
+            $ImportPlanGrid.ItemsSource = @(
+                [pscustomobject]@{ ActionLabel = "Crea risorsa"; Destination = "Clienti / Alfa"; Title = "Portale"; Username = "admin"; Uri = "https://portal.example.test" },
+                [pscustomobject]@{ ActionLabel = "Salta duplicato"; Destination = "Clienti / Beta"; Title = "VPN"; Username = "operator"; Uri = "vpn.example.test" }
+            )
+            $ImportPlanStatus.Text = "Piano sintetico: 21 risorse da creare, 3 duplicati esatti; nessuna scrittura inviata."
+            $ConfirmationHint.Text = "Dry-run valido. Digita IMPORTA 21 per autorizzare la scrittura."
+            $RecoveryBatchesGrid.ItemsSource = @(
+                [pscustomobject]@{ StatusLabel = "Recuperabile"; RecordedAtLabel = "27/08/2026 09:30"; CandidateCountLabel = "12"; BatchId = "00000000-0000-4000-8000-000000000001" }
+            )
+            $RecoveryStatus.Text = "Lotto associato ai 12 candidati riletti dalla cartella sorgente corrente."
+            $RecoveryMetricVerified.Text = "12"
+            $RecoveryMetricRemoteSuccess.Text = "8"
+            $RecoveryMetricNotApplied.Text = "4"
+            $RecoveryMetricConflicts.Text = "0"
+            $RecoveryConfirmationHint.Text = "Verifica remota completata; conferma richiesta prima del recupero."
+            $AclObjectsGrid.ItemsSource = @(
+                [pscustomobject]@{ ObjectTypeLabel = "Cartella"; Path = "Clienti / Alfa"; CurrentAccessLabel = "Proprietario"; SharingLabel = "Condivisa"; StatusLabel = "Verificata" },
+                [pscustomobject]@{ ObjectTypeLabel = "Risorsa"; Path = "Clienti / Alfa / Portale"; CurrentAccessLabel = "Proprietario"; SharingLabel = "Condivisa"; StatusLabel = "Verificata" }
+            )
+            $AclObjectSummary.Text = "Cartella: Clienti / Alfa | accesso Proprietario | ACL completa e verificata."
+            $AclPermissionsGrid.ItemsSource = @(
+                [pscustomobject]@{ SubjectType = "Utente"; DisplayName = "Operatore test"; PermissionLabel = "Proprietario"; VerificationLabel = "Verificata"; RecipientCount = "1" }
+            )
+            $AclViewerStatus.Text = "Sola lettura: 2 oggetti; ACL verificate: 2; nessuna richiesta di scrittura inviata."
+        }
+    }
     $PreviewRoot = [System.Windows.FrameworkElement]$Window.Content
     $PreviewRoot.Measure([System.Windows.Size]::new($PreviewWidth, $PreviewHeight))
     $PreviewRoot.Arrange([System.Windows.Rect]::new(0, 0, $PreviewWidth, $PreviewHeight))
     $PreviewRoot.UpdateLayout()
+    $Phase04ActionBottoms = [ordered]@{}
+    if ($RenderPreviewPage -eq "Import") {
+        $PreviewActionControls = @(
+            [pscustomobject]@{ Workspace = "new_import"; Name = "new_import"; Control = $ExecuteImportButton },
+            [pscustomobject]@{ Workspace = "recovery"; Name = "recovery"; Control = $ExecuteRecoveryButton },
+            [pscustomobject]@{ Workspace = "existing_acl"; Name = "existing_acl"; Control = $ManageAclJournalsButton }
+        )
+        foreach ($PreviewAction in $PreviewActionControls) {
+            Show-Phase04Workspace $PreviewAction.Workspace -SkipRefresh
+            $PreviewRoot.UpdateLayout()
+            $ActionBottom = $PreviewAction.Control.TranslatePoint(
+                [System.Windows.Point]::new(0, $PreviewAction.Control.ActualHeight),
+                $PreviewRoot
+            ).Y
+            $Phase04ActionBottoms[$PreviewAction.Name] = [math]::Round($ActionBottom, 1)
+            if ($ActionBottom -gt ($PreviewRoot.ActualHeight + 0.5)) {
+                throw "Il comando della fase 04 '$($PreviewAction.Name)' supera il bordo inferiore dell'anteprima."
+            }
+        }
+        Show-Phase04Workspace $RenderPreviewImportTab -SkipRefresh
+        $PreviewRoot.UpdateLayout()
+    }
     $PreviewBitmap = [System.Windows.Media.Imaging.RenderTargetBitmap]::new(
         $PreviewPixelWidth,
         $PreviewPixelHeight,
@@ -6238,6 +6434,8 @@ if ($RenderPreviewPath) {
         version = "0.28.1"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
+        import_tab = if ($RenderPreviewPage -eq "Import") { $RenderPreviewImportTab } else { $null }
+        import_state = if ($RenderPreviewPage -eq "Import") { $RenderPreviewImportState } else { $null }
         width = $PreviewWidth
         height = $PreviewHeight
         pixel_width = $PreviewPixelWidth
@@ -6254,6 +6452,7 @@ if ($RenderPreviewPath) {
             import_page_height = [math]::Round($ImportPage.ActualHeight, 1)
             import_page_top = [math]::Round($ImportPage.TranslatePoint([System.Windows.Point]::new(0, 0), $PreviewRoot).Y, 1)
             active_step_top = [math]::Round($StepImport.TranslatePoint([System.Windows.Point]::new(0, 0), $PreviewRoot).Y, 1)
+            phase04_action_bottoms = $Phase04ActionBottoms
         }
         status = "OK"
     } | ConvertTo-Json
@@ -6268,23 +6467,110 @@ if ($SelfTest) {
     if ($CompatibilityArray.Count -ne 1) {
         throw "Verifica compatibilit$([char]0x00E0) collezioni Windows PowerShell non riuscita."
     }
+    $NestedTabFound = $false
+    foreach ($TabControl in @($ImportWorkspaceTabs, $AclDetailTabs)) {
+        $Ancestor = $TabControl.Parent
+        while ($null -ne $Ancestor) {
+            if ($Ancestor -is [System.Windows.Controls.TabControl]) { $NestedTabFound = $true; break }
+            $Ancestor = $Ancestor.Parent
+        }
+    }
     if (
         $Window.Title -notmatch "v0\.28\.1" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
-        $VerifyButton.MinHeight -lt 40 -or
-        $StepConfiguration.CornerRadius.TopLeft -lt 10 -or
+        $VerifyButton.MinHeight -lt 34 -or
+        $null -eq $StepConfiguration.Template -or
         $FilesGrid.RowHeight -lt 40 -or
         $FilesGrid.Columns[1].MinWidth -lt 300 -or
         $null -eq $ClientFolder.Template -or
         $null -eq $DestinationMode.Template -or
         $null -eq $ReviewPasswordToggle.Template -or
-        $null -eq $ImportModeTabs.Template -or
-        $null -eq $ImportWorkspaceTabs.Template
+        $null -eq $ImportWorkspaceTabs.Template -or
+        $NestedTabFound -or
+        $MigrationWorkspace.Parent -is [System.Windows.Controls.ScrollViewer] -or
+        [System.Windows.Controls.Grid]::GetRow($MigrationWorkspace.Parent) -ne 2
     ) {
         throw "Il design system moderno non rispetta il contratto visivo WPF."
     }
+    $Phase04KeyboardControls = @(
+        $AclWorkspaceButton,
+        $PassboltUrl,
+        $VerifyButton,
+        $PrivateKeyPath,
+        $BrowseKeyButton,
+        $KeyPassphrase,
+        $MfaTotpCode,
+        $ImportSessionButton,
+        $DestinationMode,
+        $DestinationFolder,
+        $ConfigurePermissionsButton,
+        $DryRunButton,
+        $NewImportModeButton,
+        $RecoveryModeButton,
+        $ImportBackButton,
+        $ImportConfirmation,
+        $ExecuteImportButton,
+        $RefreshRecoveryButton,
+        $ArchiveRecoveryButton,
+        $RecoveryBackButton,
+        $RecoveryConfirmation,
+        $VerifyRecoveryButton,
+        $ExecuteRecoveryButton,
+        $RefreshAclButton,
+        $AclTypeFilter,
+        $AclSearchBox,
+        $AclPlanButton,
+        $AclConfirmation,
+        $ApplyAclButton,
+        $RecoverAclButton,
+        $ManageAclJournalsButton,
+        $AclBackButton
+    )
+    $Phase04KeyboardBlocked = @($Phase04KeyboardControls | Where-Object {
+        $null -eq $_ -or -not $_.Focusable -or -not $_.IsTabStop
+    })
+    $FocusTriggerCount = [regex]::Matches($Xaml.OuterXml, 'Property="IsKeyboardFocus(?:ed|Within)"').Count
+    $Phase04NamedInputs = @(
+        $PassboltUrl,
+        $PrivateKeyPath,
+        $KeyPassphrase,
+        $MfaTotpCode,
+        $DestinationMode,
+        $DestinationFolder,
+        $ImportConfirmation,
+        $RecoveryConfirmation,
+        $AclTypeFilter,
+        $AclSearchBox,
+        $AclConfirmation
+    )
+    $Phase04UnnamedInputs = @($Phase04NamedInputs | Where-Object {
+        [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($_))
+    })
+    if ($Phase04KeyboardBlocked.Count -gt 0 -or $FocusTriggerCount -lt 9 -or $Phase04UnnamedInputs.Count -gt 0) {
+        throw "La fase 04 non espone un percorso di tastiera completo con focus visibile."
+    }
+    $ClientFolder.Text = $ProjectRoot
+    $script:ConnectionVerified = $false
+    Update-ConfigurationState
+    if (-not $ContinueButton.IsEnabled -or -not $StepInventory.IsEnabled -or $VerifyButton.IsEnabled) {
+        throw "La preparazione locale deve consentire l'inventario senza una connessione Passbolt verificata."
+    }
+    $PlannedPassboltUrl.Text = "https://passbolt.example.test"
+    $script:InventoryFolder = $ProjectRoot
+    $script:InventoryResult = [pscustomobject]@{ synthetic = $true }
+    $script:ReviewResult = [pscustomobject]@{ synthetic = $true }
+    Update-ConfigurationState
+    if (-not $SaveInventoryProjectButton.IsEnabled -or -not $SaveReviewProjectButton.IsEnabled -or $script:ConnectionVerified) {
+        throw "Il progetto di preparazione locale deve poter essere salvato senza attribuire fiducia al server."
+    }
+    $PlannedPassboltUrl.Text = ""
+    $script:InventoryFolder = ""
+    $script:InventoryResult = $null
+    $script:ReviewResult = $null
+    $ClientFolder.Text = ""
+    Update-ConfigurationState
     $ArgumentProbeValue = "C:\Cartella Con Spazi\"
     $ArgumentProbeCode = "import json,sys; print(json.dumps({'ok': True, 'result': {'argument': sys.argv[1]}}))"
     $ArgumentProbe = Invoke-SecureJsonProcess $PythonExecutable @("-c", $ArgumentProbeCode, $ArgumentProbeValue) ([pscustomobject]@{ test = $true }) 30000
@@ -6485,10 +6771,15 @@ for line in sys.stdin:
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
     }
-    if ($FolderFormat.Items.Count -ne 1 -or [string]$FolderFormat.Items[0].Tag -ne "v4" -or $ResourceFormat.Items.Count -ne 1 -or [string]$ResourceFormat.Items[0].Tag -ne "v4") {
-        throw "La UI deve esporre esclusivamente i formati Passbolt v4."
+    if ($null -ne $Window.FindName("FolderFormat") -or $null -ne $Window.FindName("ResourceFormat") -or $Xaml.OuterXml -notmatch "Cartelle e risorse: v4") {
+        throw "La UI deve rappresentare Passbolt v4-only come stato informativo, senza selettori a opzione unica."
     }
-    if ($ImportModeTabs.Items.Count -ne 3 -or $ImportWorkspaceTabs.Items.Count -ne 4 -or $null -eq $PreflightGrid -or $null -eq $VerificationGrid -or $null -eq $BatchActivityGrid -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
+    Show-Phase04Workspace "new_import" -SkipRefresh
+    $MigrationSeparationValid = ($MigrationWorkspace.Visibility -eq "Visible" -and $ExistingAclWorkspace.Visibility -eq "Collapsed" -and $NewImportWorkspace.Visibility -eq "Visible")
+    Show-Phase04Workspace "existing_acl" -SkipRefresh
+    $AclSeparationValid = ($MigrationWorkspace.Visibility -eq "Collapsed" -and $ExistingAclWorkspace.Visibility -eq "Visible" -and [string]$AclWorkspaceButton.Content -eq "Torna alla migrazione")
+    Show-Phase04Workspace "new_import" -SkipRefresh
+    if (-not $MigrationSeparationValid -or -not $AclSeparationValid -or $ImportWorkspaceTabs.Items.Count -ne 4 -or $null -eq $PreflightGrid -or $null -eq $VerificationGrid -or $null -eq $BatchActivityGrid -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
         throw "I controlli UI del recupero guidato non sono nello stato fail-closed previsto."
     }
     $script:ImportCandidates = @(
@@ -6504,8 +6795,8 @@ for line in sys.stdin:
         throw "La dashboard operativa non aggiorna avanzamento, duplicati e verifica finale."
     }
     Reset-ImportOperationalViews
-    if ($null -ne $Window.FindName("ServerFingerprint") -or [string]$DetectedFingerprint.Text -ne "Non ancora rilevata") {
-        throw "La configurazione deve rilevare la fingerprint senza richiedere un inserimento manuale."
+    if ($null -ne $Window.FindName("ServerFingerprint") -or [string]$DetectedFingerprint.Text -ne "Fingerprint: non ancora rilevata" -or $DetectedFingerprint.IsDescendantOf($ConfigurationPage)) {
+        throw "La fase 04 deve rilevare la fingerprint senza richiedere un inserimento manuale o bloccare la preparazione locale."
     }
     $script:ImportCandidates = @(
         [pscustomobject]@{ client = "Cliente Alfa" },
@@ -6723,6 +7014,7 @@ for line in sys.stdin:
         integration_matrix_backend = "OK"
         unlimited_file_and_candidate_selection = "OK"
         optimized_large_batch_processing = "OK"
+        phase04_keyboard_navigation = "OK"
         modern_apple_ui = "OK"
         offscreen_ui_preview = "OK"
         ci_real_instance_guard = "OK"
