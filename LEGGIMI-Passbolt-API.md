@@ -10,7 +10,7 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.28.1` usa un'interfaccia nativa Windows (WPF) e comprende quattro fasi operative.
+La versione `0.28.1` usa un'interfaccia nativa Windows (WPF), comprende quattro fasi operative ed è limitata a Passbolt v4. UI e backend inviano soltanto formati v4 espliciti; `auto`, i formati v5 e i server che espongono capability v5 vengono rifiutati fail-closed prima di rendere disponibili importazione o gestione ACL. Il supporto v5 resta fuori scope finché la correzione upstream [passbolt_api #618](https://github.com/passbolt/passbolt_api/pull/618), collegata al difetto [#617](https://github.com/passbolt/passbolt_api/issues/617), non viene integrata e distribuita ufficialmente.
 
 ### Correzione verifica temporale GPGAuth 0.28.1
 
@@ -56,13 +56,13 @@ Il laboratorio espone `next-resource-create-after-commit-500` e `next-share-afte
 
 ### Accettazione stateful offline 0.23.0
 
-`offline_lab_acceptance.py` usa lo stesso bridge persistente dell'app contro il solo simulatore HTTPS effimero e completa i nove scenari che sulla matrice reale restano attestazioni dell'operatore. Per ciascun profilo v4/v5 esegue import in radice, creazione cartella cliente, riuso di una destinazione esistente, rilevamento duplicato senza scritture, condivisione personalizzata, modifica ACL additiva, modifica ACL restrittiva, recupero di un import fallito e recupero di una ACL fallita.
+`offline_lab_acceptance.py` usa lo stesso bridge persistente dell'app contro il solo simulatore HTTPS effimero e completa sul profilo v4 i nove scenari che sulla matrice reale restano attestazioni dell'operatore: import in radice, creazione cartella cliente, riuso di una destinazione esistente, rilevamento duplicato senza scritture, condivisione personalizzata, modifica ACL additiva, modifica ACL restrittiva, recupero di un import fallito e recupero di una ACL fallita.
 
 Il simulatore mantiene in memoria risorse, cartelle, segreti cifrati e record ACL. La simulazione `/share/simulate/{folder|resource}/{id}.json` applica le variazioni a una copia della maschera, espande il gruppo sintetico e restituisce gli utenti effettivi aggiunti e rimossi; la successiva `PUT` applica la stessa normalizzazione allo stato reale. Il profilo v5 espone anche una chiave metadati condivisa OpenPGP con fingerprint dichiarata e una sola copia privata cifrata per l'utente sintetico e firmata dalla sua chiave.
 
 I due recuperi impostano tramite endpoint amministrativo locale un fault HTTP 500 monouso, verificano gli eventi tecnici del lotto, ricostruiscono il contesto secret-free e ripetono soltanto l'operazione classificata `not_applied`. Il runner pretende che il fault finale sia `none`, che tutti i progressi appartengano all'UUID previsto e che payload e report non contengano password, passphrase, TOTP, chiavi, descrizioni o metadati delle credenziali.
 
-La modalità si avvia con `run_offline_lab.ps1 -Profile v4|v5 -AcceptanceTest` ed è parte del quality gate. Dichiara sempre `synthetic_stateful=true`, `real_instance_attestation=false` e `contains_real_credentials=false`: i suoi 18 esiti non vengono importati nei report delle istanze reali e non sostituiscono l'esecuzione dei sedici scenari sui due laboratori Passbolt dedicati.
+La modalità positiva della release si avvia con `run_offline_lab.ps1 -Profile v4 -AcceptanceTest` ed è parte del quality gate. Dichiara sempre `synthetic_stateful=true`, `real_instance_attestation=false` e `contains_real_credentials=false`: i suoi esiti non vengono importati nei report reali e non sostituiscono l'esecuzione dei sedici scenari sul laboratorio Passbolt v4 dedicato.
 
 ### Dashboard, preflight e verifica post-importazione 0.22.0
 
@@ -100,9 +100,9 @@ Il backend Python indicizza per `candidate_id` le richieste relative a ciascun s
 
 Il journal valida ancora l'intero flusso e la dimensione complessiva prima della creazione, quindi scrive header e blocchi del manifesto separatamente con un'unica sincronizzazione durevole. Non viene costruita una seconda stringa binaria grande quanto tutto il registro. Il limite storico di 10.000 operazioni nel solo oggetto recovery è stato rimosso; restano i limiti di 64 MiB per i messaggi locali e 256 MiB per il journal, oltre ai controlli canonici, alla catena SHA-256 e alle verifiche remote.
 
-### Matrice di integrazione reale v4/v5 0.19.0
+### Matrice di integrazione reale v4
 
-`passbolt_integration_matrix.py` riusa il probe HTTPS e il bridge persistente OpenPGP per eseguire sette scenari automatizzati esclusivamente in lettura su profili di laboratorio v4/v5. La configurazione schema 1 contiene un massimo di otto profili e ammette soltanto ID logico, URL HTTPS, fingerprint OpenPGP attesa, formato risorsa e formato cartella. Un profilo attivo rifiuta la fingerprint segnaposto.
+`passbolt_integration_matrix.py` riusa il probe HTTPS e il bridge persistente OpenPGP per eseguire sette scenari automatizzati esclusivamente in lettura su profili di laboratorio v4. La configurazione schema 1 contiene un massimo di otto profili e ammette soltanto ID logico, URL HTTPS, fingerprint OpenPGP attesa e formati v4. Un profilo v5 attivo e una fingerprint segnaposto vengono rifiutati.
 
 Il runner verifica healthcheck e `/auth/verify.json`, apre GPGAuth/TOTP, legge `/share/search-aros.json`, il catalogo ACL e due piani sintetici: risorsa nella radice e risorsa in una nuova cartella cliente. Non invia `session-import`, `session-acl-apply` o conferme e registra `remote_writes_performed=0`. Chiave privata, passphrase e TOTP vengono richiesti interattivamente e la sola richiesta che li contiene è `session-open` sullo standard input del bridge.
 
@@ -342,7 +342,7 @@ La password usata per aprire un `.xlsx` protetto è distinta dalle credenziali c
 
 ## 04 — Importazione controllata
 
-La fase 04 implementa un'importazione Passbolt v4/v5 condizionata da un dry-run autenticato. Autenticazione, verifiche e scrittura restano operazioni distinte, ma dry-run e importazione condividono una sola sessione protetta in memoria.
+La fase 04 implementa un'importazione Passbolt v4 condizionata da un dry-run autenticato. Autenticazione, verifiche e scrittura restano operazioni distinte, ma dry-run e importazione condividono una sola sessione protetta in memoria. Formati `auto` e v5 vengono rifiutati prima della pianificazione.
 
 ### Dry-run autenticato, senza scritture
 
@@ -366,10 +366,9 @@ Il pulsante di importazione si abilita soltanto se:
 
 - il dry-run è riuscito;
 - la stessa sessione autenticata usata per il dry-run e ancora attiva e associata alla stessa cartella sorgente;
-- l'istanza consente il formato richiesto o almeno un formato compatibile in modalita Automatica;
+- l'istanza è attestata come Passbolt v4 e consente il formato v4 richiesto esplicitamente;
 - per la destinazione per cliente, l'istanza consente il formato cartella richiesto e tutte le cartelle esistenti necessarie sono leggibili senza ambiguita;
-- è disponibile un tipo password compatibile: `password-and-description`, `password-string`, `v5-default` oppure `v5-password-string`;
-- per v5 è disponibile e verificata la chiave metadati personale o condivisa richiesta dalle impostazioni del server;
+- è disponibile un tipo password v4 compatibile: `password-and-description` oppure `password-string`;
 - il confronto duplicati è completo;
 - nessun duplicato esatto è stato trovato fuori dalla destinazione prevista;
 - Passbolt ha fornito un token CSRF;
@@ -384,15 +383,14 @@ Le creazioni sono sequenziali e Passbolt non espone una transazione unica per l'
 
 - nessun massimo numerico applicativo di candidati per lotto; la capacità effettiva dipende dalla memoria, dai messaggi locali e dall'istanza Passbolt;
 - massimo 65.536 caratteri per password;
-- supporto alla creazione di risorse password v4 e v5 nei quattro tipi compatibili elencati sopra;
-- supporto a cartelle personali e condivise v4/v5 sotto la radice o sotto il contenitore scelto, riutilizzate per nome univoco o create prima delle risorse;
+- supporto alla creazione di risorse password v4 nei due tipi compatibili elencati sopra;
+- supporto a cartelle personali e condivise v4 sotto la radice o sotto il contenitore scelto, riutilizzate per nome univoco o create prima delle risorse;
 - supporto a un contenitore Passbolt esistente comune oppure a una cartella esistente usata come destinazione diretta;
 - supporto alla mappatura distinta di ogni cliente del lotto verso una cartella personale o condivisa esistente e scrivibile oppure verso la radice personale;
 - supporto alle cartelle condivise esistenti con permessi User e Group Read, Update e Owner, simulazione preventiva e cifratura separata per ogni destinatario concreto;
 - le nuove sottocartelle cliente dentro un contenitore condiviso ereditano obbligatoriamente la sua maschera completa; non e possibile modificarla durante la creazione;
 - una sottocartella omonima ma personale trovata dentro un contenitore condiviso blocca il piano e deve essere verificata in Passbolt prima di continuare;
-- se una chiave metadati v5 manca, non appartiene al dominio configurato, non coincide con la fingerprint dichiarata o la sua copia privata non e firmata dalla chiave utente, la scrittura viene bloccata;
-- se un metadato v5 esistente non puo essere decifrato e validato, il confronto duplicati viene considerato incompleto e la scrittura viene bloccata;
+- se il server espone plugin, endpoint o resource type v5, la sessione viene chiusa e nessuna funzione di importazione o ACL diventa disponibile;
 - gli account con MFA TOTP sono supportati; provider diversi da TOTP vengono riconosciuti ma interrompono il flusso senza scritture;
 - vengono confrontate soltanto le cartelle e le risorse che l'identità autenticata può leggere;
 - la versione 0.12 non sposta risorse esistenti, non crea o modifica gruppi e non consente di disegnare nuove maschere di condivisione: riutilizza o eredita esclusivamente la maschera di una cartella condivisa esistente e verificata.

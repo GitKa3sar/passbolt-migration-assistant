@@ -68,6 +68,7 @@ from passbolt_review import (
 
 
 APP_VERSION = "0.28.1"
+RELEASE_COMPATIBILITY_PROFILE = "passbolt-v4-only"
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 64 * 1024 * 1024
 MAX_BRIDGE_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -76,6 +77,24 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 class ImportPreparationError(RuntimeError):
     """A safe error that never includes an extracted secret."""
+
+
+def _require_v4_only_formats(
+    resource_format: object,
+    folder_format: object,
+    *,
+    allow_no_folder: bool = False,
+) -> None:
+    """Reject every non-v4 format before reading sources or secrets."""
+
+    normalized_resource = str(resource_format or "").strip().lower()
+    normalized_folder = str(folder_format or "").strip().lower()
+    allowed_folders = {"v4", "none"} if allow_no_folder else {"v4"}
+    if normalized_resource != "v4" or normalized_folder not in allowed_folders:
+        raise ImportPreparationError(
+            "Questa release supporta esclusivamente server e formati Passbolt v4; "
+            "i formati automatici o v5 sono disabilitati in modo fail-closed."
+        )
 
 
 @dataclass(frozen=True)
@@ -744,6 +763,9 @@ def execute_import(
     node_path: str,
     crypto_script: str,
 ) -> dict[str, Any]:
+    _require_v4_only_formats(
+        request.get("resource_format"), request.get("folder_format")
+    )
     node, script = _validate_bridge(node_path, crypto_script)
     candidates, resources = _prepare_import_resources(root, request)
 
@@ -828,6 +850,9 @@ def _session_bridge_request(
             [],
         )
     if command == "session-readiness":
+        _require_v4_only_formats(
+            request.get("resource_format"), request.get("folder_format")
+        )
         candidates = request.get("candidates")
         file_passwords = _source_file_passwords(request.get("source_file_passwords"))
         try:
@@ -955,6 +980,9 @@ def _session_bridge_request(
             [],
         )
     if command == "session-import":
+        _require_v4_only_formats(
+            request.get("resource_format"), request.get("folder_format")
+        )
         candidates, resources = _prepare_import_resources(root, request)
         return (
             {
@@ -981,6 +1009,11 @@ def _session_bridge_request(
     if command in {"session-recovery-readiness", "session-recovery-import"}:
         recovery_state, candidates = _prepare_recovery_context(
             root, request, journal_root
+        )
+        _require_v4_only_formats(
+            recovery_state.get("resource_format"),
+            recovery_state.get("folder_format"),
+            allow_no_folder=True,
         )
         resources: list[dict[str, Any]] = []
         if command == "session-recovery-import":
@@ -2231,11 +2264,18 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     if args.self_test:
+        v5_format_rejected = False
+        try:
+            _require_v4_only_formats("v5", "v5")
+        except ImportPreparationError:
+            v5_format_rejected = True
         _write_json(
             {
                 "ok": True,
                 "result": {
                     "version": APP_VERSION,
+                    "compatibility_profile": RELEASE_COMPATIBILITY_PROFILE,
+                    "v5_format_rejected": v5_format_rejected,
                     "unlimited_candidate_selection": True,
                     "indexed_candidate_revalidation": True,
                     "early_parser_stop": True,

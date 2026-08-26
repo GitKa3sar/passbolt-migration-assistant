@@ -7,6 +7,7 @@ import * as openpgp from 'openpgp';
 import {
   PassboltSession,
   PersistentImportSession,
+  assertV4OnlyServer,
   analyzeCapabilities,
   authenticate,
   buildCandidatePlan,
@@ -63,6 +64,50 @@ function encodeGpgAuthHeader(value) {
 }
 
 async function main() {
+  const v4OnlyWorker = new PersistentImportSession();
+  await assert.rejects(
+    v4OnlyWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v5',
+      folder_format: 'v5',
+    }),
+    (error) => error?.code === 'PASSBOLT_V5_DISABLED',
+  );
+  const compatibilitySession = (v5) => ({
+    async request(path) {
+      if (path.startsWith('/settings.json')) {
+        return {
+          status: 200,
+          document: JSON.parse(apiSuccess({
+            passbolt: { plugins: { metadata: { enabled: v5 } } },
+          })),
+        };
+      }
+      if (path.startsWith('/metadata/types/settings.json')) {
+        return {
+          status: v5 ? 200 : 404,
+          document: JSON.parse(v5
+            ? apiSuccess({ default_resource_types: 'v5' })
+            : apiError('Route not available.')),
+        };
+      }
+      if (path.startsWith('/resource-types.json')) {
+        return {
+          status: 200,
+          document: JSON.parse(apiSuccess(v5
+            ? [{ id: 'v5-id', slug: 'v5-default' }]
+            : [{ id: 'v4-id', slug: 'password-and-description' }])),
+        };
+      }
+      throw new Error(`Unexpected compatibility path: ${path}`);
+    },
+  });
+  await assert.doesNotReject(assertV4OnlyServer(compatibilitySession(false)));
+  await assert.rejects(
+    assertV4OnlyServer(compatibilitySession(true)),
+    (error) => error?.code === 'PASSBOLT_V5_SERVER_DISABLED',
+  );
+
   const recoveryCandidate = {
     candidate_id: '0123456789abcdef',
     source_sha256: '1'.repeat(64),
@@ -2697,7 +2742,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
       permission_mode: 'custom',
       permission_template: customPermissionTemplate,
     });
@@ -2781,7 +2826,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'direct_folder',
-      folder_format: 'auto',
+      folder_format: 'v4',
       destination_folder_id: 'folder-shared-id',
       permission_mode: 'custom',
       permission_template: customPermissionTemplate,
@@ -2796,7 +2841,7 @@ async function main() {
         candidates: persistentCandidates,
         resource_format: 'v4',
         destination_mode: 'root',
-        folder_format: 'auto',
+        folder_format: 'v4',
         permission_mode: 'custom',
         permission_template: [{ aro: 'User', aro_foreign_key: 'user-id', type: 1 }],
       }),
@@ -2808,7 +2853,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
     });
     const secondPersistentReadiness = await persistentWorker.readiness({
       command: 'session-readiness',
@@ -2816,7 +2861,7 @@ async function main() {
       candidates: persistentCandidates,
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
     });
     assert.equal(firstPersistentReadiness.session_id, 'persistent-test-session');
     assert.equal(secondPersistentReadiness.authentication, 'GPGAuth + TOTP');
@@ -2838,7 +2883,7 @@ async function main() {
       }],
       resource_format: 'v4',
       destination_mode: 'root',
-      folder_format: 'auto',
+      folder_format: 'v4',
       plan_digest: secondPersistentReadiness.plan_digest,
       confirmation: 'IMPORTA 1',
     });
@@ -2918,6 +2963,8 @@ async function main() {
     await assert.rejects(
       persistentWorker.readiness({
         session_id: 'wrong-session-id',
+        resource_format: 'v4',
+        folder_format: 'v4',
         candidates: persistentCandidates,
       }),
       (error) => error?.code === 'IMPORT_SESSION_ID_MISMATCH',
@@ -2944,7 +2991,9 @@ async function main() {
         reconciliation_progress_envelopes: true,
         batch_dashboard_progress_protocol: true,
         authenticated_preflight_checks: true,
-        post_import_verification_v4_v5_acl: true,
+        release_v4_only_format_rejection: true,
+        release_v5_server_rejection: true,
+        post_import_verification_v4_acl: true,
         authenticated_recovery_classification: true,
         recovery_conflicts_blocked: true,
         mfa_reused_without_reprompt: true,
@@ -2953,14 +3002,14 @@ async function main() {
         indexed_large_batch_planning: true,
         duplicate_detection: true,
         v4_resource_creation: true,
-        v5_shared_metadata_key_verified: true,
-        v5_personal_metadata_key: true,
-        v5_duplicate_metadata_decryption: true,
-        v5_resource_creation: true,
-        v5_metadata_and_secret_encrypted: true,
+        dormant_internal_v5_shared_metadata_key_verified: true,
+        dormant_internal_v5_personal_metadata_key: true,
+        dormant_internal_v5_duplicate_metadata_decryption: true,
+        dormant_internal_v5_resource_creation: true,
+        dormant_internal_v5_metadata_and_secret_encrypted: true,
         v4_folder_creation: true,
-        v5_folder_metadata_decryption: true,
-        v5_folder_creation: true,
+        dormant_internal_v5_folder_metadata_decryption: true,
+        dormant_internal_v5_folder_creation: true,
         folder_parent_id_assignment: true,
         folder_catalog_paths: true,
         selected_parent_folder: true,
@@ -2968,7 +3017,7 @@ async function main() {
         per_client_destination_mapping: true,
         per_client_mapping_in_digest: true,
         per_client_root_destination: true,
-        v5_per_client_destination_mapping: true,
+        dormant_internal_v5_per_client_destination_mapping: true,
         destination_folder_in_digest: true,
         readonly_destination_filtered: true,
         shared_destination_permission_mask: true,
@@ -2986,7 +3035,7 @@ async function main() {
         shared_recipient_deduplication: true,
         shared_recipient_key_validation: true,
         shared_secret_multi_recipient_encryption: true,
-        shared_v5_metadata_key_enforced: true,
+        dormant_internal_shared_v5_metadata_key_enforced: true,
         shared_simulation_before_apply: true,
         shared_partial_failure_reconciliation: true,
         shared_child_folder_permission_inheritance: true,
@@ -2997,7 +3046,7 @@ async function main() {
         empty_personal_child_folder_reconciled: true,
         nonempty_personal_child_folder_blocked: true,
         duplicate_personal_child_folders_identified: true,
-        shared_v5_folder_metadata_key_enforced: true,
+        dormant_internal_shared_v5_folder_metadata_key_enforced: true,
         duplicate_destination_classification: true,
         duplicate_elsewhere_blocked: true,
         partial_failure_reconciliation: true,

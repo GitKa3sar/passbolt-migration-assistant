@@ -401,9 +401,9 @@ class ImportPreparationTests(unittest.TestCase):
             {
                 "command": "session-readiness",
                 "session_id": "session-id",
-                "resource_format": "v5",
+                "resource_format": "v4",
                 "destination_mode": "client_mapping",
-                "folder_format": "auto",
+                "folder_format": "v4",
                 "client_destination_mapping": [
                     {"client": "Cliente Alfa", "folder_id": "folder-alpha-id"}
                 ],
@@ -421,6 +421,23 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(bridge_request["permission_template"][0]["type"], 7)
         self.assertEqual(resources, [])
         self.assertNotIn(self.secret, json.dumps(bridge_request))
+
+    def test_v4_only_release_rejects_auto_and_v5_before_source_read(self) -> None:
+        for resource_format, folder_format in (("auto", "v4"), ("v4", "auto"), ("v5", "v5")):
+            with self.subTest(
+                resource_format=resource_format, folder_format=folder_format
+            ):
+                with self.assertRaisesRegex(ImportPreparationError, "v4"):
+                    _session_bridge_request(
+                        self.root,
+                        {
+                            "command": "session-readiness",
+                            "session_id": "session-id",
+                            "resource_format": resource_format,
+                            "folder_format": folder_format,
+                            "candidates": [],
+                        },
+                    )
 
     def test_persistent_permission_catalog_command_requires_no_sources_or_secrets(self) -> None:
         bridge_request, resources = _session_bridge_request(
@@ -582,7 +599,7 @@ class ImportPreparationTests(unittest.TestCase):
                 "session_id": "session-id",
                 "resource_format": "v4",
                 "destination_mode": "root",
-                "folder_format": "auto",
+                "folder_format": "v4",
                 "permission_mode": "custom",
                 "permission_template": [
                     {"aro": "User", "aro_foreign_key": "recipient-id", "type": 1}
@@ -611,9 +628,9 @@ class ImportPreparationTests(unittest.TestCase):
             {
                 "command": "session-import",
                 "session_id": "session-id",
-                "resource_format": "v5",
+                "resource_format": "v4",
                 "destination_mode": "root",
-                "folder_format": "auto",
+                "folder_format": "v4",
                 "candidates": [edited],
                 "create_candidate_ids": [edited["candidate_id"]],
                 "secret_overrides": [
@@ -671,6 +688,8 @@ class ImportPreparationTests(unittest.TestCase):
             {
                 "command": "session-readiness",
                 "session_id": "session-id",
+                "resource_format": "v4",
+                "folder_format": "v4",
                 "candidates": [request],
                 "source_file_passwords": password_entries,
             },
@@ -684,6 +703,8 @@ class ImportPreparationTests(unittest.TestCase):
             {
                 "command": "session-import",
                 "session_id": "session-id",
+                "resource_format": "v4",
+                "folder_format": "v4",
                 "candidates": [request],
                 "create_candidate_ids": [request["candidate_id"]],
                 "source_file_passwords": password_entries,
@@ -727,7 +748,7 @@ for raw in sys.stdin:
             "command": "readiness",
             "can_import": True,
             "plan_digest": plan_digest,
-            "resource_format_selected": "v5",
+            "resource_format_selected": "v4",
             "folder_format_selected": None,
             "destination_mode": "root",
             "destination_folder_id": None,
@@ -828,17 +849,17 @@ for raw in sys.stdin:
             {
                 "command": "session-readiness",
                 "session_id": "test-session-id",
-                "resource_format": "v5",
+                "resource_format": "v4",
                 "destination_mode": "root",
-                "folder_format": "auto",
+                "folder_format": "v4",
                 "candidates": [self.request],
             },
             {
                 "command": "session-import",
                 "session_id": "test-session-id",
-                "resource_format": "v5",
+                "resource_format": "v4",
                 "destination_mode": "root",
-                "folder_format": "auto",
+                "folder_format": "v4",
                 "candidates": [self.request],
                 "create_candidate_ids": [self.request["candidate_id"]],
                 "plan_digest": "d" * 64,
@@ -934,7 +955,7 @@ for raw in sys.stdin:
         result = {
             "session_id": session_id,
             "plan_digest": "e" * 64,
-            "resource_format_selected": "v5",
+            "resource_format_selected": "v4",
             "folder_format_selected": None,
             "destination_mode": "root",
             "destination_folder_id": None,
@@ -969,17 +990,17 @@ for raw in sys.stdin:
             {
                 "command": "session-readiness",
                 "session_id": "interrupted-session-id",
-                "resource_format": "v5",
+                "resource_format": "v4",
                 "destination_mode": "root",
-                "folder_format": "v5",
+                "folder_format": "v4",
                 "candidates": [self.request],
             },
             {
                 "command": "session-import",
                 "session_id": "interrupted-session-id",
-                "resource_format": "v5",
+                "resource_format": "v4",
                 "destination_mode": "root",
-                "folder_format": "v5",
+                "folder_format": "v4",
                 "candidates": [self.request],
                 "create_candidate_ids": [self.request["candidate_id"]],
                 "plan_digest": "e" * 64,
@@ -1529,9 +1550,9 @@ for raw in sys.stdin:
             stdin_document = json.loads(bytes(kwargs["input"]).decode("utf-8"))
             self.assertEqual(stdin_document["resources"][0]["password"], self.secret)
             self.assertEqual(stdin_document["mfa_totp"], "654321")
-            self.assertEqual(stdin_document["resource_format"], "v5")
+            self.assertEqual(stdin_document["resource_format"], "v4")
             self.assertEqual(stdin_document["destination_mode"], "client_folders")
-            self.assertEqual(stdin_document["folder_format"], "v5")
+            self.assertEqual(stdin_document["folder_format"], "v4")
             self.assertEqual(stdin_document["destination_folder_id"], "folder-parent-id")
             self.assertEqual(
                 stdin_document["client_destination_mapping"],
@@ -1550,9 +1571,9 @@ for raw in sys.stdin:
             "private_key_path": "C:/private.asc",
             "passphrase": "key-passphrase",
             "mfa_totp": "654321",
-            "resource_format": "v5",
+            "resource_format": "v4",
             "destination_mode": "client_folders",
-            "folder_format": "v5",
+            "folder_format": "v4",
             "destination_folder_id": "folder-parent-id",
             "client_destination_mapping": [
                 {"client": "Cliente Alfa", "folder_id": "folder-alpha-id"}

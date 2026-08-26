@@ -27,6 +27,7 @@ const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
 const MAX_GPG_AUTH_CLOCK_SKEW_SECONDS = 300;
 const USER_AGENT = 'Passbolt-Migration-Assistant/0.28.1';
+const RELEASE_COMPATIBILITY_PROFILE = 'passbolt-v4-only';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -825,6 +826,49 @@ function settingsValue(settings, path, fallback = undefined) {
     current = current[segment];
   }
   return current;
+}
+
+function requireV4OnlyFormats(resourceFormatValue, folderFormatValue, { allowNoFolder = false } = {}) {
+  const resourceFormat = String(resourceFormatValue ?? '').trim().toLowerCase();
+  const folderFormat = String(folderFormatValue ?? '').trim().toLowerCase();
+  const allowedFolderFormats = allowNoFolder ? new Set(['v4', 'none']) : new Set(['v4']);
+  assert(
+    resourceFormat === 'v4' && allowedFolderFormats.has(folderFormat),
+    'PASSBOLT_V5_DISABLED',
+    'Questa release supporta esclusivamente server e formati Passbolt v4; i formati automatici o v5 sono disabilitati in modo fail-closed.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+}
+
+async function assertV4OnlyServer(session) {
+  const [settingsResponse, metadataResponse, resourceTypesResponse] = await Promise.all([
+    session.request('/settings.json?api-version=v2', { allowError: true }),
+    session.request('/metadata/types/settings.json?api-version=v2', { allowError: true }),
+    session.request('/resource-types.json?api-version=v2', { allowError: true }),
+  ]);
+  assert(
+    settingsResponse.status >= 200 && settingsResponse.status < 300
+      && resourceTypesResponse.status >= 200 && resourceTypesResponse.status < 300,
+    'SERVER_COMPATIBILITY_CHECK_FAILED',
+    'Impossibile attestare che il server appartenga al profilo Passbolt v4 supportato da questa release.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+  const settings = apiBody(settingsResponse.document) ?? {};
+  const metadataEnabled = Boolean(settingsValue(settings, ['passbolt', 'plugins', 'metadata', 'enabled'], false));
+  const metadataRouteAvailable = metadataResponse.status >= 200 && metadataResponse.status < 300;
+  const v5ResourceTypeAdvertised = simplifyResourceTypes(resourceTypesResponse.document)
+    .some((resourceType) => resourceType.slug.startsWith('v5-'));
+  assert(
+    !metadataEnabled && !metadataRouteAvailable && !v5ResourceTypeAdvertised,
+    'PASSBOLT_V5_SERVER_DISABLED',
+    'Questa release e limitata a Passbolt v4 e rifiuta i server che espongono capability v5.',
+    {
+      compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+      metadata_plugin_enabled: metadataEnabled,
+      metadata_route_available: metadataRouteAvailable,
+      v5_resource_type_advertised: v5ResourceTypeAdvertised,
+    },
+  );
 }
 
 function normalizeComparable(value) {
@@ -3201,6 +3245,7 @@ async function inspectKey(input) {
 }
 
 async function readiness(input) {
+  requireV4OnlyFormats(input.resource_format, input.folder_format);
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
   const candidates = safeCandidates(input.candidates);
@@ -3208,6 +3253,7 @@ async function readiness(input) {
   const session = new PassboltSession(baseUrl);
   try {
     const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
+    await assertV4OnlyServer(session);
     const capabilities = await readCapabilities(
       session,
       user,
@@ -4292,6 +4338,7 @@ async function verifyCreatedResources(
 }
 
 async function executeImport(input) {
+  requireV4OnlyFormats(input.resource_format, input.folder_format);
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
   const candidates = safeCandidates(input.candidates);
@@ -4299,6 +4346,7 @@ async function executeImport(input) {
   const session = new PassboltSession(baseUrl);
   try {
     const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
+    await assertV4OnlyServer(session);
     const analysis = await analyzeCapabilities(
       session,
       user,
@@ -4405,6 +4453,7 @@ class PersistentImportSession {
     const session = new PassboltSession(baseUrl);
     try {
       const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
+      await assertV4OnlyServer(session);
       const sessionId = randomUUID();
       this.state = {
         sessionId,
@@ -4424,6 +4473,7 @@ class PersistentImportSession {
         server_fingerprint: expectedFingerprint,
         user_key_fingerprint: key.fingerprint,
         user: safeUser(user),
+        compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
         secrets_serialized: false,
       };
     } catch (error) {
@@ -4442,6 +4492,7 @@ class PersistentImportSession {
   }
 
   async readiness(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format);
     const state = this.requireState(input);
     await verifyPersistentSession(state.session, String(state.user.id));
     const candidates = safeCandidates(input.candidates);
@@ -4845,6 +4896,7 @@ class PersistentImportSession {
   }
 
   async recoveryReadiness(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
     assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il lotto locale da recuperare non e valido.');
@@ -4918,6 +4970,7 @@ class PersistentImportSession {
   }
 
   async recoveryImport(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
     const state = this.requireState(input);
     const saved = state.recoveryReadiness;
     assert(saved, 'RECOVERY_READINESS_REQUIRED', 'Eseguire prima la verifica autenticata del lotto.');
@@ -5051,6 +5104,7 @@ class PersistentImportSession {
   }
 
   async import(input) {
+    requireV4OnlyFormats(input.resource_format, input.folder_format);
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
     assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il registro locale di riconciliazione non e stato inizializzato.');
@@ -5191,6 +5245,13 @@ class PersistentImportSession {
 }
 
 async function selfTest() {
+  let v5FormatRejected = false;
+  try {
+    requireV4OnlyFormats('v5', 'v5');
+  } catch (error) {
+    v5FormatRejected = error instanceof SafeError && error.code === 'PASSBOLT_V5_DISABLED';
+  }
+  assert(v5FormatRejected, 'SELF_TEST_FAILED', 'Il profilo v4-only non rifiuta i formati v5.');
   const bomInputProbe = JSON.parse(stripUtf8Bom('\ufeff{"ok":true}'));
   assert(bomInputProbe.ok === true, 'SELF_TEST_FAILED', 'La normalizzazione del BOM UTF-8 non e disponibile.');
   const passphrase = `self-test-${randomUUID()}`;
@@ -5329,6 +5390,8 @@ async function selfTest() {
   assert(batchDuplicatePlan[0].action === 'create' && batchDuplicatePlan[1].duplicate_kind === 'batch', 'SELF_TEST_FAILED', 'Il test dei duplicati interni al lotto non e riuscito.');
   return {
     command: 'self-test',
+    compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+    v5_format_rejected: v5FormatRejected,
     openpgp_version: '6.3.1',
     encryption: true,
     decryption: true,
@@ -5464,6 +5527,7 @@ if (import.meta.url === invokedPath) {
 export {
   PassboltSession,
   PersistentImportSession,
+  assertV4OnlyServer,
   analyzeCapabilities,
   authenticate,
   buildCandidatePlan,
@@ -5478,4 +5542,5 @@ export {
   buildAclChangePlan,
   permissionMaskDigest,
   readCapabilities,
+  requireV4OnlyFormats,
 };

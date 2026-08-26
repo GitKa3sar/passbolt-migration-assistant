@@ -250,26 +250,11 @@ try {
         "-Scenario", "healthy",
         "-SelfTest"
     )
-    Invoke-Checked "Laboratorio offline Passbolt v5" "powershell.exe" @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
-        "-Profile", "v5",
-        "-Scenario", "healthy",
-        "-SelfTest"
-    )
     Invoke-Checked "Accettazione stateful offline Passbolt v4" "powershell.exe" @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
         "-Profile", "v4",
-        "-AcceptanceTest"
-    )
-    Invoke-Checked "Accettazione stateful offline Passbolt v5" "powershell.exe" @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
-        "-Profile", "v5",
         "-AcceptanceTest"
     )
     Invoke-Checked "Self-test WPF" "powershell.exe" @(
@@ -328,10 +313,12 @@ try {
         app = "Passbolt Migration Assistant"
         version = "0.28.1"
         ci_mode = [bool]$Ci
-        python_tests = 129
+        python_tests = 131
         node_suite = "OK"
-        offline_stateful_scenarios = 18
-        offline_recovery_fault_paths = 24
+        compatibility_profile = "passbolt-v4-only"
+        v5_format_and_server_rejection = "OK"
+        offline_stateful_scenarios = 9
+        offline_recovery_fault_paths = 12
         wpf_controls = 136
         ui_preview_count = $(if ($SkipUiPreviews) { 0 } else { 8 })
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })

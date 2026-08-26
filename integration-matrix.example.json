@@ -8,14 +8,6 @@
       "expected_server_fingerprint": "0000000000000000000000000000000000000000",
       "expected_resource_format": "v4",
       "expected_folder_format": "v4"
-    },
-    {
-      "id": "v5-lab",
-      "enabled": false,
-      "base_url": "https://passbolt-v5.example.invalid",
-      "expected_server_fingerprint": "0000000000000000000000000000000000000000",
-      "expected_resource_format": "v5",
-      "expected_folder_format": "v5"
     }
   ]
 }

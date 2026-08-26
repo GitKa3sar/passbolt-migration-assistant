@@ -1,11 +1,11 @@
 # Passbolt Migration Assistant for Windows
 
-Windows desktop assistant for safely inventorying, reviewing and importing credentials into Passbolt with OpenPGP, MFA TOTP, v4/v5 resources, folders and sharing.
+Windows desktop assistant for safely inventorying, reviewing and importing credentials into Passbolt v4 with OpenPGP, MFA TOTP, folders and sharing.
 
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.1 is a development release: validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.1 is a development release limited to Passbolt v4: Passbolt v5 targets and v5 formats are rejected fail-closed. Validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -22,25 +22,25 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
 - verifica fail-closed della firma GPGAuth con tolleranza temporale massima di cinque minuti rispetto all'header `Date` della stessa risposta HTTPS;
-- creazione di risorse Passbolt v4 e v5 con cifratura OpenPGP locale;
+- creazione di risorse Passbolt v4 con cifratura OpenPGP locale;
 - destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
 - creazione di sottocartelle personali e condivise con permessi ereditati oppure con una ACL personalizzata;
 - editor autenticato dei permessi per selezionare utenti e gruppi Passbolt e assegnare Lettura, Aggiornamento o Proprietario ai nuovi oggetti;
-- visualizzatore autenticato e read-only delle ACL di cartelle e risorse Passbolt esistenti, inclusi percorsi v4/v5 e gruppi espansi;
+- visualizzatore autenticato e read-only delle ACL di cartelle e risorse Passbolt v4 esistenti, inclusi i gruppi espansi;
 - editor di simulazione per confrontare ACL attuale e desiderata, con digest dello snapshot remoto e classificazione di aggiunte, aumenti, riduzioni e revoche;
 - applicazione esplicita di aggiunte, aumenti, riduzioni e revoche ACL su cartelle e risorse esistenti, con impatto sugli utenti effettivi, protezione dell'ultimo proprietario e nuova verifica dello stato remoto immediatamente prima della scrittura;
 - journal ACL dedicato e recupero idempotente delle risposte incerte, senza ripetere una scrittura quando Passbolt contiene già il risultato atteso;
 - gestione locale dei journal ACL con elenco completo degli stati attivi, filtri, dettaglio tecnico sicuro e archiviazione non distruttiva;
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
-- centro preflight autenticato con controlli espliciti di identità, CSRF, formati v4/v5, chiavi metadati, cataloghi, destinazione, directory permessi e conflitti;
+- centro preflight autenticato con controlli espliciti di identità, CSRF, formato v4, compatibilità server, cataloghi, destinazione, directory permessi e conflitti;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - dashboard operativa del lotto con avanzamento live, fase e operazione correnti, contatori, tempi e timeline priva di segreti;
 - verifica automatica dopo la scrittura di metadati, contenuto cifrato, cartella e ACL, con esito per risorsa e blocco fail-closed in caso di difformità;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
-- matrice di integrazione ripetibile per laboratori Passbolt v4/v5, con sette prove automatizzate in sola lettura, nove attestazioni operative e report sanitizzati con digest;
-- laboratorio HTTPS locale e stateful per esercitare l'app senza un'istanza Passbolt disponibile, con identità, MFA, chiave metadati condivisa v5, documenti e credenziali esclusivamente sintetici;
-- accettazione offline automatica dei nove scenari operativi su entrambi i profili v4/v5: importazioni, destinazioni, duplicati, condivisione, ACL additive/restrittive e recuperi dopo fault controllati;
+- matrice di integrazione ripetibile per laboratori Passbolt v4, con sette prove automatizzate in sola lettura, nove attestazioni operative e report sanitizzati con digest;
+- laboratorio HTTPS locale e stateful v4 per esercitare l'app senza un'istanza Passbolt disponibile, con identità, MFA, documenti e credenziali esclusivamente sintetici;
+- accettazione offline automatica dei nove scenari operativi v4: importazioni, destinazioni, duplicati, condivisione, ACL additive/restrittive e recuperi dopo fault controllati;
 - nessun caricamento dei documenti sorgente su servizi esterni.
 
 ## Requisiti
@@ -161,15 +161,14 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass `
   -RenderPreviewDpi 144
 ```
 
-## Laboratorio Passbolt offline v4/v5
+## Laboratorio Passbolt offline v4
 
 La versione 0.21.0 consente di provare il workflow anche quando non è disponibile un server Passbolt. Il runner prepara sotto `%TEMP%` un certificato TLS autofirmato, un'identità OpenPGP con passphrase e TOTP casuali, un piccolo archivio di documenti sintetici e un server HTTPS stateful in ascolto esclusivamente su `127.0.0.1`. Il trust TLS viene applicato soltanto ai processi avviati dal runner: l'archivio certificati di Windows non viene modificato.
 
-Per aprire l'app con un laboratorio v4 o v5:
+Per aprire l'app con il laboratorio v4 supportato:
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v4
-.\run_offline_lab.ps1 -Profile v5
 ```
 
 Il terminale mostra URL, fingerprint, percorso della chiave privata, passphrase, TOTP e cartella dei documenti da inserire nell'app. Ogni password sintetica contiene il marcatore `LAB-ONLY-NOT-A-REAL-SECRET`. Alla chiusura dell'app il server viene arrestato e il workspace temporaneo viene cancellato. `-KeepWorkspace` ne impedisce la rimozione soltanto per una diagnosi esplicita; il contenuto resta materiale di laboratorio e deve comunque essere eliminato dopo l'uso.
@@ -177,66 +176,64 @@ Il terminale mostra URL, fingerprint, percorso della chiave privata, passphrase,
 Sono disponibili scenari di autenticazione negativa:
 
 ```powershell
-.\run_offline_lab.ps1 -Profile v5 -Scenario mfa-rejected
-.\run_offline_lab.ps1 -Profile v5 -Scenario session-expired
+.\run_offline_lab.ps1 -Profile v4 -Scenario mfa-rejected
+.\run_offline_lab.ps1 -Profile v4 -Scenario session-expired
 ```
 
 Le fault injection monouso consentono inoltre di simulare una risposta HTTP 500 prima della prossima creazione di risorsa, cartella o condivisione, oppure la scadenza della sessione:
 
 ```powershell
-.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-500
-.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-500
-.\run_offline_lab.ps1 -Profile v5 -Fault next-share-500
-.\run_offline_lab.ps1 -Profile v5 -Fault expire-session
+.\run_offline_lab.ps1 -Profile v4 -Fault next-resource-create-500
+.\run_offline_lab.ps1 -Profile v4 -Fault next-folder-create-500
+.\run_offline_lab.ps1 -Profile v4 -Fault next-share-500
+.\run_offline_lab.ps1 -Profile v4 -Fault expire-session
 ```
 
 La versione 0.24.0 aggiunge due fault post-commit: il simulatore applica la creazione della risorsa o la modifica ACL, poi restituisce HTTP 500 come se la risposta conclusiva fosse andata persa. Servono a verificare che il recupero rilegga lo stato remoto, classifichi `remote_success` e chiuda il journal senza ripetere la mutazione:
 
 ```powershell
-.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-after-commit-500
-.\run_offline_lab.ps1 -Profile v5 -Fault next-share-after-commit-500
+.\run_offline_lab.ps1 -Profile v4 -Fault next-resource-create-after-commit-500
+.\run_offline_lab.ps1 -Profile v4 -Fault next-share-after-commit-500
 ```
 
 La versione 0.25.0 completa lo stesso controllo per la creazione delle cartelle. Il fault seguente persiste la cartella e restituisce HTTP 500 prima di comunicarne l'ID al client; il recupero deve ritrovarla in modo univoco, riusarla come destinazione e creare la risorsa successiva senza una seconda cartella:
 
 ```powershell
-.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-after-commit-500
+.\run_offline_lab.ps1 -Profile v4 -Fault next-folder-create-after-commit-500
 ```
 
 La versione 0.26.0 estende gli stessi controlli alle interruzioni di trasporto senza risposta HTTP. Per ciascuna mutazione è disponibile un fault pre-commit, che deve essere dimostrato `not_applied`, e uno post-commit, che deve essere riconciliato come `remote_success` senza ripetere la scrittura:
 
 ```powershell
-.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-disconnect
-.\run_offline_lab.ps1 -Profile v5 -Fault next-resource-create-after-commit-disconnect
-.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-disconnect
-.\run_offline_lab.ps1 -Profile v5 -Fault next-folder-create-after-commit-disconnect
-.\run_offline_lab.ps1 -Profile v5 -Fault next-share-disconnect
-.\run_offline_lab.ps1 -Profile v5 -Fault next-share-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v4 -Fault next-resource-create-disconnect
+.\run_offline_lab.ps1 -Profile v4 -Fault next-resource-create-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v4 -Fault next-folder-create-disconnect
+.\run_offline_lab.ps1 -Profile v4 -Fault next-folder-create-after-commit-disconnect
+.\run_offline_lab.ps1 -Profile v4 -Fault next-share-disconnect
+.\run_offline_lab.ps1 -Profile v4 -Fault next-share-after-commit-disconnect
 ```
 
 Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le sette prove della matrice e verifica che non restino oggetti nel simulatore:
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v4 -SelfTest
-.\run_offline_lab.ps1 -Profile v5 -SelfTest
 ```
 
-La versione 0.23.0 aggiunge un secondo controllo automatico, deliberatamente mutativo ma confinato al workspace effimero. Per ciascun profilo esegue le nove prove operative della matrice: risorsa in radice, nuova cartella cliente, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Ogni risorsa creata dal normale import viene riletta e verificata; v5 usa anche una chiave metadati condivisa sintetica con copia privata cifrata e firmata per l'utente del laboratorio.
+La versione 0.23.0 ha introdotto un secondo controllo automatico, deliberatamente mutativo ma confinato al workspace effimero. Il quality gate corrente esegue sul profilo v4 le nove prove operative della matrice: risorsa in radice, nuova cartella cliente, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Le fixture v5 storiche non costituiscono supporto della release e non vengono eseguite come accettazione positiva.
 
 In 0.26.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risorsa, creazione cartella e modifica ACL sia dopo HTTP 500 sia dopo una disconnessione. Il fault pre-commit deve produrre `not_applied` e una sola ripetizione della mutazione originaria; il fault post-commit deve produrre `remote_success` e zero riscritture della stessa mutazione. Per le cartelle, la risorsa pianificata viene poi creata nella destinazione appena verificata. Gli HTTP 5xx e gli errori di trasporto delle creazioni sono registrati come esito incerto; soltanto una risposta 4xx resta un fallimento confermato.
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v4 -AcceptanceTest
-.\run_offline_lab.ps1 -Profile v5 -AcceptanceTest
 ```
 
-`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente dodici percorsi di fault per profilo nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. I 18 esiti sintetici e i ventiquattro percorsi di fault complessivi vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su istanze Passbolt reali.
+`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente i percorsi di fault v4 nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. Gli esiti sintetici vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su un'istanza Passbolt v4 reale.
 
 Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
-## Matrice di integrazione v4/v5
+## Matrice di integrazione v4
 
-La versione 0.19.0 aggiunge un runner separato per verificare l'app contro istanze Passbolt di laboratorio reali. La configurazione contiene esclusivamente ID del profilo, URL HTTPS, fingerprint pubblica attesa e formati v4/v5: chiave privata, passphrase e TOTP non devono essere aggiunti al file.
+Il runner separato verifica l'app contro un'istanza Passbolt v4 di laboratorio reale. La configurazione contiene esclusivamente ID del profilo, URL HTTPS, fingerprint pubblica attesa e formati v4 espliciti: chiave privata, passphrase e TOTP non devono essere aggiunti al file. Un profilo attivo con formato v5 viene rifiutato; un eventuale profilo v5 disabilitato resta soltanto un dato storico fuori scope.
 
 Preparare una configurazione locale ignorata da Git:
 
@@ -250,7 +247,6 @@ Per ogni profilo, sostituire URL e fingerprint, impostare `enabled` a `true` e a
 
 ```powershell
 .\run_passbolt_integration_matrix.ps1 -Action Run -Instance v4-lab
-.\run_passbolt_integration_matrix.ps1 -Action Run -Instance v5-lab
 ```
 
 Il runner richiede interattivamente percorso della chiave `.asc`, passphrase e TOTP; nessuno di questi valori compare negli argomenti del processo. Le sette prove automatiche eseguono healthcheck, pinning della fingerprint, GPGAuth/MFA, lettura della directory dei permessi, lettura del catalogo ACL e dry-run sintetici di una risorsa nella radice e di una nuova cartella cliente. Dichiarano sempre `write_requests=0` e non chiamano importazione o applicazione ACL.
@@ -277,6 +273,8 @@ Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, des
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti attuali e roadmap
+
+La release 0.28.1 è formalmente **v4-only**. La creazione di cartelle v5 resta fuori scope a causa del difetto upstream tracciato in [passbolt_api issue #617](https://github.com/passbolt/passbolt_api/issues/617); la correzione proposta in [passbolt_api PR #618](https://github.com/passbolt/passbolt_api/pull/618) non viene considerata disponibile finché non è integrata e distribuita ufficialmente. L'interfaccia invia soltanto formati v4 espliciti, il backend rifiuta `auto` e `v5`, la sessione rifiuta server che espongono capability v5 e la matrice accetta soltanto profili v4 attivi. Il precedente report v5 `14/16` resta evidenza storica e non viene trasformato in un successo; il gate di questa release richiede una nuova attestazione reale v4 `16/16` sul nuovo commit candidato.
 
 La versione 0.28.1 corregge il login quando l'orologio del server rende la firma della sfida GPGAuth di pochi secondi futura rispetto a Windows. Il bridge prova sempre prima la verifica OpenPGP stretta; soltanto per quell'errore temporale può ripeterla usando l'header HTTP `Date` della stessa risposta HTTPS, se valido e distante non più di 300 secondi. Firma crittografica, identità della chiave server fissata, validità della chiave e policy degli hash restano obbligatorie. Date assenti o malformate, firme prodotte da altre chiavi e scarti maggiori rimangono bloccati con diagnostica sicura.
 
@@ -326,7 +324,7 @@ La ripresa accetta soltanto stati non ambigui: un'unica risorsa esatta nella des
 
 I registri attivi sono conservati sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\Reconciliation`, fuori dalla cartella del progetto. L'archiviazione li sposta sotto `Reconciliation\Archive\<stato>` e non elimina l'evidenza. Lo schema ammette soltanto identificativi tecnici, hash, contatori e stati: non accetta password, passphrase, MFA, cookie, chiavi, contenuto dei documenti o metadati delle credenziali.
 
-Il prossimo gate esterno resta la chiusura della matrice 0.19.0 su due istanze Passbolt dedicate, una v4 e una v5, conservando soltanto i report sanitizzati fuori dal repository. I sette controlli read-only saranno eseguiti dal runner e i nove scenari mutativi saranno attestati dall'operatore tramite l'app. Dopo il completamento dei sedici scenari per entrambi i profili seguirà la preparazione della distribuzione Windows, inclusi pacchetto riproducibile, firma/verifica degli artefatti e guida di aggiornamento. Finché le istanze reali non sono disponibili, la roadmap può consolidare ulteriormente diagnostica e fault injection, ma non promuoverà gli esiti offline ad attestazioni reali. Il supporto ad altri provider MFA resta saltato come scelta di scope.
+Il prossimo gate esterno richiede i sedici scenari completi su una nuova istanza Passbolt v4 dedicata e sul nuovo commit candidato, conservando soltanto il report sanitizzato fuori dal repository. I sette controlli read-only saranno eseguiti dal runner e i nove scenari mutativi saranno attestati dall'operatore tramite l'app. La matrice v5 è non applicabile e fuori scope, non superata. Dopo il `16/16` v4 seguirà la preparazione della distribuzione Windows, inclusi pacchetto riproducibile, firma/verifica degli artefatti e guida di aggiornamento. Il supporto v5 potrà rientrare soltanto con una nuova decisione di scope e una nuova matrice reale completa; il supporto ad altri provider MFA resta saltato.
 
 ## Contribuire
 

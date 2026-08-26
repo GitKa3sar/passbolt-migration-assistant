@@ -215,7 +215,7 @@ def _readiness(
     permission_mode: str = "inherited",
     permission_template: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    folder_format = profile if destination_mode == "client_folders" else "auto"
+    folder_format = profile
     envelope = bridge.request(
         {
             "command": "session-readiness",
@@ -270,7 +270,7 @@ def _import_candidate(
         "reconciliation_batch_id": batch_id,
         "resource_format": profile,
         "destination_mode": destination_mode,
-        "folder_format": profile if destination_mode == "client_folders" else "auto",
+        "folder_format": profile,
         "destination_folder_id": destination_folder_id,
         "permission_mode": permission_mode,
         "permission_template": permission_template,
@@ -389,7 +389,7 @@ def _exercise_import_recovery(
         "reconciliation_batch_id": batch_id,
         "resource_format": profile,
         "destination_mode": "root",
-        "folder_format": "auto",
+        "folder_format": profile,
         "destination_folder_id": None,
         "permission_mode": "inherited",
         "permission_template": None,

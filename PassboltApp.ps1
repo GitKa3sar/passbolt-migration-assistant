@@ -687,7 +687,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 </Grid>
 
                 <Border Grid.Row="1" Style="{StaticResource InfoBanner}" Margin="0,0,0,14">
-                    <TextBlock Text="Avvia la sessione una sola volta con chiave privata, passphrase e MFA. L'identita OpenPGP e la sessione Passbolt restano esclusivamente in memoria e vengono riutilizzate per dry-run e importazioni successive; si chiudono su richiesta, alla chiusura dell'app o dopo 30 minuti di inattivita." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" LineHeight="17" />
+                    <TextBlock Text="Release v4-only: sono ammessi esclusivamente server Passbolt v4 e formati v4 espliciti; i server o i formati v5 vengono rifiutati. Chiave privata, passphrase, MFA e sessione restano esclusivamente in memoria e si chiudono su richiesta, alla chiusura dell'app o dopo 30 minuti di inattivita." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" LineHeight="17" />
                 </Border>
 
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="18,16">
@@ -729,16 +729,12 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <TextBlock x:Name="PermissionModeStatus" Grid.Row="3" Grid.Column="1" Text="Ereditati dalla destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,8,0" TextWrapping="Wrap" ToolTip="I permessi personalizzati vengono applicati soltanto alle nuove cartelle e risorse; il proprietario autenticato resta sempre Owner" />
                             <Button x:Name="ConfigurePermissionsButton" Grid.Row="3" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" />
                             <TextBlock Grid.Row="4" Text="Formato cartelle" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <ComboBox x:Name="FolderFormat" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito; le nuove cartelle in un contenitore condiviso ne ereditano i permessi">
-                                <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
-                                <ComboBoxItem Content="v4 - nome in chiaro" Tag="v4" />
-                                <ComboBoxItem Content="v5 - nome cifrato" Tag="v5" />
+                            <ComboBox x:Name="FolderFormat" Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Questa release crea esclusivamente cartelle v4; v5 e la selezione automatica sono disabilitati">
+                                <ComboBoxItem Content="v4 - unico formato supportato" Tag="v4" />
                             </ComboBox>
                             <TextBlock Grid.Row="5" Text="Formato risorse" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <ComboBox x:Name="ResourceFormat" Grid.Row="5" Grid.Column="1" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Automatico usa il formato predefinito dall'istanza Passbolt">
-                                <ComboBoxItem Content="Automatico (predefinito server)" Tag="auto" />
-                                <ComboBoxItem Content="v4 - metadati in chiaro" Tag="v4" />
-                                <ComboBoxItem Content="v5 - metadati cifrati" Tag="v5" />
+                            <ComboBox x:Name="ResourceFormat" Grid.Row="5" Grid.Column="1" Margin="0,8,0,0" SelectedIndex="0" ToolTip="Questa release crea esclusivamente risorse v4; v5 e la selezione automatica sono disabilitati">
+                                <ComboBoxItem Content="v4 - unico formato supportato" Tag="v4" />
                             </ComboBox>
                             <Button x:Name="DryRunButton" Grid.Row="5" Grid.Column="2" Content="Preflight e dry-run" Style="{StaticResource PrimaryButton}" Margin="8,8,0,0" IsEnabled="False" />
                         </Grid>
@@ -4533,9 +4529,9 @@ function Invoke-ImportReadiness {
     $Envelope = $null
     $CloseSessionForError = $false
     $RequestedResourceFormat = [string]$ResourceFormat.SelectedItem.Tag
-    if ($RequestedResourceFormat -notin @("auto", "v4", "v5")) { $RequestedResourceFormat = "auto" }
+    if ($RequestedResourceFormat -ne "v4") { $RequestedResourceFormat = "v4" }
     $RequestedFolderFormat = [string]$FolderFormat.SelectedItem.Tag
-    if ($RequestedFolderFormat -notin @("auto", "v4", "v5")) { $RequestedFolderFormat = "auto" }
+    if ($RequestedFolderFormat -ne "v4") { $RequestedFolderFormat = "v4" }
     $RequestedDestinationMode = [string]$DestinationMode.SelectedItem.Tag
     if ($RequestedDestinationMode -notin @("client_folders", "client_mapping", "direct_folder", "root")) { $RequestedDestinationMode = "client_folders" }
     $RequestedDestinationFolderId = if ($RequestedDestinationMode -eq "client_mapping") { "" } else { Get-SelectedDestinationFolderId }
@@ -6455,11 +6451,11 @@ for line in sys.stdin:
     $script:AllInventoryRows = @()
     $script:AllReviewRows = @()
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.source_mapping_profile_revalidation -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.compatibility_profile -ne "passbolt-v4-only" -or -not $ImportBackendTest.result.v5_format_rejected -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.source_mapping_profile_revalidation -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.gpgauth_bounded_clock_verification -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.compatibility_profile -ne "passbolt-v4-only" -or -not $CryptoBackendTest.result.v5_format_rejected -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.gpgauth_bounded_clock_verification -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
@@ -6488,6 +6484,9 @@ for line in sys.stdin:
     }
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
+    }
+    if ($FolderFormat.Items.Count -ne 1 -or [string]$FolderFormat.Items[0].Tag -ne "v4" -or $ResourceFormat.Items.Count -ne 1 -or [string]$ResourceFormat.Items[0].Tag -ne "v4") {
+        throw "La UI deve esporre esclusivamente i formati Passbolt v4."
     }
     if ($ImportModeTabs.Items.Count -ne 3 -or $ImportWorkspaceTabs.Items.Count -ne 4 -or $null -eq $PreflightGrid -or $null -eq $VerificationGrid -or $null -eq $BatchActivityGrid -or $RecoveryConfirmation.IsEnabled -or $VerifyRecoveryButton.IsEnabled -or $ExecuteRecoveryButton.IsEnabled -or (Get-RecoveryStatusLabel "recovery_required") -ne "Recuperabile") {
         throw "I controlli UI del recupero guidato non sono nello stato fail-closed previsto."

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repeatable, secret-free integration matrix for real Passbolt v4/v5 labs.
+"""Repeatable, secret-free integration matrix for real Passbolt v4 labs.
 
 The runner automates only read-only checks. Credentials are requested
 interactively, sent to the existing Node bridge over stdin and never written to
@@ -227,6 +227,11 @@ def load_config(path: str | Path) -> list[InstanceProfile]:
         folder_format = str(raw.get("expected_folder_format", "")).strip().lower()
         if resource_format not in {"v4", "v5"} or folder_format not in {"v4", "v5"}:
             raise MatrixError(f"Il profilo {instance_id} deve richiedere formati v4 oppure v5.")
+        if enabled and (resource_format != "v4" or folder_format != "v4"):
+            raise MatrixError(
+                f"Il profilo {instance_id} non può essere attivato: questa release "
+                "supporta esclusivamente server e formati Passbolt v4."
+            )
         if enabled and len(set(fingerprint)) == 1:
             raise MatrixError(f"Il profilo attivo {instance_id} usa ancora una fingerprint segnaposto.")
         profiles.append(
@@ -454,7 +459,7 @@ def _readiness_request(
         "session_id": session_id,
         "resource_format": profile.expected_resource_format,
         "destination_mode": "root" if at_root else "client_folders",
-        "folder_format": "auto" if at_root else profile.expected_folder_format,
+        "folder_format": profile.expected_folder_format,
         "destination_folder_id": None,
         "permission_mode": "inherited",
         "candidates": [_candidate(run_id, at_root=at_root)],
@@ -835,8 +840,8 @@ def self_test() -> dict[str, Any]:
             "app_version": APP_VERSION,
             "run_id": str(uuid.uuid4()),
             "instance_id": "self-test",
-            "expected_resource_format": "v5",
-            "expected_folder_format": "v5",
+            "expected_resource_format": "v4",
+            "expected_folder_format": "v4",
             "started_at": utc_now(),
             "completed_at": utc_now(),
             "read_only_automation": True,
@@ -874,7 +879,7 @@ def self_test() -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Matrice di integrazione sicura per istanze Passbolt v4/v5 reali.")
+    parser = argparse.ArgumentParser(description="Matrice di integrazione sicura per istanze Passbolt v4 reali.")
     subparsers = parser.add_subparsers(dest="action", required=True)
 
     validate = subparsers.add_parser("validate", help="Valida una configurazione senza collegarsi a Passbolt.")

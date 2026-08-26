@@ -2,6 +2,19 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- ridefinito il perimetro della release 0.28.1 come Passbolt v4-only: interfaccia, protocollo locale e matrice usano esclusivamente formati v4 espliciti;
+- i profili v5 attivi e i server che espongono plugin, endpoint o resource type v5 vengono rifiutati fail-closed; i report v5 storici restano consultabili ma non costituiscono un pass della release;
+- il quality gate esegue l'accettazione stateful v4 e regressioni negative dedicate al rifiuto di formati e server v5.
+
+### Known limitations
+
+- il supporto Passbolt v5 è temporaneamente non disponibile per il difetto folder-history upstream tracciato in [passbolt_api #617](https://github.com/passbolt/passbolt_api/issues/617); la proposta [#618](https://github.com/passbolt/passbolt_api/pull/618) dovrà essere integrata e distribuita ufficialmente prima di una nuova decisione di supporto;
+- la precedente matrice v5 `14/16` non viene reinterpretata. Il nuovo candidato richiede una nuova attestazione reale Passbolt v4 `16/16` prima della distribuzione.
+
 ## 0.28.1 - 2026-08-20
 
 ### Fixed

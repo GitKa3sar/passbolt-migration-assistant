@@ -9,6 +9,7 @@ Grazie per l'interesse nel progetto. Le modifiche devono preservare il principio
 - non includere mai segreti, documenti reali, URL privati, fingerprint operative o dati identificativi;
 - mantieni separate le fasi di inventario, revisione, dry-run e scrittura;
 - non indebolire i controlli fail-closed per aggirare un errore di compatibilità.
+- per la release v4-only, non aggiungere percorsi che selezionino `auto` o v5 e non riattivare profili/server v5 senza una nuova decisione formale di scope e una matrice reale completa.
 - per modifiche ACL restrittive, conserva sempre il proprietario autenticato, riconcilia gli utenti effettivi `added`/`removed` della simulazione e aggiungi test per downgrade, revoca e recupero idempotente.
 - se cambi lo schema dei profili sorgente, mantieni i file privi di valori dei documenti, aggiorna forma canonica e digest e verifica la stessa mappatura durante revisione, rilettura e pianificazione.
 - se cambi lo schema dei progetti locali, conserva la cifratura DPAPI `CurrentUser`, usa una lista chiusa di campi e non persistere fingerprint fidate, sessioni, chiavi, MFA, valori sorgente, correzioni, piani o attestazioni; ogni ripristino deve richiedere nuovamente connessione, inventario e revisione.
