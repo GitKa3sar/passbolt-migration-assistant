@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-APP_VERSION = "0.28.2"
+APP_VERSION = "0.28.3"
 ARTIFACT = "passbolt_migration_receipt"
 SOURCE_ARTIFACT = "passbolt_source_feedback"
 SCHEMA_VERSION = 1

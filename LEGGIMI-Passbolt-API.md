@@ -1,6 +1,6 @@
 # Passbolt Migration Assistant — contratti tecnici correnti
 
-Questa guida descrive esclusivamente i contratti attivi del candidato `0.28.2 - Unreleased candidate`. La cronologia delle versioni e delle sperimentazioni precedenti è in [CHANGELOG.md](CHANGELOG.md); non va dedotta da questo documento alcuna compatibilità oltre il profilo corrente `passbolt-v4-only`.
+Questa guida descrive esclusivamente i contratti attivi del candidato `0.28.3 - Unreleased candidate`. La cronologia delle versioni e delle sperimentazioni precedenti è in [CHANGELOG.md](CHANGELOG.md); non va dedotta da questo documento alcuna compatibilità oltre il profilo corrente `passbolt-v4-only`.
 
 ## Avvio e componenti
 
@@ -27,7 +27,7 @@ Python, Node e WPF comunicano tramite JSON su standard input/output reindirizzat
 
 ## Identità del candidato e profilo di compatibilità
 
-La sola identità corrente è `0.28.2`; UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del gate devono dichiarare la stessa versione. Il profilo applicativo e di report è `passbolt-v4-only`.
+La sola identità corrente è `0.28.3`; UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del gate devono dichiarare la stessa versione. Il profilo applicativo e di report è `passbolt-v4-only`.
 
 Il file [`release-candidate.json`](release-candidate.json) è la fonte macchina unica per versione, stato del changelog, profilo e conteggi del quality gate. I componenti standalone mantengono costanti locali perché devono poter essere eseguiti senza dipendere da un file di repository; `run_tests.ps1` compensa questo trade-off verificando automaticamente tutte le copie applicative della versione e confrontando i conteggi del manifesto con le suite e i riepiloghi effettivi. Una centralizzazione runtime più ampia introdurrebbe una nuova dipendenza di distribuzione senza modificare il contratto funzionale e non è giustificata per questo candidato.
 

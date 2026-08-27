@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "0.28.2",
+  "version": "0.28.3",
   "changelog_state": "unreleased_candidate",
   "compatibility_profile": "passbolt-v4-only",
   "quality_gate": {

@@ -4,9 +4,30 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 Le sezioni precedenti al candidato corrente sono cronologia: eventuali riferimenti v5 descrivono esperimenti e contratti storici e non costituiscono supporto, gate o flusso operativo della release `passbolt-v4-only`.
 
+## 0.28.3 - Unreleased candidate
+
+`0.28.3` e l'unica identita applicativa del candidato corrente. Non esiste un tag locale per questa versione e questa sezione resta non rilasciata finche il quality gate offline e la nuova matrice reale Passbolt v4 completa non risultano entrambi superati sul medesimo candidato.
+
+### Fixed
+
+- resi raggiungibili a tastiera i campi terminali delle griglie di inventario e revisione alla finestra minima, tramite scorrimento orizzontale locale e senza modificare il layout delle altre viste;
+- aggiunti nomi accessibili coerenti agli input critici delle fasi 01-03 e agli editor dinamici di candidati, password Excel e profili sorgente;
+- dopo un esito remoto incerto di importazione, bloccati nuovi preflight e nuove importazioni finche l'elenco locale dei journal non consente di completare o gestire il recupero;
+- dopo un esito remoto incerto ACL, bloccati nuovi piani e retry finche i journal ACL locali non vengono riconciliati o gestiti; un errore di lettura mantiene la guardia fail-closed.
+
+### Security
+
+- le guardie UX usano esclusivamente gli elenchi locali dei journal gia esistenti, non alterano i protocolli o i formati persistiti e conservano la regola recovery-instead-of-retry;
+- il profilo resta rigidamente `passbolt-v4-only`; ricevute e feedback continuano a escludere segreti, percorsi, identita e altri dati operativi sensibili.
+
+### Known limitations
+
+- il gate offline e l'accettazione UX sintetica non sostituiscono la matrice reale Passbolt v4 da 16 scenari e non autorizzano una release;
+- gli stati popolati delle anteprime WPF restano rappresentazioni visive sintetiche; le prove comportamentali di input e lock sono eseguite separatamente dal self-test/harness.
+
 ## 0.28.2 - Unreleased candidate
 
-`0.28.2` e l'unica identita applicativa del candidato corrente. Non esiste un tag locale per questa versione e questa sezione resta non rilasciata finche il quality gate offline e la nuova matrice reale Passbolt v4 completa non risultano entrambi superati sul medesimo candidato.
+`0.28.2` e il candidato precedente da cui deriva `0.28.3`; non e stato trasformato in tag o release.
 
 ### Added
 

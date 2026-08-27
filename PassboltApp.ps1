@@ -69,7 +69,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.28.2"
+        Title="Passbolt Migration Assistant - v0.28.3"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -532,7 +532,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <TextBlock Text="Ogni cartella di primo livello viene considerata un cliente. I file nella radice restano separati." Foreground="{StaticResource MutedBrush}" Margin="0,5,0,16" TextWrapping="Wrap" />
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBox x:Name="ClientFolder" />
+                                <TextBox x:Name="ClientFolder" AutomationProperties.Name="Cartella documenti clienti" />
                                 <Button x:Name="BrowseButton" Grid.Column="1" Content="Scegli cartella" Style="{StaticResource SecondaryButton}" Margin="12,0,0,0" />
                             </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
@@ -589,9 +589,9 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,12">
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="160" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <ComboBox x:Name="ClientFilter" Grid.Column="0" />
-                        <ComboBox x:Name="FormatFilter" Grid.Column="1" Margin="8,0,0,0" />
-                        <TextBox x:Name="SearchBox" Grid.Column="2" Margin="8,0,0,0" ToolTip="Cerca nel cliente o nel percorso relativo" />
+                        <ComboBox x:Name="ClientFilter" Grid.Column="0" AutomationProperties.Name="Filtro cliente inventario" />
+                        <ComboBox x:Name="FormatFilter" Grid.Column="1" Margin="8,0,0,0" AutomationProperties.Name="Filtro formato inventario" />
+                        <TextBox x:Name="SearchBox" Grid.Column="2" Margin="8,0,0,0" AutomationProperties.Name="Ricerca file inventariati" ToolTip="Cerca nel cliente o nel percorso relativo" />
                         <TextBlock x:Name="FilterStatus" Grid.Column="3" Text="0 file" Foreground="#66737F" VerticalAlignment="Center" Margin="14,0,0,0" />
                     </Grid>
                 </Border>
@@ -599,7 +599,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0" Padding="0">
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                        <DataGrid x:Name="FilesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" ToolTip="Seleziona pi&#xF9; file con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <DataGrid x:Name="FilesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="File inventariati" ToolTip="Seleziona pi&#xF9; file con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Cliente" Binding="{Binding Client}" Width="145" />
                                 <DataGridTextColumn Header="Percorso relativo" Binding="{Binding RelativePath}" Width="*" MinWidth="360" />
@@ -620,7 +620,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                     <Button x:Name="BackButton" Content="&#x2190;  Torna alla configurazione" Style="{StaticResource SecondaryButton}" />
                     <Button x:Name="SaveInventoryProjectButton" Grid.Column="1" Content="Salva progetto..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" ToolTip="Salva origine, cartella, profilo e file selezionati in un progetto DPAPI privo di credenziali" />
                     <Button x:Name="SourceFeedbackButton" Grid.Column="2" Content="Esclusioni e conversioni" Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" IsEnabled="False" ToolTip="Mostra soltanto conteggi aggregati per motivo e formato, senza nomi o percorsi" />
-                    <TextBox x:Name="ActivityLog" Grid.Column="3" Margin="12,0,0,0" Height="42" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas" FontSize="10" Background="#F2F2F7" BorderBrush="#E5E5EA" />
+                    <TextBox x:Name="ActivityLog" Grid.Column="3" Margin="12,0,0,0" Height="42" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Registro attivita locale" FontFamily="Cascadia Mono, Consolas" FontSize="10" Background="#F2F2F7" BorderBrush="#E5E5EA" />
                 </Grid>
             </Grid>
 
@@ -655,8 +655,8 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 <Border Grid.Row="2" Style="{StaticResource Card}" Padding="14,12">
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition Width="170" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <ComboBox x:Name="ReviewStatusFilter" Grid.Column="0" />
-                        <TextBox x:Name="ReviewSearchBox" Grid.Column="1" Margin="8,0,0,0" ToolTip="Cerca in cliente, titolo, username, URL o origine" />
+                        <ComboBox x:Name="ReviewStatusFilter" Grid.Column="0" AutomationProperties.Name="Filtro stato candidati" />
+                        <TextBox x:Name="ReviewSearchBox" Grid.Column="1" Margin="8,0,0,0" AutomationProperties.Name="Ricerca candidati" ToolTip="Cerca in cliente, titolo, username, URL o origine" />
                         <ToggleButton x:Name="ReviewPasswordToggle" Grid.Column="2" Content="Mostra password" Margin="8,0,0,0" Padding="12,7" VerticalAlignment="Stretch" ToolTip="Mostra temporaneamente le password dei candidati caricandole soltanto in memoria" />
                         <Button x:Name="EditReviewCandidateButton" Grid.Column="3" Content="Modifica..." Style="{StaticResource SecondaryButton}" Margin="8,0,0,0" Padding="14,7" IsEnabled="False" ToolTip="Modifica il candidato selezionato prima dell'importazione" />
                         <TextBlock x:Name="ReviewFilterStatus" Grid.Column="4" Text="0 candidati" Foreground="#66737F" VerticalAlignment="Center" Margin="14,0,0,0" />
@@ -666,7 +666,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                 <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0" Padding="0">
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                        <DataGrid x:Name="ReviewCandidatesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" ToolTip="Seleziona i candidati pronti con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <DataGrid x:Name="ReviewCandidatesGrid" Grid.Row="0" AutoGenerateColumns="False" AlternationCount="2" SelectionMode="Extended" SelectionUnit="FullRow" HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Candidati revisionati" ToolTip="Seleziona i candidati pronti con Ctrl o Maiusc" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Stato" Binding="{Binding StatusLabel}" Width="105" />
                                 <DataGridTextColumn Header="Cliente" Binding="{Binding Client}" Width="125" />
@@ -1279,6 +1279,7 @@ $script:RecoverySecretOverrides = @{}
 $script:RecoverySourceFilePasswords = @{}
 $script:RecoveryPlan = $null
 $script:UpdatingRecoverySelection = $false
+$script:ImportRecoveryRequired = $false
 $script:ClosingApplication = $false
 $script:PopulatingDestinationFolders = $false
 $script:AvailableDestinationFolders = @()
@@ -1292,6 +1293,8 @@ $script:AclCatalogSessionId = ""
 $script:AllAclObjectRows = @()
 $script:UpdatingAclSelection = $false
 $script:AclPlan = $null
+$script:AclRecoveryRequired = $false
+$script:AclRecoveryBlockingCount = 0
 $script:CurrentPage = "Configuration"
 $script:OperationalState = [pscustomobject]@{
     Mode = "Idle"
@@ -2205,7 +2208,7 @@ function Save-LocalPreparationProject([switch]$ReviewContext) {
         project = [pscustomobject][ordered]@{
             schema_version = 1
             kind = "passbolt-migration-preparation"
-            app_version = "0.28.2"
+            app_version = "0.28.3"
             saved_at_utc = $SavedAtUtc
             server_origin = [string]$PlannedServerOrigin
             source_root = [string]$script:InventoryFolder
@@ -2624,6 +2627,7 @@ function Show-Phase04Workspace(
         $ImportSummary.Text = "Spazio separato dalla migrazione per consultare, simulare e applicare ACL"
         $AclWorkspaceButton.Content = "Torna alla migrazione"
         Update-AclViewerState
+        if (-not $SkipRefresh) { Refresh-AclRecoveryGuard }
         return
     }
 
@@ -2637,7 +2641,9 @@ function Show-Phase04Workspace(
         }
     } else {
         $ImportPageTitle.Text = "Importazione controllata"
-        $ImportSummary.Text = if ($script:ImportCandidates.Count -gt 0) {
+        $ImportSummary.Text = if ($script:ImportRecoveryRequired) {
+            "Nuove importazioni bloccate: completare prima il recupero del journal locale"
+        } elseif ($script:ImportCandidates.Count -gt 0) {
             "$($script:ImportCandidates.Count) candidati pronti selezionati dalla revisione"
         } else {
             "Prepara i candidati dalla revisione"
@@ -2654,7 +2660,13 @@ function Update-ImportSessionState {
     if ($Active) {
         $ImportSessionButton.Content = "Chiudi sessione"
         $ImportSessionButton.IsEnabled = $true
-        $DryRunButton.IsEnabled = ($script:ConnectionVerified -and $script:ImportCandidates.Count -gt 0 -and $script:ImportSessionRoot -eq $script:InventoryFolder -and $null -eq $script:RecoveryPlan)
+        $DryRunButton.IsEnabled = (
+            -not $script:ImportRecoveryRequired -and
+            $script:ConnectionVerified -and
+            $script:ImportCandidates.Count -gt 0 -and
+            $script:ImportSessionRoot -eq $script:InventoryFolder -and
+            $null -eq $script:RecoveryPlan
+        )
         if ($null -eq $script:ImportPlan) { $ImportIdentity.Text = Get-ImportSessionIdentityText }
     } else {
         $ImportSessionButton.Content = "Avvia sessione"
@@ -2662,6 +2674,14 @@ function Update-ImportSessionState {
         $ImportSessionButton.IsEnabled = ($script:ConnectionVerified -and $PreparedCandidateCount -gt 0 -and (Test-Path -LiteralPath $script:InventoryFolder -PathType Container))
         $DryRunButton.IsEnabled = $false
         if ($null -eq $script:ImportPlan) { $ImportIdentity.Text = "Avviare la sessione sicura per verificare identita' e piano." }
+    }
+    $NewImportModeButton.IsEnabled = -not $script:ImportRecoveryRequired
+    $DryRunButton.ToolTip = if ($script:ImportRecoveryRequired) {
+        "Recupero obbligatorio: verificare o gestire il journal locale prima di preparare una nuova importazione."
+    } elseif ($Active) {
+        "Esegue preflight e dry-run senza inviare scritture."
+    } else {
+        "Avviare prima la sessione sicura Passbolt."
     }
     Update-ExecuteImportState
     Update-RecoveryActionState
@@ -3118,10 +3138,12 @@ function Refresh-RecoveryBatches([switch]$Quiet, [scriptblock]$OnCompleted = $nu
             param($Envelope, $Operation)
             if (-not [bool]$Envelope.ok) {
                 $FailureMessage = Get-SecureErrorMessage $Envelope
+                $script:ImportRecoveryRequired = $true
                 $script:RecoveryBatches = @()
                 $RecoveryBatchesGrid.ItemsSource = $null
                 Clear-RecoveryCandidateState
                 Reset-RecoveryPlan "Elenco dei registri non disponibile: $FailureMessage"
+                Update-ImportSessionState
                 if (-not [bool]$Operation.Context.Quiet) { Add-Activity "Aggiornamento registri non riuscito: $FailureMessage" }
                 if ($null -ne $Operation.Context.OnCompleted) { & $Operation.Context.OnCompleted $false }
                 return
@@ -3143,6 +3165,8 @@ function Refresh-RecoveryBatches([switch]$Quiet, [scriptblock]$OnCompleted = $nu
                 })
             }
             $script:RecoveryBatches = $Rows.ToArray()
+            $BlockingBatches = @($script:RecoveryBatches | Where-Object { [string]$_.Status -ne "complete" })
+            $script:ImportRecoveryRequired = $BlockingBatches.Count -gt 0
             $script:UpdatingRecoverySelection = $true
             try {
                 $RecoveryBatchesGrid.ItemsSource = $script:RecoveryBatches
@@ -3151,6 +3175,10 @@ function Refresh-RecoveryBatches([switch]$Quiet, [scriptblock]$OnCompleted = $nu
                 $RecoveryBatchesGrid.SelectedItem = $SelectedRow
             } finally {
                 $script:UpdatingRecoverySelection = $false
+            }
+            Update-ImportSessionState
+            if ($script:ImportRecoveryRequired -and $script:Phase04Workspace -eq "new_import") {
+                Show-Phase04Workspace "recovery" -SkipRefresh
             }
             if (-not [bool]$Operation.Context.Quiet) { Add-Activity "Registri locali aggiornati: $($script:RecoveryBatches.Count) lotti attivi; nessun documento o segreto letto." }
             Update-RecoveryActionState
@@ -3162,10 +3190,12 @@ function Refresh-RecoveryBatches([switch]$Quiet, [scriptblock]$OnCompleted = $nu
         }
         OnFailure = {
             param($FailureMessage, $Operation)
+            $script:ImportRecoveryRequired = $true
             $script:RecoveryBatches = @()
             $RecoveryBatchesGrid.ItemsSource = $null
             Clear-RecoveryCandidateState
             Reset-RecoveryPlan "Elenco dei registri non disponibile: $FailureMessage"
+            Update-ImportSessionState
             if (-not [bool]$Operation.Context.Quiet) { Add-Activity "Aggiornamento registri non riuscito: $FailureMessage" }
             if ($null -ne $Operation.Context.OnCompleted) { & $Operation.Context.OnCompleted $false }
         }
@@ -3842,6 +3872,12 @@ function Reset-AclPlan([string]$Message = "Nessun piano calcolato. Seleziona un 
 function Update-AclApplyActionState {
     $Active = Test-ImportSessionActive
     $RecoverAclButton.IsEnabled = $Active
+    if ($script:AclRecoveryRequired) {
+        $AclConfirmation.IsEnabled = $false
+        $ApplyAclButton.IsEnabled = $false
+        $ApplyAclButton.ToolTip = "Recupero obbligatorio: verificare o gestire i journal ACL locali prima di applicare un piano."
+        return
+    }
     $Eligible = $Active -and $null -ne $script:AclPlan -and [bool]$script:AclPlan.apply_available
     $AclConfirmation.IsEnabled = $Eligible
     if (-not $Eligible) {
@@ -3858,7 +3894,13 @@ function Update-AclPlanActionState {
     $Selected = $AclObjectsGrid.SelectedItem
     $Eligible = $false
     $Reason = "Seleziona un oggetto verificato di cui sei Proprietario."
-    if (-not (Test-ImportSessionActive)) {
+    if ($script:AclRecoveryRequired) {
+        $Reason = if (Test-ImportSessionActive) {
+            "Recupero obbligatorio: usare Recupera ACL o Gestisci journal prima di calcolare un nuovo piano."
+        } else {
+            "Recupero obbligatorio: avviare la sessione e usare Recupera ACL prima di calcolare un nuovo piano."
+        }
+    } elseif (-not (Test-ImportSessionActive)) {
         $Reason = "Avvia prima la sessione sicura Passbolt."
     } elseif ($script:AclCatalogSessionId -ne $script:ImportSessionId) {
         $Reason = "Leggi prima il catalogo ACL della sessione corrente."
@@ -4157,11 +4199,14 @@ function Invoke-ConfirmedAclApply {
             if (-not [bool]$Envelope.ok) {
                 $FailureMessage = Get-SecureErrorMessage $Envelope
                 $BatchId = if ($null -ne $Envelope.error.details) { [string]$Envelope.error.details.acl_batch_id } else { "" }
+                $script:AclRecoveryRequired = $true
+                $script:AclRecoveryBlockingCount = [Math]::Max(1, [int]$script:AclRecoveryBlockingCount)
                 Reset-AclPlan "Applicazione ACL non completata. Non ripetere il dry-run: usare Recupera ACL per verificare lo stato remoto."
                 $AclViewerStatus.Text = "Applicazione ACL non completata: $FailureMessage"
                 Add-Activity "Applicazione ACL non completata. Journal da verificare: $BatchId. $FailureMessage"
                 if ((Test-TerminalImportSessionError $Envelope) -or -not (Test-ImportSessionActive)) { Stop-ImportSession "" $false }
                 Update-AclApplyActionState
+                Update-AclPlanActionState
                 $JournalText = if ($BatchId) { [Environment]::NewLine + [Environment]::NewLine + "Journal ACL: $BatchId" + [Environment]::NewLine + "Usare Recupera ACL prima di qualsiasi nuovo tentativo." } else { "" }
                 [System.Windows.MessageBox]::Show("$FailureMessage$JournalText", "Applicazione ACL non completata", "OK", "Error") | Out-Null
                 return
@@ -4182,11 +4227,14 @@ function Invoke-ConfirmedAclApply {
         }
         OnFailure = {
             param($FailureMessage, $Operation)
+            $script:AclRecoveryRequired = $true
+            $script:AclRecoveryBlockingCount = [Math]::Max(1, [int]$script:AclRecoveryBlockingCount)
             Reset-AclPlan "Applicazione ACL non completata. Non ripetere il dry-run: usare Recupera ACL per verificare lo stato remoto."
             $AclViewerStatus.Text = "Applicazione ACL non completata: $FailureMessage"
             Add-Activity "Applicazione ACL non completata con esito remoto non determinabile: $FailureMessage"
             Stop-ImportSession "" $false
             Update-AclApplyActionState
+            Update-AclPlanActionState
             [System.Windows.MessageBox]::Show(
                 $FailureMessage + [Environment]::NewLine + [Environment]::NewLine + "L'esito remoto non è considerato non applicato. Usare Recupera ACL prima di qualsiasi nuovo tentativo.",
                 "Applicazione ACL non completata",
@@ -4670,6 +4718,48 @@ function Show-AclJournalManager([switch]$BuildOnly) {
     } finally {
         $Dialog.Dispose()
     }
+    Refresh-AclRecoveryGuard
+}
+
+function Set-AclRecoveryGuardFromBatches([object[]]$Batches, [string]$FailureMessage = "") {
+    if (-not [string]::IsNullOrWhiteSpace($FailureMessage)) {
+        $script:AclRecoveryRequired = $true
+        $script:AclRecoveryBlockingCount = -1
+        $AclViewerStatus.Text = "Verifica journal ACL non disponibile: $FailureMessage. Nuovi piani bloccati per sicurezza."
+        Update-AclPlanActionState
+        Update-AclApplyActionState
+        return
+    }
+    $Blocking = @($Batches | Where-Object { [string]$_.status -ne "complete" })
+    $script:AclRecoveryBlockingCount = $Blocking.Count
+    $script:AclRecoveryRequired = $Blocking.Count -gt 0
+    if ($script:AclRecoveryRequired) {
+        $AclViewerStatus.Text = "Recupero ACL obbligatorio: $($Blocking.Count) journal locali richiedono verifica o gestione prima di un nuovo piano."
+    }
+    Update-AclPlanActionState
+    Update-AclApplyActionState
+}
+
+function Refresh-AclRecoveryGuard {
+    $OperationParameters = @{
+        Name = "Verifica journal ACL locali"
+        Category = "read"
+        WorkKind = "PythonJson"
+        Payload = New-PythonJsonOperationPayload $ImportScript @("--acl-reconciliation-list")
+        OnSuccess = {
+            param($Envelope, $Operation)
+            if (-not [bool]$Envelope.ok) {
+                Set-AclRecoveryGuardFromBatches @() (Get-SecureErrorMessage $Envelope)
+                return
+            }
+            Set-AclRecoveryGuardFromBatches @($Envelope.result.batches)
+        }
+        OnFailure = {
+            param($FailureMessage, $Operation)
+            Set-AclRecoveryGuardFromBatches @() $FailureMessage
+        }
+    }
+    [void](Start-UiOperation @OperationParameters)
 }
 
 function Complete-AclRecoveryFailure([string]$BatchId, [string]$FailureMessage, [bool]$RemoteOutcomeUncertain = $false) {
@@ -4737,6 +4827,9 @@ function Start-AclRecoveryApply([string]$BatchId, [object]$Readiness, [string]$C
                 "La modifica risultava già applicata; non è stata inviata alcuna scrittura."
             }
             Add-Activity "Journal ACL $([string]$Operation.Context.BatchId) riconciliato: $([string]$Result.resolution)."
+            if ($script:AclRecoveryBlockingCount -gt 0) { $script:AclRecoveryBlockingCount-- }
+            $script:AclRecoveryRequired = $script:AclRecoveryBlockingCount -ne 0
+            Update-AclViewerState
             [System.Windows.MessageBox]::Show($WriteText + [Environment]::NewLine + [Environment]::NewLine + "Journal chiuso: $([string]$Operation.Context.BatchId)", "Recupero ACL completato", "OK", "Information") | Out-Null
             Refresh-ExistingAclCatalog
         }
@@ -4821,11 +4914,14 @@ function Invoke-AclRecovery {
             param($ListEnvelope, $Operation)
             if (-not [bool]$ListEnvelope.ok) {
                 $FailureMessage = Get-SecureErrorMessage $ListEnvelope
+                Set-AclRecoveryGuardFromBatches @() $FailureMessage
                 Add-Activity "Elenco journal ACL non disponibile: $FailureMessage"
                 [System.Windows.MessageBox]::Show($FailureMessage, "Journal ACL non disponibili", "OK", "Error") | Out-Null
                 return
             }
-            $Pending = @($ListEnvelope.result.batches | Where-Object { [string]$_.status -eq "recovery_required" })
+            $Batches = @($ListEnvelope.result.batches)
+            Set-AclRecoveryGuardFromBatches $Batches
+            $Pending = @($Batches | Where-Object { [string]$_.status -eq "recovery_required" })
             if ($Pending.Count -eq 0) {
                 [System.Windows.MessageBox]::Show("Non risultano journal ACL recuperabili. I journal completi, troncati o corrotti non vengono applicati automaticamente.", "Nessun recupero ACL", "OK", "Information") | Out-Null
                 return
@@ -4835,6 +4931,7 @@ function Invoke-AclRecovery {
         }
         OnFailure = {
             param($FailureMessage, $Operation)
+            Set-AclRecoveryGuardFromBatches @() $FailureMessage
             Add-Activity "Elenco journal ACL non disponibile: $FailureMessage"
             [System.Windows.MessageBox]::Show($FailureMessage, "Journal ACL non disponibili", "OK", "Error") | Out-Null
         }
@@ -5494,6 +5591,7 @@ function Show-ReviewCandidateEditor($Row = $null, [switch]$BuildOnly) {
         $Editor.Text = [string]$Spec[2]
         $Editor.MaxLength = [int]$Spec[3]
         $Editor.Margin = [System.Windows.Thickness]::new(0, 0, 0, 10)
+        [System.Windows.Automation.AutomationProperties]::SetName($Editor, [string]$Spec[0])
         [System.Windows.Controls.Grid]::SetRow($Editor, $Index)
         [System.Windows.Controls.Grid]::SetColumn($Editor, 1)
         [void]$Form.Children.Add($Editor)
@@ -5517,10 +5615,12 @@ function Show-ReviewCandidateEditor($Row = $null, [switch]$BuildOnly) {
     $PasswordBox = New-Object System.Windows.Controls.PasswordBox
     $PasswordBox.MaxLength = 65536
     $PasswordBox.Password = [string]$Row.SecretValue
+    [System.Windows.Automation.AutomationProperties]::SetName($PasswordBox, "Password candidato")
     $PasswordText = New-Object System.Windows.Controls.TextBox
     $PasswordText.MaxLength = 65536
     $PasswordText.Text = [string]$Row.SecretValue
     $PasswordText.Visibility = "Collapsed"
+    [System.Windows.Automation.AutomationProperties]::SetName($PasswordText, "Password candidato visibile")
     $ShowPassword = New-Object System.Windows.Controls.CheckBox
     $ShowPassword.Content = "Mostra password durante la modifica"
     $ShowPassword.Margin = [System.Windows.Thickness]::new(0, 7, 0, 0)
@@ -5835,6 +5935,16 @@ function Complete-ImportReadinessFailure([string]$FailureMessage, [bool]$CloseSe
 }
 
 function Invoke-ImportReadiness {
+    if ($script:ImportRecoveryRequired) {
+        Show-Phase04Workspace "recovery" -SkipRefresh
+        [System.Windows.MessageBox]::Show(
+            "Una precedente importazione richiede verifica. Completare o gestire il journal nel recupero guidato prima di preparare un nuovo dry-run.",
+            "Recupero obbligatorio",
+            "OK",
+            "Warning"
+        ) | Out-Null
+        return
+    }
     if (-not $script:ConnectionVerified -or -not $script:VerifiedUrl -or -not $script:VerifiedFingerprint) {
         [System.Windows.MessageBox]::Show("Verificare il server e confermare la fingerprint nella parte superiore della fase 04.", "Connessione non verificata", "OK", "Warning") | Out-Null
         return
@@ -5906,11 +6016,13 @@ function Complete-ConfirmedImportFailure(
     [bool]$CloseSession
 ) {
     Set-ImportDashboardFailure $FailureMessage
+    $script:ImportRecoveryRequired = $true
     if ($CloseSession -or -not (Test-ImportSessionActive)) { Stop-ImportSession "" $false }
     Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
     Add-Activity "Importazione non completata: $FailureMessage"
     Update-ImportSessionState
-    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.2", "OK", "Error") | Out-Null
+    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.3", "OK", "Error") | Out-Null
+    Show-Phase04Workspace "recovery" -SkipRefresh
     Refresh-RecoveryBatches -Quiet
 }
 
@@ -6207,6 +6319,7 @@ function Invoke-RecoveryReadiness {
     }
 }
 function Complete-ConfirmedRecoveryFailure([string]$FailureMessage, [bool]$CloseSession) {
+    $script:ImportRecoveryRequired = $true
     if ($CloseSession -or -not (Test-ImportSessionActive)) { Stop-ImportSession "" $false }
     Reset-RecoveryPlan "Recupero interrotto. Aggiornare il lotto e ripetere la verifica autenticata; nessuna operazione distruttiva verra' tentata."
     Add-Activity "Recupero del lotto non completato: $FailureMessage"
@@ -6283,6 +6396,10 @@ function Invoke-ConfirmedRecovery {
                     return
                 }
                 $script:RecoveryPlan = $null
+                $RemainingRecoveryBatches = @($script:RecoveryBatches | Where-Object {
+                    [string]$_.BatchId -ne [string]$Operation.Context.BatchId -and [string]$_.Status -ne "complete"
+                })
+                $script:ImportRecoveryRequired = $RemainingRecoveryBatches.Count -gt 0
                 $RecoveryConfirmation.Text = ""
                 $RecoveryConfirmation.IsEnabled = $false
                 $RecoveryStatus.Text = "Recupero completato e journal chiuso."
@@ -6538,9 +6655,11 @@ function Show-ExcelPasswordDialog([string]$RelativePath, [switch]$Retry, [switch
     [System.Windows.Controls.Grid]::SetRow($PasswordHost, 2)
     $PasswordBox = New-Object System.Windows.Controls.PasswordBox
     $PasswordBox.MaxLength = 1024
+    [System.Windows.Automation.AutomationProperties]::SetName($PasswordBox, "Password file Excel")
     $PasswordText = New-Object System.Windows.Controls.TextBox
     $PasswordText.MaxLength = 1024
     $PasswordText.Visibility = "Collapsed"
+    [System.Windows.Automation.AutomationProperties]::SetName($PasswordText, "Password file Excel visibile")
     [void]$PasswordHost.Children.Add($PasswordBox)
     [void]$PasswordHost.Children.Add($PasswordText)
     [void]$Layout.Children.Add($PasswordHost)
@@ -6761,6 +6880,7 @@ function Show-SourceMappingProfileDialog([switch]$BuildOnly) {
         $Editor.Margin = [System.Windows.Thickness]::new(0, 4, 0, 8)
         $Editor.Padding = [System.Windows.Thickness]::new(10, 8, 10, 8)
         $Editor.MaxLength = 720
+        [System.Windows.Automation.AutomationProperties]::SetName($Editor, "$([string]$Rows[$Index].Label) profilo sorgente")
         [System.Windows.Controls.Grid]::SetRow($Editor, $Index)
         [System.Windows.Controls.Grid]::SetColumn($Editor, 1)
         [void]$Form.Children.Add($Label)
@@ -7654,7 +7774,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.2"
+        version = "0.28.3"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         import_tab = if ($RenderPreviewPage -eq "Import") { $RenderPreviewImportTab } else { $null }
@@ -7778,7 +7898,7 @@ if ($SelfTest) {
         }
     }
     if (
-        $Window.Title -notmatch "v0\.28\.2" -or
+        $Window.Title -notmatch "v0\.28\.3" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -7786,6 +7906,8 @@ if ($SelfTest) {
         $null -eq $StepConfiguration.Template -or
         $FilesGrid.RowHeight -lt 40 -or
         $FilesGrid.Columns[1].MinWidth -lt 300 -or
+        $FilesGrid.HorizontalScrollBarVisibility -ne [System.Windows.Controls.ScrollBarVisibility]::Auto -or
+        $ReviewCandidatesGrid.HorizontalScrollBarVisibility -ne [System.Windows.Controls.ScrollBarVisibility]::Auto -or
         $null -eq $ClientFolder.Template -or
         $null -eq $DestinationMode.Template -or
         $null -eq $ReviewPasswordToggle.Template -or
@@ -7852,6 +7974,22 @@ if ($SelfTest) {
     })
     if ($Phase04KeyboardBlocked.Count -gt 0 -or $FocusTriggerCount -lt 9 -or $Phase04UnnamedInputs.Count -gt 0) {
         throw "La fase 04 non espone un percorso di tastiera completo con focus visibile."
+    }
+    $Phase0103NamedInputs = @(
+        $ClientFolder,
+        $ClientFilter,
+        $FormatFilter,
+        $SearchBox,
+        $FilesGrid,
+        $ActivityLog,
+        $ReviewStatusFilter,
+        $ReviewSearchBox,
+        $ReviewCandidatesGrid
+    )
+    if (@($Phase0103NamedInputs | Where-Object {
+        [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($_))
+    }).Count -gt 0) {
+        throw "Le fasi 01-03 contengono input critici senza nome accessibile coerente."
     }
     $ClientFolder.Text = $ProjectRoot
     $script:ConnectionVerified = $false
@@ -7986,6 +8124,31 @@ for line in sys.stdin:
             Remove-Item -LiteralPath $SessionProbePath -Force
         }
     }
+    $script:ImportSessionProcess = [System.Diagnostics.Process]::GetCurrentProcess()
+    $script:ImportSessionId = "uncertain-import-guard-probe"
+    $script:InventoryFolder = "C:\synthetic-import-root"
+    $script:ImportSessionRoot = $script:InventoryFolder
+    $script:ConnectionVerified = $true
+    $script:ImportCandidates = @([pscustomobject]@{ candidate_id = "uncertain-import-probe" })
+    $script:RecoveryPlan = $null
+    $script:ImportRecoveryRequired = $false
+    Update-ImportSessionState
+    if (-not $DryRunButton.IsEnabled -or -not $NewImportModeButton.IsEnabled) {
+        throw "Il probe della guardia import non raggiunge lo stato pronto iniziale."
+    }
+    $script:ImportRecoveryRequired = $true
+    Update-ImportSessionState
+    if ($DryRunButton.IsEnabled -or $NewImportModeButton.IsEnabled -or [string]$DryRunButton.ToolTip -notmatch "Recupero obbligatorio") {
+        throw "Un esito import incerto non blocca retry e nuova preparazione a favore del recupero."
+    }
+    $script:ImportRecoveryRequired = $false
+    $script:ImportSessionProcess = $null
+    $script:ImportSessionId = ""
+    $script:InventoryFolder = ""
+    $script:ImportSessionRoot = ""
+    $script:ConnectionVerified = $false
+    $script:ImportCandidates = @()
+    Update-ImportSessionState
     $ReviewBackendTest = Invoke-PythonJson $ReviewScript @("--self-test")
     if ($ReviewBackendTest.secrets_serialized -or -not $ReviewBackendTest.excel_password_prompt_supported -or -not $ReviewBackendTest.unlimited_file_selection -or -not $ReviewBackendTest.unlimited_candidate_collection -or -not $ReviewBackendTest.single_pass_field_detection -or -not $ReviewBackendTest.source_mapping_profiles) {
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
@@ -8051,7 +8214,7 @@ for line in sys.stdin:
     $script:ImportCandidates = @()
     $LocalProjectBackendTest = Invoke-PythonJson $LocalProjectScript @("--self-test")
     if (
-        $LocalProjectBackendTest.version -ne "0.28.2" -or
+        $LocalProjectBackendTest.version -ne "0.28.3" -or
         -not $LocalProjectBackendTest.dpapi_current_user_required -or
         $LocalProjectBackendTest.secret_fields_serialized -or
         $LocalProjectBackendTest.trusted_fingerprint_persisted -or
@@ -8267,6 +8430,30 @@ for line in sys.stdin:
     if ($AclObjectsGrid.Items.Count -ne 1 -or $AclPermissionsGrid.Items.Count -ne 2 -or [string]$AclObjectSummary.Text -notmatch "Cliente ACL") {
         throw "Il visualizzatore UI delle ACL esistenti non espone oggetti e permessi nello stato previsto."
     }
+    $script:ImportSessionProcess = [System.Diagnostics.Process]::GetCurrentProcess()
+    $script:ImportSessionId = "uncertain-acl-guard-probe"
+    $script:AclCatalogSessionId = $script:ImportSessionId
+    $script:AclRecoveryRequired = $false
+    Update-AclPlanActionState
+    if (-not $AclPlanButton.IsEnabled) {
+        throw "Il probe della guardia ACL non raggiunge lo stato pronto iniziale."
+    }
+    $script:AclRecoveryRequired = $true
+    $script:AclRecoveryBlockingCount = 1
+    $script:AclPlan = [pscustomobject]@{ apply_available = $true; confirmation_required = "CONFERMO ACL PROBE" }
+    $AclConfirmation.Text = "CONFERMO ACL PROBE"
+    Update-AclPlanActionState
+    Update-AclApplyActionState
+    if ($AclPlanButton.IsEnabled -or $ApplyAclButton.IsEnabled -or $AclConfirmation.IsEnabled -or [string]$AclPlanButton.ToolTip -notmatch "Recupero obbligatorio" -or [string]$ApplyAclButton.ToolTip -notmatch "Recupero obbligatorio") {
+        throw "Un esito ACL incerto non blocca dry-run e applicazione a favore del recupero."
+    }
+    Reset-AclPlan
+    $script:AclRecoveryRequired = $false
+    $script:AclRecoveryBlockingCount = 0
+    $script:ImportSessionProcess = $null
+    $script:ImportSessionId = ""
+    $script:AclCatalogSessionId = ""
+    Update-AclPlanActionState
     $AclPlanEditorProbe = Show-PermissionEditor -BuildOnly -AclPlanMode -InitialPermissions @([pscustomobject]@{ aro = "User"; aro_foreign_key = "permission-user-probe"; type = 7 }) -TargetPath "Clienti / Cliente ACL"
     if ($null -eq $AclPlanEditorProbe -or -not $AclPlanEditorProbe.PlanMode -or $AclPlanEditorProbe.SelectedGrid.Items.Count -ne 1 -or $AclPlanEditorProbe.DirectoryList.Items.Count -ne 1) {
         throw "L'editor UI del dry-run ACL non puo essere costruito nello stato previsto."
@@ -8330,12 +8517,18 @@ for line in sys.stdin:
         throw "Il controllo di visualizzazione password non e' mascherato per impostazione predefinita."
     }
     $ExcelPasswordDialogProbe = Show-ExcelPasswordDialog "Cliente Alfa/credenziali.xlsx" -BuildOnly
-    if ($null -eq $ExcelPasswordDialogProbe -or $ExcelPasswordDialogProbe.PasswordBox.MaxLength -ne 1024 -or $ExcelPasswordDialogProbe.PasswordText.Visibility -ne "Collapsed") {
+    if (
+        $null -eq $ExcelPasswordDialogProbe -or
+        $ExcelPasswordDialogProbe.PasswordBox.MaxLength -ne 1024 -or
+        $ExcelPasswordDialogProbe.PasswordText.Visibility -ne "Collapsed" -or
+        [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($ExcelPasswordDialogProbe.PasswordBox)) -or
+        [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($ExcelPasswordDialogProbe.PasswordText))
+    ) {
         throw "La richiesta protetta della password Excel non puo essere costruita nello stato previsto."
     }
     $ExcelPasswordDialogProbe.Window.Close()
     $SourceProfileDialogProbe = Show-SourceMappingProfileDialog -BuildOnly
-    if ($null -eq $SourceProfileDialogProbe -or $SourceProfileDialogProbe.Editors.Count -ne 5 -or $null -eq $SourceProfileDialogProbe.ApplyButton -or $null -eq $SourceProfileDialogProbe.ResetButton) {
+    if ($null -eq $SourceProfileDialogProbe -or $SourceProfileDialogProbe.Editors.Count -ne 5 -or $null -eq $SourceProfileDialogProbe.ApplyButton -or $null -eq $SourceProfileDialogProbe.ResetButton -or @($SourceProfileDialogProbe.Editors.Values | Where-Object { [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($_)) }).Count -gt 0) {
         throw "La finestra dei profili sorgente non espone mapping, validazione e ripristino automatico."
     }
     $SourceProfileDialogProbe.Window.Close()
@@ -8366,13 +8559,13 @@ for line in sys.stdin:
         SourceMappingProfile = $null
     }
     $ReviewEditorProbe = Show-ReviewCandidateEditor $ReviewEditorRowProbe -BuildOnly
-    if ($null -eq $ReviewEditorProbe -or $ReviewEditorProbe.Editors.Count -ne 5) {
+    if ($null -eq $ReviewEditorProbe -or $ReviewEditorProbe.Editors.Count -ne 5 -or @($ReviewEditorProbe.Editors.Values | Where-Object { [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($_)) }).Count -gt 0 -or [string]::IsNullOrWhiteSpace([System.Windows.Automation.AutomationProperties]::GetName($ReviewEditorProbe.PasswordText))) {
         throw "L'editor dei candidati non espone i cinque campi previsti."
     }
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.2"
+        version = "0.28.3"
         ui = "WPF"
         phases = 4
         controls = 139
@@ -8419,6 +8612,9 @@ for line in sys.stdin:
         unlimited_file_and_candidate_selection = "OK"
         optimized_large_batch_processing = "OK"
         phase04_keyboard_navigation = "OK"
+        phase0103_automation_names = "OK"
+        minimum_grid_focus_visibility = "OK"
+        uncertain_outcome_recovery_guard = "OK"
         modern_apple_ui = "OK"
         offscreen_ui_preview = "OK"
         ci_real_instance_guard = "OK"

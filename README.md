@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.2 is an unreleased development candidate limited to Passbolt v4: Passbolt v5 targets and v5 formats are rejected fail-closed. Validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.3 is an unreleased development candidate limited to Passbolt v4: Passbolt v5 targets and v5 formats are rejected fail-closed. Validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -239,7 +239,7 @@ Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sosti
 
 ## Identita del candidato e decisione go/no-go
 
-Il candidato corrente conserva `0.28.2` come unica versione applicativa, di protocollo e di report. Nel changelog e marcato **Unreleased candidate**: soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente. Una corsa con `-SkipUiPreviews` dichiara `partial_ui_previews_skipped`; nessuno dei due esiti equivale a un tag, a una release pubblicata o a un'autorizzazione alla distribuzione.
+Il candidato corrente conserva `0.28.3` come unica versione applicativa, di protocollo e di report. Nel changelog e marcato **Unreleased candidate**: soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente. Una corsa con `-SkipUiPreviews` dichiara `partial_ui_previews_skipped`; nessuno dei due esiti equivale a un tag, a una release pubblicata o a un'autorizzazione alla distribuzione.
 
 La decisione e **GO** soltanto se tutte queste condizioni valgono sul medesimo candidato:
 
@@ -294,7 +294,7 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti correnti
 
-Il candidato non ancora rilasciato `0.28.2` è rigidamente **v4-only**. UI, backend, laboratorio positivo e matrice operativa usano soltanto formati v4 espliciti; `auto`, formati v5, profili v5 e server che espongono capability v5 vengono rifiutati fail-closed. Le fixture v5 rimaste nel codice servono esclusivamente come regressioni storiche o prove negative e non costituiscono un flusso operativo, un gate corrente o una promessa di supporto.
+Il candidato non ancora rilasciato `0.28.3` è rigidamente **v4-only**. UI, backend, laboratorio positivo e matrice operativa usano soltanto formati v4 espliciti; `auto`, formati v5, profili v5 e server che espongono capability v5 vengono rifiutati fail-closed. Le fixture v5 rimaste nel codice servono esclusivamente come regressioni storiche o prove negative e non costituiscono un flusso operativo, un gate corrente o una promessa di supporto.
 
 Non sono supportati provider MFA diversi da TOTP, file Excel legacy `.xls`, cancellazione o spostamento di oggetti Passbolt e modifiche alla composizione dei gruppi. Le migrazioni devono essere provate su ambienti non produttivi con backup verificati; una risposta di scrittura incerta richiede il recupero autenticato dal journal e non autorizza la ripetizione diretta dell'operazione.
 
