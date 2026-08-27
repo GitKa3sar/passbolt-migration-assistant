@@ -285,6 +285,35 @@ class IntegrationMatrixTests(unittest.TestCase):
             with self.assertRaises(matrix.MatrixError):
                 matrix.record_manual_result(path, "authenticated_login", "passed", None)
 
+    def test_release_completion_requires_v4_and_v5_history_is_read_only(self):
+        report = matrix.run_instance(
+            self.profile(),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "123456",
+            probe_runner=self.probe,
+            bridge_factory=lambda: FakeBridge(),
+        )
+        for scenario in report["scenarios"]:
+            if scenario["name"] in matrix.MANUAL_SCENARIOS:
+                scenario["status"] = "passed"
+                scenario["metrics"] = {"operator_attested": True, "remote_writes_recorded": True}
+        report = matrix.finalize_report(report)
+        self.assertTrue(matrix.report_is_release_complete(report))
+
+        historical_v5 = json.loads(json.dumps(report))
+        historical_v5["expected_resource_format"] = "v5"
+        historical_v5["expected_folder_format"] = "v5"
+        historical_v5 = matrix.finalize_report(historical_v5)
+        matrix.validate_report_document(historical_v5)
+        self.assertFalse(matrix.report_is_release_complete(historical_v5))
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "historical-v5.json"
+            matrix.write_report(historical_v5, path)
+            with self.assertRaisesRegex(matrix.MatrixError, "evidenza storica"):
+                matrix.record_manual_result(path, "import_root_resource", "passed", None)
+
     def test_report_tampering_is_detected(self):
         report = matrix.run_instance(
             self.profile(),

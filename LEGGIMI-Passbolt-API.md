@@ -10,7 +10,21 @@ Aprire PowerShell nella cartella del progetto ed eseguire:
 .\run_passbolt_app.ps1
 ```
 
-La versione `0.28.1` usa un'interfaccia nativa Windows (WPF), comprende quattro fasi operative ed è limitata a Passbolt v4. UI e backend inviano soltanto formati v4 espliciti; `auto`, i formati v5 e i server che espongono capability v5 vengono rifiutati fail-closed prima di rendere disponibili importazione o gestione ACL. Il supporto v5 resta fuori scope finché la correzione upstream [passbolt_api #618](https://github.com/passbolt/passbolt_api/pull/618), collegata al difetto [#617](https://github.com/passbolt/passbolt_api/issues/617), non viene integrata e distribuita ufficialmente.
+Il candidato non ancora rilasciato `0.28.1` usa un'interfaccia nativa Windows (WPF), comprende quattro fasi operative ed è limitato a Passbolt v4. UI e backend inviano soltanto formati v4 espliciti; `auto`, i formati v5 e i server che espongono capability v5 vengono rifiutati fail-closed prima di rendere disponibili importazione o gestione ACL. Il supporto v5 resta fuori scope finché la correzione upstream [passbolt_api #618](https://github.com/passbolt/passbolt_api/pull/618), collegata al difetto [#617](https://github.com/passbolt/passbolt_api/issues/617), non viene integrata e distribuita ufficialmente.
+
+### Architettura dell'informazione della fase 04
+
+La preparazione locale non dipende dalla disponibilità di Passbolt: la fase 01 richiede soltanto una cartella sorgente valida, mentre inventario e revisione continuano a lavorare sul filesystem locale. L'URL HTTPS pianificato può essere indicato e salvato nel progetto, ma la verifica pubblica, il rilevamento e la conferma della fingerprint sono eseguiti nella fase 04, immediatamente prima dell'apertura della sessione GPGAuth. Ogni cambio di URL continua a invalidare fingerprint, sessione e piano; nessun controllo fail-closed viene attenuato.
+
+La fase 04 presenta due percorsi di migrazione allo stesso livello, **Nuova importazione** e **Recupero import interrotto**. **Gestisci ACL esistenti** apre invece uno spazio separato, perché le opzioni di destinazione dell'import non hanno significato per oggetti già presenti; **Torna alla migrazione** ripristina l'ultimo percorso scelto. I formati non sono selezionabili: **Cartelle e risorse: v4** e il badge **Passbolt v4-only** descrivono il contratto attivo. Le barre comandi sono righe fisse sempre raggiungibili alla finestra minima di 1160×740 pixel logici. Pulsanti, input, selettori, righe e schede espongono focus visibile e restano raggiungibili con Tab, frecce e attivazione da tastiera secondo il controllo WPF.
+
+### Feedback sorgenti e ricevute sanitizzate
+
+`passbolt_app.py` e `passbolt_review.py` aggiungono ai risultati esistenti soltanto segnalazioni aggregate `{reason_code, extension, count}`. Le estensioni fuori dal pattern bounded vengono ricondotte a `(altro)` e i problemi dell'inventario restano separati da quelli dell'ultima revisione, evitando di presentarne la somma come numero di file unici. Il riepilogo non riceve nomi, clienti o percorsi e distingue formati non supportati, `.xls` da convertire, collegamenti esclusi, errori di accesso, documenti senza candidati, oltre limite o non analizzabili.
+
+`passbolt_receipt.py` accetta tramite standard input locale soltanto evidenze aggregate a schema chiuso. La ricevuta `preflight` conserva digest del piano, stato, strategia logica della destinazione, formati v4, modalita permessi, conteggi e coppie allow-listed `check id/status`; esclude dettagli testuali dinamici. La ricevuta `migration` richiede in modo congiunto `complete=true`, zero verifiche fallite, uguaglianza fra risorse pianificate, create e verificate e journal `complete`, quindi aggiunge soltanto l'UUID del lotto. Nessuna ricevuta contiene origine o fingerprint del server, identita, sessione, nomi e percorsi sorgente, titoli, username, URL, ID di risorse o cartelle.
+
+Il documento schema 1 viene canonicalizzato, legato a SHA-256 e scritto atomicamente nella destinazione `.json` scelta dall'operatore. Il digest rileva alterazioni accidentali ma non è una firma e la ricevuta non sostituisce il journal: un errore o esito remoto incerto non produce mai una ricevuta finale e deve essere risolto attraverso la verifica autenticata del recupero.
 
 ### Correzione verifica temporale GPGAuth 0.28.1
 
@@ -20,11 +34,11 @@ Il percorso di compatibilità non disabilita la verifica: firma matematica, firm
 
 ### Progetti locali di preparazione 0.28.0
 
-La configurazione espone **Apri progetto...**, mentre inventario e revisione espongono **Salva progetto...**. Un progetto schema 1 conserva esclusivamente l'origine HTTPS già verificata, la cartella sorgente assoluta, l'eventuale profilo di mappatura canonico, i percorsi relativi selezionati e, dalla revisione, le sole coppie tecniche `candidate_id`/SHA-256 dei candidati pronti selezionati. Il backend rifiuta proprietà sconosciute, percorsi assoluti o con attraversamento nella selezione, duplicati case-insensitive, digest incoerenti, profili alterati, limiti in byte e prove tecniche non valide.
+La configurazione espone **Apri progetto...**, mentre inventario e revisione espongono **Salva progetto...**. Un progetto schema 1 conserva esclusivamente l'origine HTTPS pianificata, la cartella sorgente assoluta, l'eventuale profilo di mappatura canonico, i percorsi relativi selezionati e, dalla revisione, le sole coppie tecniche `candidate_id`/SHA-256 dei candidati pronti selezionati. Il backend rifiuta proprietà sconosciute, percorsi assoluti o con attraversamento nella selezione, duplicati case-insensitive, digest incoerenti, profili alterati, limiti in byte e prove tecniche non valide.
 
 Il payload canonicalizzato viene cifrato dalla GUI con Windows DPAPI nello scope `CurrentUser`. Il file `.pbproj` contiene una busta JSON a campi chiusi con solo versione, tipo, metodo di protezione, timestamp, ciphertext Base64 e SHA-256 del ciphertext; la scrittura usa un file temporaneo nella stessa directory, flush durevole e sostituzione atomica. Prima della decifratura vengono ricontrollati schema, Base64 e digest; dopo la decifratura vengono ricontrollati schema e digest del payload. Il progetto dipende intenzionalmente dal profilo di protezione dell'utente Windows corrente e non offre portabilità garantita.
 
-Il ripristino è fail-closed: chiude un'eventuale sessione, azzera fingerprint, cookie, cataloghi e piani, mostra l'origine come **Da verificare** e non apre alcun documento. Dopo una nuova conferma della fingerprint, l'inventario ricostruisce la selezione dei soli file ancora presenti. La revisione richiede ancora l'autorizzazione esplicita e riseleziona un candidato soltanto se `candidate_id`, SHA-256 del sorgente e stato **Pronto** coincidono. Password Excel, valori delle credenziali, correzioni manuali, chiavi, passphrase, MFA, fingerprint fidate, sessioni, destinazioni Passbolt, ACL, attestazioni e journal non entrano nel progetto.
+Il ripristino è fail-closed: chiude un'eventuale sessione, azzera fingerprint, cookie, cataloghi e piani, mostra l'origine come pianificata e non apre alcun documento. L'inventario può ricostruire subito la selezione dei soli file ancora presenti senza richieste remote. La revisione richiede ancora l'autorizzazione esplicita e riseleziona un candidato soltanto se `candidate_id`, SHA-256 del sorgente e stato **Pronto** coincidono. La verifica Passbolt e la conferma della fingerprint vengono ripetute nella fase 04. Password Excel, valori delle credenziali, correzioni manuali, chiavi, passphrase, MFA, fingerprint fidate, sessioni, destinazioni Passbolt, ACL, attestazioni e journal non entrano nel progetto.
 
 ### Profili di mappatura sorgente 0.27.0
 
@@ -80,9 +94,15 @@ Il self-test usa la matrice read-only esistente e pretende sette scenari superat
 
 ### Quality gate Windows 0.20.1, esteso in 0.21.0
 
-`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 129 test Python, suite OpenPGP, matrici read-only v4/v5, 18 scenari stateful offline con ventiquattro percorsi di fault di recupero, autoverifica dei 136 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato. L'accettazione mutativa ammessa in CI usa invece esclusivamente il simulatore effimero vincolato al loopback.
+`run_tests.ps1` riunisce in un solo comando parsing PowerShell, compilazione Python, controllo sintattico Node, self-test dei backend, 143 test Python, suite OpenPGP, matrice read-only v4, 9 scenari stateful offline con dodici percorsi di fault di recupero, autoverifica dei 139 controlli WPF, rendering delle anteprime e `git diff --check`. Le dipendenze dei test sono separate in `requirements-test.txt`: ReportLab serve soltanto a costruire un PDF sintetico e non entra nelle dipendenze runtime dell'app. La modalità `-Ci` imposta un confine fail-closed: il runner della matrice può continuare a validare configurazioni e report, ma il comando `run` che richiede credenziali e contatta un laboratorio reale viene rifiutato. L'accettazione mutativa ammessa in CI usa invece esclusivamente il simulatore effimero vincolato al loopback.
 
-Il workflow `.github/workflows/windows-quality.yml` esegue lo stesso comando su `windows-latest` con Python 3.12 e Node.js 24. Il token GitHub ha il solo permesso `contents: read`, le credenziali del checkout non sono persistite e pnpm installa il lockfile senza lifecycle script. Le otto PNG conservate come artefatto per sette giorni mostrano esclusivamente lo stato iniziale vuoto delle quattro fasi.
+Il workflow `.github/workflows/windows-quality.yml` esegue lo stesso comando su `windows-latest` con Python 3.12 e Node.js 24. Il token GitHub ha il solo permesso `contents: read`, le credenziali del checkout non sono persistite e pnpm installa il lockfile senza lifecycle script. Il quality gate produce 29 PNG sintetiche: le quattro fasi alla dimensione standard, la configurazione alla finestra minima e, per la fase 04, stato iniziale e popolato dei tre spazi a 96, 120, 144 e 192 DPI. Le anteprime non contengono credenziali reali e non inviano richieste remote.
+
+### Contratto del candidato e go/no-go
+
+`0.28.1` resta l'unica identita applicativa e di protocollo; il changelog la qualifica come `Unreleased candidate` finche non esiste una decisione di release. Il JSON terminale di una corsa completa di `run_tests.ps1` distingue `offline_gate=passed` da `release_authorized=false`; con `-SkipUiPreviews` dichiara invece `offline_gate=partial_ui_previews_skipped`. La CI non possiede credenziali, non esegue la matrice reale e non puo attestare da sola una release pronta.
+
+Il gate tecnico locale richiede parsing, self-test, 143 test Python, suite Node/OpenPGP, laboratorio v4 read-only, 9 scenari stateful con 12 percorsi di fault, self-test dei 139 controlli WPF, 29 anteprime e `git diff --check`. Il gate esterno richiede sul medesimo candidato una nuova matrice Passbolt v4 reale `16/16`, digest valido e zero stati diversi da `passed`. Prima degli scenari mutativi devono esistere sia l'autorizzazione esplicita dell'operatore sia l'attestazione che l'istanza v4 e dedicata e usa-e-getta. Il solo report sanitizzato previsto viene conservato fuori dal repository; il runner `summary --require-complete` e l'unico esito macchina positivo della matrice completa. I report v5 storici restano leggibili, ma non accettano nuove attestazioni e non possono soddisfare `--require-complete`. Qualunque requisito mancante produce NO-GO.
 
 ### Design system e anteprime UI 0.20.0
 
@@ -90,7 +110,7 @@ La finestra principale usa un design system WPF centralizzato con superfici chia
 
 La fase 04 dispone sessione sicura e opzioni di destinazione in due colonne. Non cambia l'ordine logico delle operazioni: la sessione deve essere autenticata, la destinazione e i formati devono essere validi e il dry-run rimane obbligatorio prima di qualsiasi conferma. Piano, recupero e ACL continuano a usare gli stessi backend e gli stessi digest.
 
-`-RenderPreviewPath <file.png>` esegue il layout WPF fuori schermo e salva una PNG dello stato iniziale. `-RenderPreviewPage` accetta soltanto `Configuration`, `Inventory`, `Review` o `Import`; `-RenderPreviewWidth` e `-RenderPreviewHeight` sono limitati rispettivamente a 1160–3840 e 740–2160; `-RenderPreviewDpi` accetta 96, 120, 144 o 192. La modalità non mostra finestre, non apre documenti, non autentica l'utente e non invia richieste a Passbolt; serve esclusivamente alla verifica visuale ripetibile dell'interfaccia.
+`-RenderPreviewPath <file.png>` esegue il layout WPF fuori schermo e salva una PNG sintetica. `-RenderPreviewPage` accetta soltanto `Configuration`, `Inventory`, `Review` o `Import`; per `Import`, `-RenderPreviewImportTab` seleziona `new_import`, `recovery` o `existing_acl` e `-RenderPreviewImportState` seleziona `initial` o `populated`. `-RenderPreviewWidth` e `-RenderPreviewHeight` sono limitati rispettivamente a 1160–3840 e 740–2160; `-RenderPreviewDpi` accetta 96, 120, 144 o 192. La modalità non mostra finestre, non apre documenti, non autentica l'utente e non invia richieste a Passbolt; serve esclusivamente alla verifica visuale ripetibile dell'interfaccia.
 
 ### Ottimizzazioni dei lotti estesi 0.19.2
 
@@ -116,7 +136,7 @@ Ogni errore di autenticazione acquisisce internamente una fase enumerata: chiave
 
 ### Gestione dei journal ACL 0.18.0
 
-La scheda **Permessi esistenti** espone **Gestisci journal...** anche senza una sessione Passbolt attiva, perché le operazioni sono esclusivamente locali. La finestra richiama `--acl-reconciliation-list` e mostra tutti i journal attivi negli stati `recovery_required`, `complete`, `truncated` e `corrupt`. È possibile filtrare per stato, cartella/risorsa, ultime 24 ore, 7 giorni o 30 giorni e cercare per UUID, ID oggetto, tipo, stato o modalità.
+Lo spazio **Gestione permessi esistenti** espone **Gestisci journal...** anche senza una sessione Passbolt attiva, perché le operazioni sono esclusivamente locali. La finestra richiama `--acl-reconciliation-list` e mostra tutti i journal attivi negli stati `recovery_required`, `complete`, `truncated` e `corrupt`. È possibile filtrare per stato, cartella/risorsa, ultime 24 ore, 7 giorni o 30 giorni e cercare per UUID, ID oggetto, tipo, stato o modalità.
 
 `--acl-reconciliation-describe` accetta da standard input soltanto `batch_id` e restituisce UUID, data, stato, tipo e ID oggetto, modalità, contatori delle modifiche e contatori degli eventi. Non restituisce percorso del file, origine o fingerprint del server, hash dell'utente, ACL desiderata o ID dei destinatari. Se il journal è corrotto, non ne interpreta il contenuto e restituisce soltanto UUID e stato `corrupt` con i restanti campi tecnici non disponibili.
 
@@ -148,7 +168,7 @@ I comandi `session-acl-recovery-readiness` e `session-acl-recovery-apply` riapro
 
 ### Dry-run ACL degli oggetti esistenti 0.15.1
 
-Dopo aver caricato il catalogo nella scheda **Permessi esistenti**, **Simula modifica...** è disponibile soltanto se l'oggetto ha una maschera completa, tutti i soggetti sono verificati e l'utente autenticato possiede il livello Owner (`15`). L'editor rilegge la directory autenticata, precompila utenti e gruppi esterni presenti nella ACL corrente e mantiene il proprietario fuori dalla lista modificabile. È possibile simulare una lista esterna vuota, ma solo per rappresentare una revoca nel piano: nessuna modifica viene applicata.
+Dopo aver caricato il catalogo nello spazio **Gestione permessi esistenti**, **Simula modifica...** è disponibile soltanto se l'oggetto ha una maschera completa, tutti i soggetti sono verificati e l'utente autenticato possiede il livello Owner (`15`). L'editor rilegge la directory autenticata, precompila utenti e gruppi esterni presenti nella ACL corrente e mantiene il proprietario fuori dalla lista modificabile. È possibile simulare una lista esterna vuota, ma solo per rappresentare una revoca nel piano: nessuna modifica viene applicata.
 
 Python riduce la richiesta `session-acl-plan` ai soli campi `session_id`, `object_type`, `object_id` e `desired_permissions`; ogni voce desiderata conserva esclusivamente `aro`, `aro_foreign_key` e `type`. Node riverifica `/users/me.json` e ricostruisce un catalogo fresco usando le stesse sole richieste `GET` del visualizzatore. Se l'oggetto non è più univoco, la ACL è incompleta, l'accesso corrente non è Owner o un soggetto/chiave/gruppo non è verificabile, il piano viene bloccato.
 
@@ -156,7 +176,7 @@ Il confronto normalizza entrambe le maschere e classifica ogni differenza come `
 
 ### Visualizzatore ACL read-only 0.15.0
 
-La fase 04 contiene la scheda **Permessi esistenti**. Dopo l'apertura della sessione GPGAuth, **Leggi permessi** invia il comando locale `session-acl-catalog`; Python inoltra al bridge esclusivamente comando e UUID della sessione, senza candidati, percorsi sorgente, passphrase, MFA o segreti. Node riverifica `/users/me.json`, quindi usa soltanto richieste `GET` verso `/resources.json`, `/folders.json` e `/share/search-aros.json`; `/metadata/keys.json` viene letto soltanto se occorre decifrare nomi v5.
+La fase 04 apre **Gestione permessi esistenti** come spazio distinto dalla migrazione. Dopo l'apertura della sessione GPGAuth, **Leggi permessi** invia il comando locale `session-acl-catalog`; Python inoltra al bridge esclusivamente comando e UUID della sessione, senza candidati, percorsi sorgente, passphrase, MFA o segreti. Node riverifica `/users/me.json`, quindi usa soltanto richieste `GET` verso `/resources.json`, `/folders.json` e `/share/search-aros.json`. Nel profilo attuale, capability o oggetti v5 vengono rifiutati prima di abilitare il catalogo.
 
 Il bridge ricostruisce i percorsi gerarchici, normalizza le maschere User/Group e associa ogni soggetto alla directory autenticata. La GUI mostra tipo, percorso, accesso corrente, stato personale/condiviso e stato della ACL. Per la voce selezionata distingue utenti diretti e gruppi, visualizza Read (`1`), Update (`7`) o Owner (`15`), stato della verifica e numero di destinatari effettivi. Un gruppo viene considerato verificato soltanto se Passbolt ne restituisce integralmente la composizione e le chiavi dei membri risultano valide.
 
@@ -174,7 +194,7 @@ Il journal salva soltanto `permission_mode` e `permission_configuration_hash`, n
 
 ### Recupero guidato degli import interrotti 0.13.0
 
-La fase 04 contiene tre schede: **Nuova importazione**, **Recupero import interrotto** e **Permessi esistenti**. La seconda elenca i journal locali attivi distinguendo gli stati Recuperabile, Completato, Troncato e Corrotto. Un lotto recuperabile viene associato soltanto se tutti i suoi `candidate_id` sono stati riletti dalla cartella sorgente corrente e risultano pronti; eventuali modifiche effettuate nella revisione originale devono essere riapplicate prima della verifica.
+La fase 04 offre due modalità nello stesso percorso di migrazione: **Nuova importazione** e **Recupero import interrotto**. Il recupero elenca i journal locali attivi distinguendo gli stati Recuperabile, Completato, Troncato e Corrotto. **Gestisci ACL esistenti** apre uno spazio separato e non eredita destinazione o opzioni della migrazione. Un lotto recuperabile viene associato soltanto se tutti i suoi `candidate_id` sono stati riletti dalla cartella sorgente corrente e risultano pronti; eventuali modifiche effettuate nella revisione originale devono essere riapplicate prima della verifica.
 
 La verifica richiede una sessione GPGAuth attiva e controlla nuovamente server, fingerprint, utente, sorgenti, destinazioni, formati, oggetti remoti e permessi. La GUI mostra operazioni gia riuscite, operazioni dimostrate come non applicate e conflitti. Soltanto un piano senza conflitti e senza azioni distruttive abilita la conferma esatta `RECUPERA N`. Dopo la ripresa, il journal viene chiuso con `batch_completed` e puo essere spostato nell'archivio locale. Anche un lotto troncato o corrotto puo essere archiviato esplicitamente come abbandonato, ma non puo essere verificato o ripreso automaticamente.
 
@@ -293,12 +313,12 @@ La versione 0.4.2 segue i redirect HTTP che rimangono sulla stessa origine HTTPS
 
 La versione 0.4.1 corregge la decodifica degli header GPGAuth prodotti con semantica `application/x-www-form-urlencoded`: il carattere `+` viene convertito in spazio prima della decodifica percentuale, mentre i `+` reali del contenuto base64, codificati come `%2B`, vengono preservati. Senza questa distinzione l'header poteva iniziare con `-----BEGIN+PGP+MESSAGE-----` e veniva rifiutato come messaggio OpenPGP non valido anche se chiave e passphrase erano corrette.
 
-## 01 — Configurazione
+## 01 — Preparazione locale
 
-- verifica che l'URL Passbolt usi HTTPS;
-- controlla healthcheck e TLS, rileva la fingerprint pubblica del server e ne richiede la conferma;
 - permette di scegliere la cartella principale dei documenti clienti;
-- abilita la fase successiva solo quando connessione e cartella sono valide.
+- valida localmente l'eventuale URL HTTPS pianificato, senza contattare Passbolt;
+- abilita inventario e revisione quando la cartella è valida, anche se Passbolt non è disponibile;
+- salva nei progetti soltanto l'origine pianificata, mai fingerprint, fiducia o stato di sessione.
 
 ## 02 — Inventario file
 
@@ -347,10 +367,10 @@ La fase 04 implementa un'importazione Passbolt v4 condizionata da un dry-run aut
 ### Dry-run autenticato, senza scritture
 
 1. L'utente seleziona soltanto candidati con stato **Pronto**.
-2. L'utente seleziona il file della propria chiave privata OpenPGP, inserisce la passphrase e, se l'account lo richiede, il codice MFA TOTP a 6 cifre, quindi usa **Avvia sessione**.
-3. Il bridge locale verifica la chiave del server contro la fingerprint rilevata e confermata nella fase 01, esegue GPGAuth, completa TOTP nella stessa sessione e controlla che la chiave privata corrisponda all'identita Passbolt autenticata. Passphrase e TOTP vengono immediatamente rimossi dalla richiesta e dai campi UI.
+2. L'utente verifica l'URL HTTPS nella fase 04, confronta la fingerprint rilevata con una fonte indipendente e la conferma; un cambio di URL invalida conferma, sessione e piano.
+3. L'utente seleziona il file della propria chiave privata OpenPGP, inserisce la passphrase e, se l'account lo richiede, il codice MFA TOTP a 6 cifre, quindi usa **Avvia sessione**. Il bridge locale verifica la chiave del server contro la fingerprint appena confermata, esegue GPGAuth, completa TOTP nella stessa sessione e controlla che la chiave privata corrisponda all'identita Passbolt autenticata. Passphrase e TOTP vengono immediatamente rimossi dalla richiesta e dai campi UI.
 4. Per ogni dry-run l'app ricalcola SHA-256 e ricostruisce i candidati dai documenti usando i metadati originali della revisione. Se un documento o il record sono cambiati, il flusso si interrompe; le correzioni effettuate nell'editor restano separate e vengono usate nel piano.
-5. L'app verifica che la sessione e l'identita siano ancora valide, quindi legge impostazioni, cartelle, maschere dei permessi, utenti, gruppi, chiavi pubbliche, tipi di risorsa e metadati delle risorse accessibili all'utente. Se incontra cartelle o risorse v5, decifra localmente i metadati con la chiave personale o con la copia verificata della chiave condivisa.
+5. L'app verifica che la sessione e l'identita siano ancora valide, quindi legge impostazioni, cartelle, maschere dei permessi, utenti, gruppi, chiavi pubbliche, tipi di risorsa e metadati v4 delle risorse accessibili all'utente. Capability o oggetti v5 bloccano il percorso fail-closed.
 6. Il catalogo delle cartelle viene mostrato nella UI. Se l'utente cambia contenitore, destinazione diretta, modalita oppure una singola associazione cliente-cartella, il piano appena prodotto viene invalidato e il dry-run deve essere ripetuto nella stessa sessione.
 7. Viene costruito il mapping cliente-destinazione con cartelle **Da creare**, **Da creare e condividere con permessi ereditati**, **Esistenti da riutilizzare**, **Mappate per cliente**, **Cartella diretta** oppure **Radice Passbolt**.
 8. Viene costruito un piano con risorse **Da creare**, **Gia nella destinazione**, **Duplicate nel lotto** o **Presenti altrove - bloccate**. Un duplicato esatto richiede uguaglianza di titolo, username e URL/host, ignorando soltanto maiuscole/minuscole e spazi esterni. La password non viene decifrata dal server e non partecipa al confronto.

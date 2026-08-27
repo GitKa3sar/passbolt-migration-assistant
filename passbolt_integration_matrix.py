@@ -795,6 +795,11 @@ def record_manual_result(report_path: str | Path, scenario_name: str, status: st
     if status != "passed" and not ERROR_CODE_PATTERN.fullmatch(normalized_error):
         raise MatrixError("Per uno scenario non superato indicare un codice errore enumerato.")
     report = load_report(report_path)
+    if report.get("expected_resource_format") != "v4" or report.get("expected_folder_format") != "v4":
+        raise MatrixError(
+            "I report Passbolt v5 restano consultabili come evidenza storica, ma questa release v4-only "
+            "rifiuta nuove attestazioni su quei report."
+        )
     for scenario in report["scenarios"]:
         if scenario["name"] == scenario_name:
             scenario["status"] = status
@@ -814,6 +819,17 @@ def report_summary(report: Mapping[str, Any]) -> dict[str, int]:
         if isinstance(scenario, Mapping) and scenario.get("status") in counts:
             counts[str(scenario["status"])] += 1
     return counts
+
+
+def report_is_release_complete(report: Mapping[str, Any]) -> bool:
+    """Return True only for a complete Passbolt v4 report for this release."""
+
+    if report.get("expected_resource_format") != "v4" or report.get("expected_folder_format") != "v4":
+        return False
+    counts = report_summary(report)
+    return counts["passed"] == len(ALL_SCENARIOS) and all(
+        counts[state] == 0 for state in ("failed", "blocked", "not_run")
+    )
 
 
 def real_instance_runs_allowed(environ: Mapping[str, Any] | None = None) -> bool:
@@ -865,6 +881,10 @@ def self_test() -> dict[str, Any]:
         },
         "SELF_TEST_FAILED",
     )
+    historical_v5_report = dict(report)
+    historical_v5_report["expected_resource_format"] = "v5"
+    historical_v5_report["expected_folder_format"] = "v5"
+    historical_v5_report = finalize_report(historical_v5_report)
     serialized = json.dumps({"report": report, "safe": safe}, sort_keys=True)
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -873,6 +893,7 @@ def self_test() -> dict[str, Any]:
         "read_only_automation": True,
         "ci_real_instance_guard": not real_instance_runs_allowed({"CI": "true"}),
         "report_digest_valid": report["report_digest"] == calculate_report_digest(report),
+        "v5_release_gate_rejected": not report_is_release_complete(historical_v5_report),
         "safe_failure_projection": "secret" not in serialized and "private.invalid" not in serialized,
         "secrets_serialized": False,
     }
@@ -953,7 +974,7 @@ def main() -> int:
                 report = load_report(value)
                 counts = report_summary(report)
                 print(f"{report['instance_id']}: {counts['passed']} passed, {counts['failed']} failed, {counts['blocked']} blocked, {counts['not_run']} not_run")
-                incomplete = incomplete or counts["passed"] != len(ALL_SCENARIOS)
+                incomplete = incomplete or not report_is_release_complete(report)
             return 5 if args.require_complete and incomplete else 0
     except MatrixError as exc:
         print(f"ERRORE: {exc}", file=sys.stderr)

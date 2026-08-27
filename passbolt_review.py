@@ -87,6 +87,22 @@ class ExcelEncryptionReaderUnavailable(ReviewError):
     """The optional in-memory Office decryption dependency is unavailable."""
 
 
+class LegacyExcelConversionRequired(ReviewError):
+    """A legacy XLS source must be converted before review."""
+
+
+class UnsupportedReviewFormat(ReviewError):
+    """The selected source format is outside the review contract."""
+
+
+class ReviewFileTooLarge(ReviewError):
+    """The selected source exceeds the bounded per-document limit."""
+
+
+class ReviewSourceUnavailable(ReviewError):
+    """The selected source is absent, linked or outside the trusted root."""
+
+
 @dataclass(frozen=True)
 class SourceMappingProfile:
     """Validated, secret-free mapping from source labels to candidate fields."""
@@ -136,6 +152,15 @@ class ProtectedExcelIssue:
 
 
 @dataclass(frozen=True)
+class ReviewIssueSummary:
+    """One aggregate review issue without source identifiers."""
+
+    reason_code: str
+    extension: str
+    count: int
+
+
+@dataclass(frozen=True)
 class ReviewResult:
     root: str
     reviewed_at_utc: str
@@ -147,6 +172,7 @@ class ReviewResult:
     candidates: list[CredentialCandidate] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     protected_excel_issues: list[ProtectedExcelIssue] = field(default_factory=list)
+    issues: list[ReviewIssueSummary] = field(default_factory=list)
     source_mapping_profile_name: str = "Rilevamento automatico"
     source_mapping_profile_digest: str = ""
 
@@ -931,7 +957,9 @@ def _records_for_file(
     source_mapping_profile: SourceMappingProfile | None = None,
 ) -> Iterable[tuple[str, dict[object, object]]]:
     if extension == ".xls":
-        raise ReviewError("Formato XLS legacy non disponibile; salvare una copia come XLSX.")
+        raise LegacyExcelConversionRequired(
+            "Formato XLS legacy non disponibile; salvare una copia come XLSX."
+        )
     if extension == ".xlsx":
         return _xlsx_records(path, file_password)
     if extension == ".docx":
@@ -965,22 +993,42 @@ def _sha256(path: Path) -> str:
 def _safe_selected_path(root: Path, supplied: str) -> tuple[Path, str]:
     relative = Path(supplied)
     if relative.is_absolute():
-        raise ReviewError("Il file selezionato deve essere relativo alla cartella clienti.")
+        raise ReviewSourceUnavailable(
+            "Il file selezionato deve essere relativo alla cartella clienti."
+        )
     unresolved_candidate = root / relative
     if unresolved_candidate.is_symlink():
-        raise ReviewError("I collegamenti a file non vengono aperti in revisione.")
+        raise ReviewSourceUnavailable(
+            "I collegamenti a file non vengono aperti in revisione."
+        )
     candidate = unresolved_candidate.resolve()
     try:
         normalized_relative = candidate.relative_to(root)
     except ValueError as exc:
-        raise ReviewError("Percorso selezionato esterno alla cartella clienti.") from exc
+        raise ReviewSourceUnavailable(
+            "Percorso selezionato esterno alla cartella clienti."
+        ) from exc
     if not candidate.is_file():
-        raise ReviewError("File selezionato non trovato o non accessibile.")
+        raise ReviewSourceUnavailable(
+            "File selezionato non trovato o non accessibile."
+        )
     return candidate, normalized_relative.as_posix()
 
 
 def _normalized_supplied_path(value: object) -> str:
     return str(value).replace("\\", "/").strip()
+
+
+def _safe_extension_bucket(value: object) -> str:
+    """Return a bounded source-format label without retaining a filename."""
+
+    name = Path(_normalized_supplied_path(value)).name
+    extension = ".env" if name.lower() == ".env" else Path(name).suffix.lower()
+    if not extension:
+        return "(senza estensione)"
+    if re.fullmatch(r"\.[a-z0-9]{1,12}", extension):
+        return extension
+    return "(altro)"
 
 
 def analyze_files(
@@ -1019,7 +1067,12 @@ def analyze_files(
     candidates: list[CredentialCandidate] = []
     warnings: list[str] = []
     protected_excel_issues: list[ProtectedExcelIssue] = []
+    issue_counts: dict[tuple[str, str], int] = {}
     analyzed_files = 0
+
+    def add_issue(reason_code: str, source: object) -> None:
+        key = (reason_code, _safe_extension_bucket(source))
+        issue_counts[key] = issue_counts.get(key, 0) + 1
 
     for supplied in supplied_files:
         relative_path = _normalized_supplied_path(supplied)
@@ -1029,10 +1082,14 @@ def analyze_files(
             if not extension and path.name.lower() == ".env":
                 extension = ".env"
             if extension not in REVIEWABLE_EXTENSIONS:
-                raise ReviewError(f"Formato {extension or '(senza estensione)'} non revisionabile.")
+                raise UnsupportedReviewFormat(
+                    f"Formato {extension or '(senza estensione)'} non revisionabile."
+                )
             size = path.stat().st_size
             if size > MAX_FILE_BYTES:
-                raise ReviewError(f"File oltre il limite di {MAX_FILE_BYTES // (1024 * 1024)} MB.")
+                raise ReviewFileTooLarge(
+                    f"File oltre il limite di {MAX_FILE_BYTES // (1024 * 1024)} MB."
+                )
 
             source_hash = _sha256(path)
             relative_parts = Path(relative_path).parts
@@ -1063,22 +1120,40 @@ def analyze_files(
             analyzed_files += 1
             if file_candidates == 0:
                 warnings.append(f"{relative_path}: nessun candidato riconosciuto.")
+                add_issue("no_candidate", relative_path)
         except ExcelPasswordRequired:
             protected_excel_issues.append(
                 ProtectedExcelIssue(relative_path=relative_path, status="password_required")
             )
+            add_issue("password_required", relative_path)
         except ExcelPasswordRejected:
             protected_excel_issues.append(
                 ProtectedExcelIssue(relative_path=relative_path, status="password_rejected")
             )
+            add_issue("password_rejected", relative_path)
         except ExcelEncryptionReaderUnavailable:
             protected_excel_issues.append(
                 ProtectedExcelIssue(relative_path=relative_path, status="reader_unavailable")
             )
+            add_issue("reader_unavailable", relative_path)
+        except LegacyExcelConversionRequired as exc:
+            warnings.append(f"{supplied}: {exc}")
+            add_issue("legacy_xls_conversion", relative_path)
+        except UnsupportedReviewFormat as exc:
+            warnings.append(f"{supplied}: {exc}")
+            add_issue("unsupported_review_format", relative_path)
+        except ReviewFileTooLarge as exc:
+            warnings.append(f"{supplied}: {exc}")
+            add_issue("file_too_large", relative_path)
+        except ReviewSourceUnavailable as exc:
+            warnings.append(f"{supplied}: {exc}")
+            add_issue("source_not_available", relative_path)
         except (OSError, ReviewError, ValueError, zipfile.BadZipFile) as exc:
             warnings.append(f"{supplied}: {exc}")
+            add_issue("document_unreadable", relative_path)
         except Exception as exc:
             warnings.append(f"{supplied}: documento non analizzabile ({type(exc).__name__}).")
+            add_issue("document_unreadable", relative_path)
 
     ready_count = sum(candidate.status == "ready" for candidate in candidates)
     return ReviewResult(
@@ -1092,6 +1167,10 @@ def analyze_files(
         candidates=candidates,
         warnings=warnings,
         protected_excel_issues=protected_excel_issues,
+        issues=[
+            ReviewIssueSummary(reason_code, extension, count)
+            for (reason_code, extension), count in sorted(issue_counts.items())
+        ],
         source_mapping_profile_name=(
             profile.name if profile is not None else "Rilevamento automatico"
         ),

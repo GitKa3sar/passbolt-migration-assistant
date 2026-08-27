@@ -49,6 +49,25 @@ class InventoryTests(unittest.TestCase):
             },
         )
         self.assertTrue(all(item.modified_utc and item.modified_utc.endswith("Z") for item in result.items))
+        self.assertEqual(
+            [(item.reason_code, item.extension, item.count) for item in result.issues],
+            [("unsupported_format", ".exe", 1)],
+        )
+
+    def test_inventory_feedback_is_aggregate_and_marks_legacy_excel(self) -> None:
+        (self.root / "Cliente Alfa" / "legacy.xls").write_bytes(b"legacy")
+        (self.root / "Cliente Beta" / "backup.private-customer-name").write_bytes(
+            b"ignored"
+        )
+
+        result = build_inventory(self.root)
+
+        issues = {
+            (item.reason_code, item.extension): item.count for item in result.issues
+        }
+        self.assertEqual(issues[("legacy_xls_conversion", ".xls")], 1)
+        self.assertEqual(issues[("unsupported_format", "(altro)")], 1)
+        self.assertNotIn("private-customer-name", repr(result.issues))
 
     def test_inventory_does_not_open_document_content(self) -> None:
         original_open = builtins.open

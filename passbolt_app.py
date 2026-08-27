@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import os
+import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -52,6 +53,15 @@ class InventoryItem:
 
 
 @dataclass(frozen=True)
+class InventoryIssueSummary:
+    """One aggregate source issue without file, client or path identifiers."""
+
+    reason_code: str
+    extension: str
+    count: int
+
+
+@dataclass(frozen=True)
 class InventoryResult:
     root: str
     scanned_at_utc: str
@@ -65,6 +75,7 @@ class InventoryResult:
     items: list[InventoryItem] = field(default_factory=list)
     access_errors: list[str] = field(default_factory=list)
     skipped_directory_links: list[str] = field(default_factory=list)
+    issues: list[InventoryIssueSummary] = field(default_factory=list)
 
 
 def human_size(value: int) -> str:
@@ -80,6 +91,17 @@ def _utc_timestamp(value: float) -> str:
     return datetime.fromtimestamp(value, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _safe_extension_bucket(extension: str) -> str:
+    """Return a bounded format label that cannot disclose a filename."""
+
+    normalized = str(extension or "").strip().lower()
+    if not normalized:
+        return "(senza estensione)"
+    if re.fullmatch(r"\.[a-z0-9]{1,12}", normalized):
+        return normalized
+    return "(altro)"
+
+
 def build_inventory(root: str | Path) -> InventoryResult:
     """Walk *root* and collect metadata without opening any document content."""
 
@@ -93,6 +115,8 @@ def build_inventory(root: str | Path) -> InventoryResult:
     by_client: Counter[str] = Counter()
     items: list[InventoryItem] = []
     ignored_files = 0
+    ignored_by_extension: Counter[str] = Counter()
+    file_links_by_extension: Counter[str] = Counter()
     supported_bytes = 0
     access_errors: list[str] = []
     skipped_directory_links: list[str] = []
@@ -138,6 +162,7 @@ def build_inventory(root: str | Path) -> InventoryResult:
                 extension = ".env"
             if extension not in SUPPORTED_EXTENSIONS:
                 ignored_files += 1
+                ignored_by_extension[_safe_extension_bucket(extension)] += 1
                 continue
 
             relative_path = file_path.relative_to(root_path)
@@ -146,6 +171,8 @@ def build_inventory(root: str | Path) -> InventoryResult:
             size_bytes = 0
             modified_utc: str | None = None
             is_link = file_path.is_symlink()
+            if is_link:
+                file_links_by_extension[_safe_extension_bucket(extension)] += 1
             try:
                 metadata = file_path.lstat()
                 size_bytes = int(metadata.st_size)
@@ -171,6 +198,36 @@ def build_inventory(root: str | Path) -> InventoryResult:
             )
 
     items.sort(key=lambda item: (item.client.casefold(), item.relative_path.casefold()))
+    issues: list[InventoryIssueSummary] = []
+    issues.extend(
+        InventoryIssueSummary("unsupported_format", extension, count)
+        for extension, count in sorted(ignored_by_extension.items())
+    )
+    legacy_xls_count = int(by_extension.get(".xls", 0))
+    if legacy_xls_count:
+        issues.append(
+            InventoryIssueSummary("legacy_xls_conversion", ".xls", legacy_xls_count)
+        )
+    issues.extend(
+        InventoryIssueSummary("file_link_not_reviewed", extension, count)
+        for extension, count in sorted(file_links_by_extension.items())
+    )
+    unique_access_errors = sorted(set(access_errors), key=str.casefold)
+    if unique_access_errors:
+        issues.append(
+            InventoryIssueSummary(
+                "access_error", "(non disponibile)", len(unique_access_errors)
+            )
+        )
+    unique_directory_links = sorted(set(skipped_directory_links), key=str.casefold)
+    if unique_directory_links:
+        issues.append(
+            InventoryIssueSummary(
+                "directory_link_skipped",
+                "(non disponibile)",
+                len(unique_directory_links),
+            )
+        )
     return InventoryResult(
         root=str(root_path),
         scanned_at_utc=_utc_timestamp(datetime.now(tz=timezone.utc).timestamp()),
@@ -182,8 +239,9 @@ def build_inventory(root: str | Path) -> InventoryResult:
         by_category=dict(sorted(by_category.items())),
         by_client=dict(sorted(by_client.items(), key=lambda pair: pair[0].casefold())),
         items=items,
-        access_errors=sorted(set(access_errors), key=str.casefold),
-        skipped_directory_links=sorted(set(skipped_directory_links), key=str.casefold),
+        access_errors=unique_access_errors,
+        skipped_directory_links=unique_directory_links,
+        issues=issues,
     )
 
 

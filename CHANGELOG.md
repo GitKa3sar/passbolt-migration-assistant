@@ -2,35 +2,41 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.28.1 - Unreleased candidate
+
+`0.28.1` e l'unica identita applicativa del candidato corrente. Non esiste un tag locale per questa versione e questa sezione resta non rilasciata finche il quality gate offline e la nuova matrice reale Passbolt v4 `16/16` non risultano entrambi superati sul medesimo candidato.
+
+### Added
+
+- aggiunto nell'inventario un riepilogo aggregato delle esclusioni e delle conversioni richieste, separato dall'ultima revisione e privo di nomi, clienti e percorsi;
+- aggiunte ricevute JSON esportabili per preflight e migrazione verificata, con digest canonico, strategia logica di destinazione, formati v4, modalita permessi, conteggi tecnici e UUID del journal completato.
+
+### Fixed
+
+- corretta la verifica della firma della sfida GPGAuth quando l'orologio del server e avanti di pochi secondi rispetto a Windows, usando come riferimento alternativo soltanto l'header `Date` della medesima risposta HTTPS;
+- distinti gli errori temporali `AUTH_CHALLENGE_CLOCK_UNVERIFIED` e `AUTH_CHALLENGE_CLOCK_SKEW` dalla firma crittograficamente non valida e resa la diagnostica WPF esplicita sugli orologi di client e server;
+- conservati correttamente i caratteri italiani nei messaggi WPF eseguiti da Windows PowerShell 5.1, mantenendo `PassboltApp.ps1` in UTF-8 con BOM e verificandone la codifica nel quality gate.
 
 ### Changed
 
 - ridefinito il perimetro della release 0.28.1 come Passbolt v4-only: interfaccia, protocollo locale e matrice usano esclusivamente formati v4 espliciti;
 - i profili v5 attivi e i server che espongono plugin, endpoint o resource type v5 vengono rifiutati fail-closed; i report v5 storici restano consultabili ma non costituiscono un pass della release;
-- il quality gate esegue l'accettazione stateful v4 e regressioni negative dedicate al rifiuto di formati e server v5.
+- chiusa l'architettura dell'informazione della fase 04: verifica Passbolt e fingerprint sono eseguite soltanto nella fase remota, migrazione e recupero condividono uno spazio e le ACL esistenti restano separate;
+- introdotto un coordinatore operativo unico con lock centralizzato, anti-reentrancy, worker asincroni e progressi FIFO sul dispatcher; rimosso il pump manuale `DoEvents`;
+- il quality gate esegue 143 test Python, la suite Node/OpenPGP, l'accettazione stateful v4 con 9 scenari e 12 fault di recupero, il self-test dei 139 controlli WPF, 29 anteprime e regressioni negative dedicate al rifiuto di formati e server v5;
+- il riepilogo del quality gate dichiara esplicitamente che attesta soltanto il gate offline e non autorizza la release senza la matrice reale v4 `16/16`.
+
+### Security
+
+- le ricevute usano uno schema chiuso bounded e scrittura atomica; escludono origine e fingerprint del server, identita, sessione, nomi e percorsi sorgente, titoli, username, URL e ID remoti;
+- una ricevuta finale viene prodotta soltanto quando tutte le risorse create risultano verificate e il journal e chiuso come `complete`; errori e risultati incerti restano affidati al recupero e non possono essere attestati come migrazione completata;
+- la verifica stretta della firma GPGAuth resta il primo percorso e la tolleranza temporale e limitata a 300 secondi; firma matematica, firmatario fissato, validita della chiave e policy hash non vengono disabilitati;
+- durante un'operazione il lock impedisce navigazione e modifiche concorrenti del piano; chiusura, errori e timeout ripuliscono worker e sessioni senza reinterpretare come non applicata una scrittura remota incerta.
 
 ### Known limitations
 
 - il supporto Passbolt v5 è temporaneamente non disponibile per il difetto folder-history upstream tracciato in [passbolt_api #617](https://github.com/passbolt/passbolt_api/issues/617); la proposta [#618](https://github.com/passbolt/passbolt_api/pull/618) dovrà essere integrata e distribuita ufficialmente prima di una nuova decisione di supporto;
 - la precedente matrice v5 `14/16` non viene reinterpretata. Il nuovo candidato richiede una nuova attestazione reale Passbolt v4 `16/16` prima della distribuzione.
-
-## 0.28.1 - 2026-08-20
-
-### Fixed
-
-- corretta la verifica della firma della sfida GPGAuth quando l'orologio del server è avanti di pochi secondi rispetto a Windows, usando come riferimento alternativo soltanto l'header `Date` della medesima risposta HTTPS;
-- distinti gli errori temporali `AUTH_CHALLENGE_CLOCK_UNVERIFIED` e `AUTH_CHALLENGE_CLOCK_SKEW` dalla firma crittograficamente non valida e resa la diagnostica WPF esplicita sugli orologi di client e server;
-- conservati correttamente i caratteri italiani nei messaggi WPF eseguiti da Windows PowerShell 5.1, mantenendo `PassboltApp.ps1` in UTF-8 con BOM e verificandone la codifica nel quality gate.
-
-### Security
-
-- la verifica stretta resta il primo percorso e la tolleranza è limitata a 300 secondi; firma matematica, firmatario fissato, validità della chiave e policy hash non vengono disabilitati;
-- aggiunte regressioni per tolleranza bounded, scarto eccessivo, data HTTP malformata, sfida non firmata e firma prodotta da una chiave diversa.
-
-### Changed
-
-- aggiornati versione applicativa, documentazione e metadati del quality gate a `0.28.1`; il gate finale su istanze Passbolt v4/v5 reali resta esterno e non viene attestato da questa correzione locale.
 
 ## 0.28.0 - 2026-08-20
 
