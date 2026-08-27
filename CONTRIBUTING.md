@@ -37,7 +37,7 @@ I server di test devono restare isolati su `127.0.0.1` e non devono contattare s
 
 ## Pull request
 
-Mantieni ogni pull request focalizzata, descrivi il rischio modificato e indica i test eseguiti. Se cambia il piano di importazione, aggiorna anche digest, validazioni, test end-to-end e documentazione. Se cambia un formato o un endpoint, documenta la compatibilità Passbolt v4/v5 interessata.
+Mantieni ogni pull request focalizzata, descrivi il rischio modificato e indica i test eseguiti. Se cambia il piano di importazione, aggiorna anche digest, validazioni, test end-to-end e documentazione. Se cambia un formato o un endpoint, documenta il contratto Passbolt v4 corrente e le regressioni negative che mantengono fail-closed il rifiuto v5.
 
 Le nuove dipendenze devono essere motivate, bloccate nel lockfile e compatibili con AGPL-3.0-only. Evita dipendenze che eseguono script di installazione non necessari.
 

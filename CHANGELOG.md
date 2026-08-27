@@ -2,14 +2,17 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.28.1 - Unreleased candidate
+Le sezioni precedenti al candidato corrente sono cronologia: eventuali riferimenti v5 descrivono esperimenti e contratti storici e non costituiscono supporto, gate o flusso operativo della release `passbolt-v4-only`.
 
-`0.28.1` e l'unica identita applicativa del candidato corrente. Non esiste un tag locale per questa versione e questa sezione resta non rilasciata finche il quality gate offline e la nuova matrice reale Passbolt v4 `16/16` non risultano entrambi superati sul medesimo candidato.
+## 0.28.2 - Unreleased candidate
+
+`0.28.2` e l'unica identita applicativa del candidato corrente. Non esiste un tag locale per questa versione e questa sezione resta non rilasciata finche il quality gate offline e la nuova matrice reale Passbolt v4 completa non risultano entrambi superati sul medesimo candidato.
 
 ### Added
 
 - aggiunto nell'inventario un riepilogo aggregato delle esclusioni e delle conversioni richieste, separato dall'ultima revisione e privo di nomi, clienti e percorsi;
-- aggiunte ricevute JSON esportabili per preflight e migrazione verificata, con digest canonico, strategia logica di destinazione, formati v4, modalita permessi, conteggi tecnici e UUID del journal completato.
+- aggiunte ricevute JSON esportabili per preflight e migrazione verificata, con digest canonico, strategia logica di destinazione, formati v4, modalita permessi, conteggi tecnici e UUID del journal completato;
+- aggiunto `release-candidate.json` come fonte macchina unica per identita, profilo e conteggi del quality gate.
 
 ### Fixed
 
@@ -19,12 +22,13 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 ### Changed
 
-- ridefinito il perimetro della release 0.28.1 come Passbolt v4-only: interfaccia, protocollo locale e matrice usano esclusivamente formati v4 espliciti;
+- ridefinito il perimetro della release 0.28.2 come Passbolt v4-only: interfaccia, protocollo locale e matrice usano esclusivamente formati v4 espliciti;
 - i profili v5 attivi e i server che espongono plugin, endpoint o resource type v5 vengono rifiutati fail-closed; i report v5 storici restano consultabili ma non costituiscono un pass della release;
 - chiusa l'architettura dell'informazione della fase 04: verifica Passbolt e fingerprint sono eseguite soltanto nella fase remota, migrazione e recupero condividono uno spazio e le ACL esistenti restano separate;
 - introdotto un coordinatore operativo unico con lock centralizzato, anti-reentrancy, worker asincroni e progressi FIFO sul dispatcher; rimosso il pump manuale `DoEvents`;
-- il quality gate esegue 143 test Python, la suite Node/OpenPGP, l'accettazione stateful v4 con 9 scenari e 12 fault di recupero, il self-test dei 139 controlli WPF, 29 anteprime e regressioni negative dedicate al rifiuto di formati e server v5;
-- il riepilogo del quality gate dichiara esplicitamente che attesta soltanto il gate offline e non autorizza la release senza la matrice reale v4 `16/16`.
+- il quality gate confronta i conteggi dichiarati nel manifesto con suite Python, laboratorio read-only/stateful, fault di recupero, self-test WPF e anteprime effettivamente eseguiti;
+- riorganizzati README e guida tecnica: il primo resta orientato all'operatore, la seconda documenta i soli contratti correnti e la cronologia rimane nel changelog;
+- il riepilogo del quality gate dichiara esplicitamente che attesta soltanto il gate offline e non autorizza la release senza la matrice reale v4 completa.
 
 ### Security
 
@@ -35,8 +39,8 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 ### Known limitations
 
-- il supporto Passbolt v5 è temporaneamente non disponibile per il difetto folder-history upstream tracciato in [passbolt_api #617](https://github.com/passbolt/passbolt_api/issues/617); la proposta [#618](https://github.com/passbolt/passbolt_api/pull/618) dovrà essere integrata e distribuita ufficialmente prima di una nuova decisione di supporto;
-- la precedente matrice v5 `14/16` non viene reinterpretata. Il nuovo candidato richiede una nuova attestazione reale Passbolt v4 `16/16` prima della distribuzione.
+- Passbolt v5 e fuori scope: il difetto folder-history upstream [passbolt_api #617](https://github.com/passbolt/passbolt_api/issues/617) e la proposta [#618](https://github.com/passbolt/passbolt_api/pull/618) restano evidenza storica e non autorizzano alcuna riattivazione senza una nuova decisione formale di scope e una matrice completa;
+- la precedente matrice v5 `14/16` non viene reinterpretata. Il nuovo candidato richiede una nuova attestazione reale Passbolt v4 completa prima della distribuzione.
 
 ## 0.28.0 - 2026-08-20
 

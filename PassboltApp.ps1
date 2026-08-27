@@ -69,7 +69,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.28.1"
+        Title="Passbolt Migration Assistant - v0.28.2"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -2205,7 +2205,7 @@ function Save-LocalPreparationProject([switch]$ReviewContext) {
         project = [pscustomobject][ordered]@{
             schema_version = 1
             kind = "passbolt-migration-preparation"
-            app_version = "0.28.1"
+            app_version = "0.28.2"
             saved_at_utc = $SavedAtUtc
             server_origin = [string]$PlannedServerOrigin
             source_root = [string]$script:InventoryFolder
@@ -5910,7 +5910,7 @@ function Complete-ConfirmedImportFailure(
     Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
     Add-Activity "Importazione non completata: $FailureMessage"
     Update-ImportSessionState
-    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.1", "OK", "Error") | Out-Null
+    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.2", "OK", "Error") | Out-Null
     Refresh-RecoveryBatches -Quiet
 }
 
@@ -7654,7 +7654,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.1"
+        version = "0.28.2"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         import_tab = if ($RenderPreviewPage -eq "Import") { $RenderPreviewImportTab } else { $null }
@@ -7778,7 +7778,7 @@ if ($SelfTest) {
         }
     }
     if (
-        $Window.Title -notmatch "v0\.28\.1" -or
+        $Window.Title -notmatch "v0\.28\.2" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -8051,7 +8051,7 @@ for line in sys.stdin:
     $script:ImportCandidates = @()
     $LocalProjectBackendTest = Invoke-PythonJson $LocalProjectScript @("--self-test")
     if (
-        $LocalProjectBackendTest.version -ne "0.28.1" -or
+        $LocalProjectBackendTest.version -ne "0.28.2" -or
         -not $LocalProjectBackendTest.dpapi_current_user_required -or
         $LocalProjectBackendTest.secret_fields_serialized -or
         $LocalProjectBackendTest.trusted_fingerprint_persisted -or
@@ -8372,7 +8372,7 @@ for line in sys.stdin:
     $ReviewEditorProbe.Window.Close()
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.1"
+        version = "0.28.2"
         ui = "WPF"
         phases = 4
         controls = 139

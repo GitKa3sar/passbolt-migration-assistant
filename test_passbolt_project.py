@@ -42,7 +42,7 @@ def sample_project() -> dict[str, object]:
     return {
         "schema_version": 1,
         "kind": "passbolt-migration-preparation",
-        "app_version": "0.28.1",
+        "app_version": "0.28.2",
         "saved_at_utc": utc_now(),
         "server_origin": "https://passbolt.example.test",
         "source_root": r"C:\Synthetic\Migration",

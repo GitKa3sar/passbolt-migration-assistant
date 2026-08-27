@@ -67,7 +67,7 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.28.1"
+APP_VERSION = "0.28.2"
 RELEASE_COMPATIBILITY_PROFILE = "passbolt-v4-only"
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 64 * 1024 * 1024

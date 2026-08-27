@@ -9,6 +9,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = $PSScriptRoot
+$ReleaseContractPath = Join-Path $ProjectRoot "release-candidate.json"
 $PythonFiles = @(
     "passbolt_acl_reconciliation.py",
     "passbolt_api_probe.py",
@@ -96,6 +97,168 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-CheckedJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+
+    Write-Host ""
+    Write-Host "== $Label ==" -ForegroundColor Cyan
+    $Output = & $FilePath @Arguments 2>&1
+    $ExitCode = $LASTEXITCODE
+    if ($null -ne $Output) {
+        $Output | ForEach-Object { Write-Host ([string]$_) }
+    }
+    if ($ExitCode -ne 0) {
+        throw "$Label non riuscito (codice $ExitCode)."
+    }
+    $Serialized = ($Output | ForEach-Object { [string]$_ }) -join "`n"
+    try {
+        return $Serialized | ConvertFrom-Json
+    } catch {
+        throw "$Label non ha restituito un riepilogo JSON valido."
+    }
+}
+
+function Assert-ExactPropertyNames {
+    param(
+        [Parameter(Mandatory = $true)][object]$Value,
+        [Parameter(Mandatory = $true)][string[]]$Expected,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $Actual = @($Value.PSObject.Properties.Name | Sort-Object)
+    $ExpectedSorted = @($Expected | Sort-Object)
+    $Difference = @(Compare-Object -ReferenceObject $ExpectedSorted -DifferenceObject $Actual)
+    if ($Difference.Count -ne 0) {
+        throw "$Label non rispetta lo schema chiuso previsto."
+    }
+}
+
+function Read-ReleaseContract {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Manifesto del candidato non trovato: $Path"
+    }
+    try {
+        $Contract = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    } catch {
+        throw "Il manifesto del candidato non contiene JSON valido."
+    }
+    Assert-ExactPropertyNames $Contract @(
+        "schema_version",
+        "version",
+        "changelog_state",
+        "compatibility_profile",
+        "quality_gate"
+    ) "Il manifesto del candidato"
+    Assert-ExactPropertyNames $Contract.quality_gate @(
+        "python_tests",
+        "offline_read_only_scenarios",
+        "offline_stateful_scenarios",
+        "offline_recovery_fault_paths",
+        "wpf_controls",
+        "ui_previews_required",
+        "real_v4_matrix_scenarios"
+    ) "Il contratto del quality gate"
+    if (
+        [int]$Contract.schema_version -ne 1 -or
+        [string]$Contract.version -notmatch '^\d+\.\d+\.\d+$' -or
+        [string]$Contract.changelog_state -ne "unreleased_candidate" -or
+        [string]$Contract.compatibility_profile -ne "passbolt-v4-only"
+    ) {
+        throw "Il manifesto del candidato non descrive una release v4-only non rilasciata valida."
+    }
+    foreach ($Property in $Contract.quality_gate.PSObject.Properties) {
+        if ([int]$Property.Value -le 0) {
+            throw "Il conteggio $($Property.Name) del quality gate deve essere positivo."
+        }
+    }
+    return $Contract
+}
+
+function Test-ReleaseIdentityBindings {
+    param([Parameter(Mandatory = $true)][object]$Contract)
+
+    $Version = [string]$Contract.version
+    $IdentityBindings = @(
+        [pscustomobject]@{
+            Path = "PassboltApp.ps1"
+            Pattern = '(?:\bv|\bapp_version\s*=\s*"|\bversion\s*(?:=|-ne)\s*")(?<version>\d+\.\d+\.\d+)'
+        },
+        [pscustomobject]@{ Path = "offline_lab_acceptance.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "offline_lab_server.mjs"; Pattern = "APP_VERSION\s*=\s*'(?<version>\d+\.\d+\.\d+)'" },
+        [pscustomobject]@{ Path = "offline_lab_setup.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "offline_lab_smoke.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "passbolt_api_probe.py"; Pattern = 'Passbolt-Migration-Assistant-Probe/(?<version>\d+\.\d+\.\d+)' },
+        [pscustomobject]@{ Path = "passbolt_app.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "passbolt_crypto.mjs"; Pattern = 'Passbolt-Migration-Assistant/(?<version>\d+\.\d+\.\d+)' },
+        [pscustomobject]@{ Path = "passbolt_import.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "passbolt_integration_matrix.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "passbolt_project.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "passbolt_receipt.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "passbolt_review.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
+        [pscustomobject]@{ Path = "test_passbolt_project.py"; Pattern = '"app_version"\s*:\s*"(?<version>\d+\.\d+\.\d+)"' }
+    )
+    foreach ($Binding in $IdentityBindings) {
+        $Text = Get-Content -LiteralPath (Join-Path $ProjectRoot $Binding.Path) -Raw
+        $Matches = @([regex]::Matches($Text, [string]$Binding.Pattern))
+        if (
+            $Matches.Count -eq 0 -or
+            @($Matches | Where-Object { $_.Groups["version"].Value -ne $Version }).Count -ne 0
+        ) {
+            throw "Identita applicativa non allineata al manifesto in $($Binding.Path)."
+        }
+    }
+    $WpfText = Get-Content -LiteralPath (Join-Path $ProjectRoot "PassboltApp.ps1") -Raw
+    if (-not $WpfText.Contains("v$([regex]::Escape($Version))")) {
+        throw "Il controllo del titolo WPF non coincide con il manifesto del candidato."
+    }
+
+    $Package = Get-Content -LiteralPath (Join-Path $ProjectRoot "package.json") -Raw | ConvertFrom-Json
+    if ([string]$Package.version -ne $Version) {
+        throw "La versione di package.json non coincide con il manifesto del candidato."
+    }
+    $ChangelogText = Get-Content -LiteralPath (Join-Path $ProjectRoot "CHANGELOG.md") -Raw
+    $CandidateHeading = [regex]::Match(
+        $ChangelogText,
+        '(?m)^##\s+(\d+\.\d+\.\d+)\s+-\s+Unreleased candidate\s*$'
+    )
+    if (-not $CandidateHeading.Success -or $CandidateHeading.Groups[1].Value -ne $Version) {
+        throw "Il primo candidato non rilasciato del changelog non coincide con il manifesto."
+    }
+}
+
+function Get-PythonTestCount {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Prefix = @(),
+        [Parameter(Mandatory = $true)][string[]]$TestFiles
+    )
+
+    $Modules = @($TestFiles | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) })
+    $CounterScript = @'
+import sys
+import unittest
+
+suite = unittest.defaultTestLoader.loadTestsFromNames(sys.argv[1:])
+print(suite.countTestCases())
+'@
+    $Output = & $FilePath @($Prefix + @("-c", $CounterScript) + $Modules) 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $Details = ($Output | ForEach-Object { [string]$_ }) -join "`n"
+        throw "Impossibile contare la suite Python: $Details"
+    }
+    $Serialized = (($Output | ForEach-Object { [string]$_ }) -join "`n").Trim()
+    if ($Serialized -notmatch '^\d+$') {
+        throw "Il conteggio della suite Python non e un intero valido."
+    }
+    return [int]$Serialized
+}
+
 function Test-PowerShellSyntax {
     param([Parameter(Mandatory = $true)][string[]]$Paths)
 
@@ -174,6 +337,9 @@ function Test-PngDimensions {
     }
 }
 
+$ReleaseContract = Read-ReleaseContract $ReleaseContractPath
+Test-ReleaseIdentityBindings $ReleaseContract
+
 Push-Location $ProjectRoot
 $TemporaryPreviewDirectory = $false
 $UiPreviewCount = 0
@@ -244,9 +410,13 @@ try {
     Invoke-Checked "Self-test bridge OpenPGP" $NodeExecutable @("passbolt_crypto.mjs") '{"command":"self-test"}'
     Invoke-Checked "Self-test server laboratorio offline" $NodeExecutable @("offline_lab_server.mjs", "--self-test")
 
+    $PythonTestCount = Get-PythonTestCount $PythonExecutable $PythonPrefix $UnitTestFiles
+    if ($PythonTestCount -ne [int]$ReleaseContract.quality_gate.python_tests) {
+        throw "La suite Python contiene $PythonTestCount test, ma il manifesto ne dichiara $($ReleaseContract.quality_gate.python_tests)."
+    }
     Invoke-Checked "Suite Python" $PythonExecutable ($PythonPrefix + @("-m", "unittest") + $UnitTestFiles)
     Invoke-Checked "Suite Node/OpenPGP" $NodeExecutable @("test_passbolt_crypto.mjs")
-    Invoke-Checked "Laboratorio offline Passbolt v4" "powershell.exe" @(
+    $OfflineLabEnvelope = Invoke-CheckedJson "Laboratorio offline Passbolt v4" "powershell.exe" @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
@@ -254,20 +424,54 @@ try {
         "-Scenario", "healthy",
         "-SelfTest"
     )
-    Invoke-Checked "Accettazione stateful offline Passbolt v4" "powershell.exe" @(
+    if (
+        $OfflineLabEnvelope.ok -ne $true -or
+        [string]$OfflineLabEnvelope.result.version -ne [string]$ReleaseContract.version -or
+        [string]$OfflineLabEnvelope.result.profile -ne "v4" -or
+        [int]$OfflineLabEnvelope.result.automated_scenarios_passed -ne [int]$ReleaseContract.quality_gate.offline_read_only_scenarios -or
+        [int]$OfflineLabEnvelope.result.manual_write_scenarios_executed -ne 0 -or
+        $OfflineLabEnvelope.result.contains_real_credentials -ne $false
+    ) {
+        throw "Il laboratorio read-only non coincide con il contratto del candidato."
+    }
+    $OfflineAcceptanceEnvelope = Invoke-CheckedJson "Accettazione stateful offline Passbolt v4" "powershell.exe" @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
         "-Profile", "v4",
         "-AcceptanceTest"
     )
-    Invoke-Checked "Self-test WPF" "powershell.exe" @(
+    if (
+        $OfflineAcceptanceEnvelope.ok -ne $true -or
+        [string]$OfflineAcceptanceEnvelope.result.version -ne [string]$ReleaseContract.version -or
+        [string]$OfflineAcceptanceEnvelope.result.profile -ne "v4" -or
+        [int]$OfflineAcceptanceEnvelope.result.scenario_count -ne [int]$ReleaseContract.quality_gate.offline_stateful_scenarios -or
+        [int]$OfflineAcceptanceEnvelope.result.passed_count -ne [int]$ReleaseContract.quality_gate.offline_stateful_scenarios -or
+        [int]$OfflineAcceptanceEnvelope.result.recovery_fault_path_count -ne [int]$ReleaseContract.quality_gate.offline_recovery_fault_paths -or
+        $OfflineAcceptanceEnvelope.result.contains_real_credentials -ne $false
+    ) {
+        throw "L'accettazione stateful non coincide con il contratto del candidato."
+    }
+    $WpfSummary = Invoke-CheckedJson "Self-test WPF" "powershell.exe" @(
         "-NoProfile",
         "-STA",
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $ProjectRoot "PassboltApp.ps1"),
         "-SelfTest"
     )
+    if (
+        [string]$WpfSummary.version -ne [string]$ReleaseContract.version -or
+        [int]$WpfSummary.controls -ne [int]$ReleaseContract.quality_gate.wpf_controls -or
+        [string]$WpfSummary.single_operational_state -ne "OK" -or
+        [string]$WpfSummary.operation_reentrancy_guard -ne "OK" -or
+        [string]$WpfSummary.centralized_interaction_lock -ne "OK" -or
+        [string]$WpfSummary.asynchronous_worker_lifecycle -ne "OK" -or
+        [string]$WpfSummary.sanitized_source_feedback -ne "OK" -or
+        [string]$WpfSummary.sanitized_migration_receipts -ne "OK" -or
+        $WpfSummary.secrets_serialized -ne $false
+    ) {
+        throw "Il self-test WPF non coincide con il contratto del candidato."
+    }
 
     if (-not $SkipUiPreviews) {
         Add-Type -AssemblyName PresentationCore
@@ -326,6 +530,9 @@ try {
             Test-PngDimensions $PreviewPath $ExpectedPixelWidth $ExpectedPixelHeight
             $UiPreviewCount++
         }
+        if ($UiPreviewCount -ne [int]$ReleaseContract.quality_gate.ui_previews_required) {
+            throw "Sono state generate $UiPreviewCount anteprime, ma il manifesto ne richiede $($ReleaseContract.quality_gate.ui_previews_required)."
+        }
     }
 
     Invoke-Checked "Controllo diff Git" $GitExecutable @(
@@ -336,20 +543,22 @@ try {
     Write-Host ""
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.1"
-        changelog_state = "unreleased_candidate"
+        version = [string]$ReleaseContract.version
+        changelog_state = [string]$ReleaseContract.changelog_state
         ci_mode = [bool]$Ci
-        python_tests = 143
+        python_tests = $PythonTestCount
         node_suite = "OK"
-        compatibility_profile = "passbolt-v4-only"
+        compatibility_profile = [string]$ReleaseContract.compatibility_profile
         v5_format_and_server_rejection = "OK"
-        offline_stateful_scenarios = 9
-        offline_recovery_fault_paths = 12
-        wpf_controls = 139
+        offline_read_only_scenarios = [int]$OfflineLabEnvelope.result.automated_scenarios_passed
+        offline_stateful_scenarios = [int]$OfflineAcceptanceEnvelope.result.scenario_count
+        offline_recovery_fault_paths = [int]$OfflineAcceptanceEnvelope.result.recovery_fault_path_count
+        wpf_controls = [int]$WpfSummary.controls
         ui_preview_count = $UiPreviewCount
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })
         offline_gate = $(if ($SkipUiPreviews) { "partial_ui_previews_skipped" } else { "passed" })
-        ui_previews_required = 29
+        ui_previews_required = [int]$ReleaseContract.quality_gate.ui_previews_required
+        real_v4_matrix_scenarios = [int]$ReleaseContract.quality_gate.real_v4_matrix_scenarios
         real_v4_matrix_gate = "not_attested_by_offline_gate"
         release_authorized = $false
         secrets_serialized = $false

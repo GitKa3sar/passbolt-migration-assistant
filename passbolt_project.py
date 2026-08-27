@@ -24,7 +24,7 @@ from passbolt_api_probe import ProbeError, normalize_base_url
 from passbolt_review import ReviewError, normalize_source_mapping_profile
 
 
-APP_VERSION = "0.28.1"
+APP_VERSION = "0.28.2"
 PROJECT_SCHEMA_VERSION = 1
 PROJECT_KIND = "passbolt-migration-preparation"
 PROJECT_ENVELOPE_KIND = "passbolt-migration-project"
