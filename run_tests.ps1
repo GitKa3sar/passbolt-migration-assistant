@@ -16,6 +16,7 @@ $PythonFiles = @(
     "passbolt_import.py",
     "passbolt_integration_matrix.py",
     "passbolt_project.py",
+    "passbolt_receipt.py",
     "offline_lab_acceptance.py",
     "offline_lab_setup.py",
     "offline_lab_smoke.py",
@@ -27,6 +28,7 @@ $PythonFiles = @(
     "test_passbolt_import.py",
     "test_passbolt_integration_matrix.py",
     "test_passbolt_project.py",
+    "test_passbolt_receipt.py",
     "test_offline_lab.py",
     "test_passbolt_reconciliation.py",
     "test_passbolt_review.py"
@@ -37,6 +39,7 @@ $UnitTestFiles = @(
     "test_passbolt_import.py",
     "test_passbolt_integration_matrix.py",
     "test_passbolt_project.py",
+    "test_passbolt_receipt.py",
     "test_offline_lab.py",
     "test_passbolt_reconciliation.py",
     "test_passbolt_review.py",
@@ -334,16 +337,21 @@ try {
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
         version = "0.28.1"
+        changelog_state = "unreleased_candidate"
         ci_mode = [bool]$Ci
-        python_tests = 131
+        python_tests = 143
         node_suite = "OK"
         compatibility_profile = "passbolt-v4-only"
         v5_format_and_server_rejection = "OK"
         offline_stateful_scenarios = 9
         offline_recovery_fault_paths = 12
-        wpf_controls = 136
+        wpf_controls = 139
         ui_preview_count = $UiPreviewCount
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })
+        offline_gate = $(if ($SkipUiPreviews) { "partial_ui_previews_skipped" } else { "passed" })
+        ui_previews_required = 29
+        real_v4_matrix_gate = "not_attested_by_offline_gate"
+        release_authorized = $false
         secrets_serialized = $false
         status = "OK"
     } | ConvertTo-Json

@@ -499,6 +499,14 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(result.candidate_count, 0)
         self.assertEqual(len(result.warnings), 2)
         self.assertFalse(any("outside-secret" in warning for warning in result.warnings))
+        self.assertEqual(
+            {(item.reason_code, item.extension, item.count) for item in result.issues},
+            {
+                ("source_not_available", ".txt", 1),
+                ("legacy_xls_conversion", ".xls", 1),
+            },
+        )
+        self.assertNotIn("outside-review", repr(result.issues))
 
     def test_file_size_limit_and_unlimited_file_selection(self) -> None:
         source = self.root / "Cliente Alfa" / "grande.txt"
@@ -508,6 +516,8 @@ class ReviewTests(unittest.TestCase):
             result = analyze_files(self.root, ["Cliente Alfa/grande.txt"])
         self.assertEqual(result.analyzed_files, 0)
         self.assertIn("limite", result.warnings[0])
+        self.assertEqual(result.issues[0].reason_code, "file_too_large")
+        self.assertEqual(result.issues[0].extension, ".txt")
 
         selected_files = []
         for index in range(60):

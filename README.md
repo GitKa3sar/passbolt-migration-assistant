@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.1 is a development release limited to Passbolt v4: Passbolt v5 targets and v5 formats are rejected fail-closed. Validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.1 is an unreleased development candidate limited to Passbolt v4: Passbolt v5 targets and v5 formats are rejected fail-closed. Validate it in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -14,6 +14,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 ### Funzioni principali
 
 - inventario metadati di file TXT, CSV, JSON, XML, XLSX, DOCX e ODT;
+- riepilogo aggregato dei file esclusi, non revisionabili o da convertire, per motivazione e formato ma senza nomi, clienti o percorsi;
 - revisione locale con password mascherate per impostazione predefinita, visualizzazione esplicita temporanea ed editor dei cinque campi importabili;
 - profili locali di mappatura sorgente per associare etichette non standard a titolo, username, password e URL/host, con validazione, digest e anteprima mascherata prima dell'importazione;
 - progetti locali di preparazione protetti con Windows DPAPI, per ripristinare origine, cartella, profilo e selezioni tecniche senza salvare trust, sessioni, credenziali, correzioni o piani;
@@ -36,6 +37,7 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - dashboard operativa del lotto con avanzamento live, fase e operazione correnti, contatori, tempi e timeline priva di segreti;
 - verifica automatica dopo la scrittura di metadati, contenuto cifrato, cartella e ACL, con esito per risorsa e blocco fail-closed in caso di difformità;
+- ricevute JSON sanitizzate di preflight e migrazione verificata, a schema chiuso e digest canonico;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
 - matrice di integrazione ripetibile per laboratori Passbolt v4, con sette prove automatizzate in sola lettura, nove attestazioni operative e report sanitizzati con digest;
@@ -85,6 +87,8 @@ Per sospendere una preparazione, selezionare i file nell'inventario e usare **Sa
 
 Il pulsante **Preflight e dry-run** prepara il piano senza modificare Passbolt e popola la scheda **Preflight**. La conferma resta disabilitata se almeno un controllo è bloccante. Durante la scrittura, la scheda **Attività lotto** mostra soltanto eventi già registrati nel journal locale; non visualizza password, passphrase o MFA. Prima di dichiarare il successo, l'app rilegge ogni risorsa creata e confronta metadati, contenuto decifrato in memoria, cartella e ACL con il piano. La scheda **Verifica finale** conserva soltanto gli esiti booleani e i titoli già presenti nella revisione locale.
 
+In **Inventario**, **Esclusioni e conversioni** mostra separatamente le segnalazioni dell'intera scansione e quelle dell'ultima revisione selezionata. Il riepilogo usa solo conteggi e bucket di formato bounded: non contiene nomi di file, clienti o percorsi. Dopo un dry-run è possibile esportare dalla scheda **Preflight** una ricevuta JSON con digest del piano, stato e conteggi dei controlli. La ricevuta della scheda **Verifica finale** si abilita soltanto dopo che tutte le risorse create sono state rilette con esito conforme e il journal è stato chiuso. Le ricevute non contengono server, fingerprint, identità, sessione, titoli, username, URL, ID di risorse o cartelle e non sostituiscono il journal per il recupero.
+
 La GUI non richiede più di digitare la fingerprint. Il valore rilevato non viene considerato una prova autonoma dell'identità del server: dopo la conferma, viene mantenuto in memoria e usato come valore atteso dal bridge OpenPGP, che controlla crittograficamente la chiave effettiva ricevuta durante GPGAuth. La conferma vale per la sessione corrente e non costituisce un archivio persistente di server fidati.
 
 Se un import si interrompe dopo l'avvio delle scritture, non ripetere direttamente una nuova importazione dello stesso lotto. Nella fase 04 aprire **Recupero import interrotto**, quindi:
@@ -130,11 +134,13 @@ La chiave privata viene selezionata dalla GUI. Passphrase e TOTP sono inviati al
 
 I progetti `.pbproj` possono contenere percorsi locali e nomi relativi dei documenti, quindi restano materiale operativo riservato anche se protetto. La busta JSON a schema chiuso e i digest rilevano alterazioni prima e dopo la decifratura; DPAPI fornisce riservatezza e integrità per l'utente Windows corrente. La perdita del profilo Windows può rendere il progetto irrecuperabile: il file non sostituisce i documenti sorgente, un backup verificato o il journal di riconciliazione.
 
+Le ricevute `.json` sono artefatti informativi sanitizzati, non firme digitali e non autorizzano retry o recovery. Il loro digest rileva modifiche accidentali al contenuto; la fonte di verità per un esito remoto incerto resta sempre il journal locale insieme a una nuova verifica autenticata.
+
 Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavorare con materiale sensibile.
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 131 test Python, suite Node/OpenPGP, matrice read-only v4, 9 scenari stateful offline con dodici percorsi di fault di recupero, contratto dei 136 controlli WPF, 29 anteprime UI e `git diff --check`:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue controlli di sintassi, self-test, 143 test Python, suite Node/OpenPGP, matrice read-only v4, 9 scenari stateful offline con dodici percorsi di fault di recupero, contratto dei 139 controlli WPF, 29 anteprime UI e `git diff --check`:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -231,6 +237,20 @@ In 0.26.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risors
 
 Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
+## Identita del candidato e decisione go/no-go
+
+Il candidato corrente conserva `0.28.1` come unica versione applicativa, di protocollo e di report. Nel changelog e marcato **Unreleased candidate**: soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente. Una corsa con `-SkipUiPreviews` dichiara `partial_ui_previews_skipped`; nessuno dei due esiti equivale a un tag, a una release pubblicata o a un'autorizzazione alla distribuzione.
+
+La decisione e **GO** soltanto se tutte queste condizioni valgono sul medesimo candidato:
+
+1. parsing PowerShell/Python/Node, self-test, 143 test Python, suite Node/OpenPGP, laboratorio v4, 9 scenari stateful, 12 fault di recupero, self-test WPF, 29 anteprime e `git diff --check` sono tutti superati;
+2. runtime, UI, configurazione della matrice e report dichiarano `passbolt-v4-only`, mentre formato `auto`, formati v5 e capability server v5 restano rifiutati fail-closed;
+3. un operatore ha autorizzato esplicitamente gli scenari reali e attestato che l'istanza Passbolt v4 e dedicata e usa-e-getta prima della prima mutazione;
+4. il report sanitizzato della matrice reale supera esattamente tutti i 16 scenari con `-RequireComplete`, senza esiti `failed`, `blocked` o `not_run` e con digest valido;
+5. il report resta fuori dal repository e non contiene URL, fingerprint, identita, ID remoti, chiavi, passphrase, MFA, cookie, nomi o messaggi API.
+
+La decisione e **NO-GO** se manca anche una sola condizione. In particolare, il gate offline verde con matrice reale pendente qualifica un candidato tecnico, non una release pronta.
+
 ## Matrice di integrazione v4
 
 Il runner separato verifica l'app contro un'istanza Passbolt v4 di laboratorio reale. La configurazione contiene esclusivamente ID del profilo, URL HTTPS, fingerprint pubblica attesa e formati v4 espliciti: chiave privata, passphrase e TOTP non devono essere aggiunti al file. Un profilo attivo con formato v5 viene rifiutato; un eventuale profilo v5 disabilitato resta soltanto un dato storico fuori scope.
@@ -253,7 +273,7 @@ Il runner richiede interattivamente percorso della chiave `.asc`, passphrase e T
 
 I report vengono salvati per impostazione predefinita sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\IntegrationMatrix`. Contengono soltanto profilo logico, formati attesi, stati, contatori e codici enumerati; omettono URL, fingerprint, identità, ID remoti, nomi degli oggetti, chiavi, passphrase, MFA e messaggi API. Un digest SHA-256 rileva modifiche o troncamenti.
 
-Le nove prove che creano oggetti, modificano permessi o simulano recuperi devono essere eseguite nell'app su istanze usa-e-getta e poi attestate singolarmente. Per esempio:
+Le nove prove che creano oggetti, modificano permessi o simulano recuperi devono essere eseguite nell'app su istanze usa-e-getta e poi attestate singolarmente. Prima della prima prova mutativa l'operatore deve autorizzare esplicitamente l'esecuzione e attestare che il target v4 e dedicato e usa-e-getta; non inserire segreti nell'autorizzazione, nella configurazione o in chat. Per esempio:
 
 ```powershell
 .\run_passbolt_integration_matrix.ps1 `
@@ -274,7 +294,7 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti attuali e roadmap
 
-La release 0.28.1 è formalmente **v4-only**. La creazione di cartelle v5 resta fuori scope a causa del difetto upstream tracciato in [passbolt_api issue #617](https://github.com/passbolt/passbolt_api/issues/617); la correzione proposta in [passbolt_api PR #618](https://github.com/passbolt/passbolt_api/pull/618) non viene considerata disponibile finché non è integrata e distribuita ufficialmente. L'interfaccia invia soltanto formati v4 espliciti, il backend rifiuta `auto` e `v5`, la sessione rifiuta server che espongono capability v5 e la matrice accetta soltanto profili v4 attivi. Il precedente report v5 `14/16` resta evidenza storica e non viene trasformato in un successo; il gate di questa release richiede una nuova attestazione reale v4 `16/16` sul nuovo commit candidato.
+Il candidato non ancora rilasciato 0.28.1 è formalmente **v4-only**. La creazione di cartelle v5 resta fuori scope a causa del difetto upstream tracciato in [passbolt_api issue #617](https://github.com/passbolt/passbolt_api/issues/617); la correzione proposta in [passbolt_api PR #618](https://github.com/passbolt/passbolt_api/pull/618) non viene considerata disponibile finché non è integrata e distribuita ufficialmente. L'interfaccia invia soltanto formati v4 espliciti, il backend rifiuta `auto` e `v5`, la sessione rifiuta server che espongono capability v5 e la matrice accetta soltanto profili v4 attivi. Il precedente report v5 `14/16` resta evidenza storica e non viene trasformato in un successo; il gate di questa release richiede una nuova attestazione reale v4 `16/16` sul medesimo candidato.
 
 La versione 0.28.1 corregge il login quando l'orologio del server rende la firma della sfida GPGAuth di pochi secondi futura rispetto a Windows e chiude l'architettura dell'informazione della fase 04. Inventario e revisione non dipendono più dalla verifica remota; URL, fingerprint e sessione sicura sono raccolti dove servono, immediatamente prima delle operazioni Passbolt. Nuova importazione e recupero condividono il percorso di migrazione, mentre la gestione delle ACL esistenti usa uno spazio separato. La UI presenta v4-only come stato informativo, mantiene le barre comandi visibili alla finestra minima e introduce focus esplicito per tastiera. Il bridge prova sempre prima la verifica OpenPGP stretta; soltanto per l'errore temporale previsto può ripeterla usando l'header HTTP `Date` della stessa risposta HTTPS, se valido e distante non più di 300 secondi. Firma crittografica, identità della chiave server fissata, validità della chiave e policy degli hash restano obbligatorie. Date assenti o malformate, firme prodotte da altre chiavi e scarti maggiori rimangono bloccati con diagnostica sicura.
 
@@ -292,7 +312,7 @@ La versione 0.23.0 completa nel laboratorio offline l'esecuzione automatica dei 
 
 La versione 0.21.0 introduce un laboratorio Passbolt offline, effimero e ripetibile per i profili v4/v5. La matrice automatica verifica entrambi i profili a ogni quality gate; scenari negativi e fault injection consentono di riprodurre errori di autenticazione o scrittura senza accesso al server reale. Il simulatore non sostituisce la validazione di compatibilità su istanze Passbolt dedicate.
 
-La versione 0.20.1 introduce il quality gate Windows riproducibile. `run_tests.ps1` è il punto di ingresso locale e la stessa procedura viene eseguita su GitHub Actions a ogni push su `main`, pull request o avvio manuale. La CI installa esclusivamente dipendenze bloccate, non conserva credenziali Git nel checkout e non può avviare la matrice contro istanze Passbolt reali. Le anteprime pubblicate come artefatti contengono soltanto lo stato iniziale vuoto dell'app.
+La versione 0.20.1 introduce il quality gate Windows riproducibile. `run_tests.ps1` è il punto di ingresso locale e la stessa procedura viene eseguita su GitHub Actions a ogni push su `main`, pull request o avvio manuale. La CI installa esclusivamente dipendenze bloccate, non conserva credenziali Git nel checkout e non può avviare la matrice contro istanze Passbolt reali. Le anteprime pubblicate come artefatti contengono soltanto stati sintetici iniziali o popolati, privi di credenziali e dati reali.
 
 La versione 0.20.0 introduce una nuova interfaccia chiara ispirata alle applicazioni Apple, mantenendo la struttura operativa già nota. La navigazione laterale mostra sempre la fase corrente e quelle disponibili; card, campi, menu, tabelle e tab condividono ora un unico design system. Nella fase 04 sessione sicura e destinazione sono affiancate, così il piano resta visibile anche senza massimizzare la finestra. L'aggiornamento non modifica protocolli, endpoint, contenuto dei piani o conferme.
 
