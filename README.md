@@ -5,7 +5,7 @@ Windows desktop assistant for safely inventorying, reviewing and importing crede
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.3 is an unreleased development candidate limited to Passbolt v4: Passbolt v5 targets and v5 formats are rejected fail-closed. Validate it in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.4-beta.1 is a technical beta, limited to Passbolt v4 and not production-ready: Passbolt v5 targets and v5 formats are rejected fail-closed. Use it only in a non-production environment and keep verified backups before any migration.
 
 ## Italiano
 
@@ -239,17 +239,19 @@ Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sosti
 
 ## Identita del candidato e decisione go/no-go
 
-Il candidato corrente conserva `0.28.3` come unica versione applicativa, di protocollo e di report. Nel changelog e marcato **Unreleased candidate**: soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente. Una corsa con `-SkipUiPreviews` dichiara `partial_ui_previews_skipped`; nessuno dei due esiti equivale a un tag, a una release pubblicata o a un'autorizzazione alla distribuzione.
+Il candidato corrente usa `0.28.4-beta.1` come unica versione applicativa, di protocollo e di report ed è marcato **Technical beta**. Soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente; `-SkipUiPreviews` dichiara invece `partial_ui_previews_skipped`. Nessuno dei due esiti crea un tag o una release.
 
-La decisione e **GO** soltanto se tutte queste condizioni valgono sul medesimo candidato:
+Per una release stabile la decisione resta **GO** soltanto se tutte le condizioni seguenti valgono sul medesimo commit:
 
 1. parsing PowerShell/Python/Node, self-test, suite Python e Node/OpenPGP, laboratorio v4, scenari stateful, fault di recupero, self-test WPF, anteprime e `git diff --check` sono tutti superati con i conteggi dichiarati in `release-candidate.json`;
 2. runtime, UI, configurazione della matrice e report dichiarano `passbolt-v4-only`, mentre formato `auto`, formati v5 e capability server v5 restano rifiutati fail-closed;
-3. un operatore ha autorizzato esplicitamente gli scenari reali e attestato che l'istanza Passbolt v4 e dedicata e usa-e-getta prima della prima mutazione;
-4. il report sanitizzato della matrice reale supera tutti gli scenari v4 dichiarati nel manifesto con `-RequireComplete`, senza esiti `failed`, `blocked` o `not_run` e con digest valido;
-5. il report resta fuori dal repository e non contiene URL, fingerprint, identita, ID remoti, chiavi, passphrase, MFA, cookie, nomi o messaggi API.
+3. un operatore ha autorizzato esplicitamente gli scenari reali e attestato che l'istanza Passbolt v4 è dedicata e usa-e-getta prima della prima mutazione;
+4. il report sanitizzato della matrice reale supera tutti i 16 scenari v4 con `-RequireComplete`, senza esiti `failed`, `blocked` o `not_run` e con digest valido;
+5. il report resta fuori dal repository e non contiene URL, fingerprint, identità, ID remoti, chiavi, passphrase, MFA, cookie, nomi o messaggi API.
 
-La decisione e **NO-GO** se manca anche una sola condizione. In particolare, il gate offline verde con matrice reale pendente qualifica un candidato tecnico, non una release pronta.
+Il punto 4 non è superato. La matrice reale del candidato precedente si è fermata a `7/16`: 7 prove read-only superate, 0 fallite, 1 bloccata, 8 non eseguite e 0 scritture remote; `summary --require-complete` non è passato. La matrice `16/16` del nuovo commit beta non è ancora attestata.
+
+La decisione di prodotto accetta questo rischio residuo esclusivamente per preparare una **beta tecnica non production-ready**, dopo gate offline e CI verdi sullo stesso commit e con etichettatura beta esplicita. La release stabile resta **NO-GO** finché la matrice reale completa non è attestata; la beta non deve essere presentata come superamento del punto 4.
 
 ## Matrice di integrazione v4
 
@@ -294,7 +296,7 @@ La descrizione completa del comportamento, degli endpoint e dei controlli implem
 
 ## Limiti correnti
 
-Il candidato non ancora rilasciato `0.28.3` è rigidamente **v4-only**. UI, backend, laboratorio positivo e matrice operativa usano soltanto formati v4 espliciti; `auto`, formati v5, profili v5 e server che espongono capability v5 vengono rifiutati fail-closed. Le fixture v5 rimaste nel codice servono esclusivamente come regressioni storiche o prove negative e non costituiscono un flusso operativo, un gate corrente o una promessa di supporto.
+La beta tecnica `0.28.4-beta.1` è rigidamente **v4-only** e non è destinata alla produzione. UI, backend, laboratorio positivo e matrice operativa usano soltanto formati v4 espliciti; `auto`, formati v5, profili v5 e server che espongono capability v5 vengono rifiutati fail-closed. Le fixture v5 rimaste nel codice servono esclusivamente come regressioni storiche o prove negative e non costituiscono un flusso operativo, un gate corrente o una promessa di supporto.
 
 Non sono supportati provider MFA diversi da TOTP, file Excel legacy `.xls`, cancellazione o spostamento di oggetti Passbolt e modifiche alla composizione dei gruppi. Le migrazioni devono essere provate su ambienti non produttivi con backup verificati; una risposta di scrittura incerta richiede il recupero autenticato dal journal e non autorizza la ripetizione diretta dell'operazione.
 

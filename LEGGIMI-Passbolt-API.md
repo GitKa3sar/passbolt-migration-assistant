@@ -1,6 +1,6 @@
 # Passbolt Migration Assistant — contratti tecnici correnti
 
-Questa guida descrive esclusivamente i contratti attivi del candidato `0.28.3 - Unreleased candidate`. La cronologia delle versioni e delle sperimentazioni precedenti è in [CHANGELOG.md](CHANGELOG.md); non va dedotta da questo documento alcuna compatibilità oltre il profilo corrente `passbolt-v4-only`.
+Questa guida descrive esclusivamente i contratti attivi di `0.28.4-beta.1 - Technical beta`. È una beta tecnica non production-ready, limitata a Passbolt v4. La cronologia delle versioni e delle sperimentazioni precedenti è in [CHANGELOG.md](CHANGELOG.md); non va dedotta da questo documento alcuna compatibilità oltre il profilo corrente `passbolt-v4-only`.
 
 ## Avvio e componenti
 
@@ -27,7 +27,7 @@ Python, Node e WPF comunicano tramite JSON su standard input/output reindirizzat
 
 ## Identità del candidato e profilo di compatibilità
 
-La sola identità corrente è `0.28.3`; UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del gate devono dichiarare la stessa versione. Il profilo applicativo e di report è `passbolt-v4-only`.
+La sola identità corrente è `0.28.4-beta.1`; UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del gate devono dichiarare la stessa versione. Il profilo applicativo e di report è `passbolt-v4-only`.
 
 Il file [`release-candidate.json`](release-candidate.json) è la fonte macchina unica per versione, stato del changelog, profilo e conteggi del quality gate. I componenti standalone mantengono costanti locali perché devono poter essere eseguiti senza dipendere da un file di repository; `run_tests.ps1` compensa questo trade-off verificando automaticamente tutte le copie applicative della versione e confrontando i conteggi del manifesto con le suite e i riepiloghi effettivi. Una centralizzazione runtime più ampia introdurrebbe una nuova dipendenza di distribuzione senza modificare il contratto funzionale e non è giustificata per questo candidato.
 
@@ -195,7 +195,9 @@ Il gate esegue:
 - rendering e verifica delle anteprime sintetiche;
 - `git diff --check`.
 
-I conteggi richiesti non sono duplicati in questa guida: vengono letti dal manifesto e confrontati con i risultati JSON effettivi. Una corsa completa produce `offline_gate=passed`; `-SkipUiPreviews` produce `partial_ui_previews_skipped`. Entrambi mantengono `release_authorized=false`: il gate offline non sostituisce la matrice reale v4, non crea un tag e non autorizza una distribuzione.
+I conteggi richiesti non sono duplicati in questa guida: vengono letti dal manifesto e confrontati con i risultati JSON effettivi. Una corsa completa produce `offline_gate=passed`; `-SkipUiPreviews` produce `partial_ui_previews_skipped`. Entrambi mantengono `release_authorized=false`: il gate offline non crea un tag o una release e non attesta la matrice reale v4.
+
+La matrice reale del candidato precedente si è fermata a `7/16` (7 read-only superati, 0 falliti, 1 bloccato, 8 non eseguiti e 0 scritture remote), quindi `summary --require-complete` non è passato. La matrice `16/16` del commit beta corrente non è ancora attestata. Questo rischio è accettato soltanto per preparare una beta tecnica chiaramente etichettata e non production-ready; il punto 4 del gate stabile resta non superato e una release stabile rimane NO-GO.
 
 Il laboratorio di test ascolta esclusivamente su `127.0.0.1`, genera identità e dati sintetici sotto `%TEMP%` e rimuove il workspace al termine. Non installa certificati nel sistema e non contatta istanze Passbolt reali. Le anteprime UI non leggono documenti e non eseguono richieste di rete.
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "0.28.3",
-  "changelog_state": "unreleased_candidate",
+  "version": "0.28.4-beta.1",
+  "changelog_state": "technical_beta",
   "compatibility_profile": "passbolt-v4-only",
   "quality_gate": {
     "python_tests": 143,
@@ -9,6 +9,7 @@
     "offline_stateful_scenarios": 9,
     "offline_recovery_fault_paths": 12,
     "wpf_controls": 139,
+    "import_readiness_diagnostic_cases": 5,
     "ui_previews_required": 29,
     "real_v4_matrix_scenarios": 16
   }

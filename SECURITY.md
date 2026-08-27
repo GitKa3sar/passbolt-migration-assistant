@@ -6,8 +6,8 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.28.3 (Unreleased candidate) | Corrente, non rilasciata |
-| 0.28.2 | Candidato precedente, non rilasciato |
+| 0.28.4-beta.1 (Technical beta) | Corrente, non production-ready |
+| 0.28.3 | Candidato precedente, non rilasciato |
 | Versioni precedenti | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultimo candidato dichiarato.
@@ -93,3 +93,5 @@ La versione 0.27.0 aggiunge profili di mappatura sorgente che contengono soltant
 La versione 0.28.0 aggiunge progetti locali di preparazione protetti con Windows DPAPI `CurrentUser`. Il payload a schema chiuso ammette origine HTTPS, cartella sorgente, profilo e selezioni tecniche; esclude fingerprint fidate, chiavi, passphrase, MFA, cookie, sessioni, password, correzioni, destinazioni remote, ACL, piani, attestazioni e journal. Busta e payload hanno digest separati, i JSON con proprietà duplicate o fuori schema vengono rifiutati e la scrittura è sincronizzata e atomica. Il ripristino azzera trust e stato remoto, non apre documenti e riseleziona candidati soltanto dopo una nuova revisione con identità e hash sorgente coincidenti. I `.pbproj` restano riservati perché contengono percorsi locali cifrati, dipendono dal profilo di protezione dell'utente Windows corrente senza offrire portabilità garantita e non costituiscono un backup dei sorgenti o dei journal.
 
 La versione 0.28.3 mantiene fail-closed la firma della sfida GPGAuth e limita la compatibilità temporale al solo errore OpenPGP di firma futura. Il riferimento alternativo è esclusivamente l'IMF-fixdate della stessa risposta HTTPS, con scarto assoluto massimo di 300 secondi; non viene accettato alcun timestamp dal payload o dall'utente. La ripetizione conserva verifica matematica, chiave server fissata, validità della chiave e policy hash. Header temporali mancanti o non canonici, scarti maggiori, sfide non firmate e firmatari differenti sono rifiutati. La diagnostica aggiunge soltanto un codice enumerato e, quando disponibile, lo scarto intero in secondi.
+
+La beta tecnica 0.28.4-beta.1 corregge esclusivamente la proiezione WPF dei risultati di preflight non importabili. La UI distingue i conflitti o duplicati bloccanti dalla reale assenza di capability v4, registra soltanto un codice diagnostico enumerato e non interpola motivi arbitrari nel messaggio o nel log. Un `can_import` mancante o non booleano resta fail-closed. Protocolli, journal, receipt, lock, sessioni e semantica delle scritture non cambiano; Passbolt v5 continua a essere rifiutato. La matrice reale `16/16` del commit beta non è attestata e questa versione non è production-ready.
