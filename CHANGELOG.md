@@ -4,6 +4,32 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 Le sezioni precedenti al candidato corrente sono cronologia: eventuali riferimenti v5 descrivono esperimenti e contratti storici e non costituiscono supporto, gate o flusso operativo della release `passbolt-v4-only`.
 
+## 0.28.4-beta.2 - Technical beta
+
+`0.28.4-beta.2` è una beta tecnica esclusivamente Passbolt v4 e non è production-ready. Mantiene `technical_beta`, il profilo `passbolt-v4-only` e `release_authorized=false`; non esistono tag o release per questa versione.
+
+### Fixed
+
+- rimosso il supporto ODT dichiarato per errore da README e guida tecnica, senza introdurre parser o dipendenze;
+- documentato il contratto effettivo delle 16 estensioni inventariate, distinguendo `.xls` come formato rilevato soltanto per richiedere la conversione prima della revisione;
+- aggiunta una regressione che confronta il contratto formati di README e guida con le liste implementate da inventario e revisione;
+- corretto il binding del titolo WPF nel quality gate, usando il confronto letterale previsto per la versione invece di cercare caratteri di escape da espressione regolare.
+
+### Changed
+
+- riallineate a `0.28.4-beta.2` identità UI, user agent, progetti, ricevute, laboratorio, matrice, test e manifesto del candidato;
+- aggiunti file di direzione, roadmap e checklist di release sintetici, con regole operative locali in `AGENTS.md` e rinvii ai contratti esistenti invece di duplicarli.
+
+### Security
+
+- nessun parser, protocollo Python/Node, journal, workflow ACL o comportamento di scrittura è stato modificato;
+- la matrice reale v4 resta separata dal gate offline e non deve essere contattata senza le autorizzazioni esplicite previste.
+
+### Known limitations
+
+- la CI GitHub sul commit del candidato non è ancora attestata;
+- la matrice reale `16/16` di `0.28.4-beta.2` resta pendente e non autorizza una release stabile.
+
 ## 0.28.4-beta.1 - Technical beta
 
 `0.28.4-beta.1` è una beta tecnica esclusivamente Passbolt v4 e non è production-ready. L'identità beta è applicata in modo coerente a UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del quality gate; non esistono tag o release per questa versione.

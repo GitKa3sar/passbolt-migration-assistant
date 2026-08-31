@@ -6,8 +6,8 @@ Passbolt Migration Assistant tratta materiale ad alta sensibilità. Non allegare
 
 | Versione | Supporto di sicurezza |
 | --- | --- |
-| 0.28.4-beta.1 (Technical beta) | Corrente, non production-ready |
-| 0.28.3 | Candidato precedente, non rilasciato |
+| 0.28.4-beta.2 (Technical beta) | Corrente, non production-ready |
+| 0.28.4-beta.1 | Candidato beta precedente, non rilasciato |
 | Versioni precedenti | No |
 
 Finché il progetto è in fase di sviluppo, gli aggiornamenti di sicurezza vengono applicati soltanto all'ultimo candidato dichiarato.
@@ -94,4 +94,4 @@ La versione 0.28.0 aggiunge progetti locali di preparazione protetti con Windows
 
 La versione 0.28.3 mantiene fail-closed la firma della sfida GPGAuth e limita la compatibilità temporale al solo errore OpenPGP di firma futura. Il riferimento alternativo è esclusivamente l'IMF-fixdate della stessa risposta HTTPS, con scarto assoluto massimo di 300 secondi; non viene accettato alcun timestamp dal payload o dall'utente. La ripetizione conserva verifica matematica, chiave server fissata, validità della chiave e policy hash. Header temporali mancanti o non canonici, scarti maggiori, sfide non firmate e firmatari differenti sono rifiutati. La diagnostica aggiunge soltanto un codice enumerato e, quando disponibile, lo scarto intero in secondi.
 
-La beta tecnica 0.28.4-beta.1 corregge esclusivamente la proiezione WPF dei risultati di preflight non importabili. La UI distingue i conflitti o duplicati bloccanti dalla reale assenza di capability v4, registra soltanto un codice diagnostico enumerato e non interpola motivi arbitrari nel messaggio o nel log. Un `can_import` mancante o non booleano resta fail-closed. Protocolli, journal, receipt, lock, sessioni e semantica delle scritture non cambiano; Passbolt v5 continua a essere rifiutato. La matrice reale `16/16` del commit beta non è attestata e questa versione non è production-ready.
+La beta tecnica 0.28.4-beta.2 riallinea esclusivamente contratto documentale, identità del candidato e file di governance. ODT non è dichiarato come supportato; le 16 estensioni inventariate sono esplicite e `.xls` resta soltanto rilevato per richiedere la conversione prima della revisione. Non cambiano parser, dipendenze, protocolli Python/Node, journal, receipt, lock, sessioni o semantica delle scritture; Passbolt v5 continua a essere rifiutato. La CI GitHub e la matrice reale `16/16` del commit beta non sono attestate, `release_authorized=false` resta obbligatorio e questa versione non è production-ready.

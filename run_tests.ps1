@@ -202,7 +202,10 @@ function Test-ReleaseIdentityBindings {
         [pscustomobject]@{ Path = "passbolt_project.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
         [pscustomobject]@{ Path = "passbolt_receipt.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
         [pscustomobject]@{ Path = "passbolt_review.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
-        [pscustomobject]@{ Path = "test_passbolt_project.py"; Pattern = '"app_version"\s*:\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' }
+        [pscustomobject]@{ Path = "test_passbolt_project.py"; Pattern = '"app_version"\s*:\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "README.md"; Pattern = 'Version (?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?) is a technical beta' },
+        [pscustomobject]@{ Path = "LEGGIMI-Passbolt-API.md"; Pattern = 'contratti attivi di `(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?) - Technical beta`' },
+        [pscustomobject]@{ Path = "SECURITY.md"; Pattern = '\| (?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?) \(Technical beta\) \| Corrente, non production-ready \|' }
     )
     foreach ($Binding in $IdentityBindings) {
         $Text = Get-Content -LiteralPath (Join-Path $ProjectRoot $Binding.Path) -Raw
@@ -215,7 +218,7 @@ function Test-ReleaseIdentityBindings {
         }
     }
     $WpfText = Get-Content -LiteralPath (Join-Path $ProjectRoot "PassboltApp.ps1") -Raw
-    if (-not $WpfText.Contains("v$([regex]::Escape($Version))")) {
+    if (-not $WpfText.Contains("v$Version")) {
         throw "Il controllo del titolo WPF non coincide con il manifesto del candidato."
     }
 

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "version": "0.28.4-beta.1",
+  "version": "0.28.4-beta.2",
   "changelog_state": "technical_beta",
   "compatibility_profile": "passbolt-v4-only",
   "quality_gate": {
-    "python_tests": 143,
+    "python_tests": 144,
     "offline_read_only_scenarios": 7,
     "offline_stateful_scenarios": 9,
     "offline_recovery_fault_paths": 12,

@@ -1,6 +1,6 @@
 # Passbolt Migration Assistant — contratti tecnici correnti
 
-Questa guida descrive esclusivamente i contratti attivi di `0.28.4-beta.1 - Technical beta`. È una beta tecnica non production-ready, limitata a Passbolt v4. La cronologia delle versioni e delle sperimentazioni precedenti è in [CHANGELOG.md](CHANGELOG.md); non va dedotta da questo documento alcuna compatibilità oltre il profilo corrente `passbolt-v4-only`.
+Questa guida descrive esclusivamente i contratti attivi di `0.28.4-beta.2 - Technical beta`. È una beta tecnica non production-ready, limitata a Passbolt v4. La cronologia delle versioni e delle sperimentazioni precedenti è in [CHANGELOG.md](CHANGELOG.md); non va dedotta da questo documento alcuna compatibilità oltre il profilo corrente `passbolt-v4-only`.
 
 ## Avvio e componenti
 
@@ -27,7 +27,7 @@ Python, Node e WPF comunicano tramite JSON su standard input/output reindirizzat
 
 ## Identità del candidato e profilo di compatibilità
 
-La sola identità corrente è `0.28.4-beta.1`; UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del gate devono dichiarare la stessa versione. Il profilo applicativo e di report è `passbolt-v4-only`.
+La sola identità corrente è `0.28.4-beta.2`; UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del gate devono dichiarare la stessa versione. Il profilo applicativo e di report è `passbolt-v4-only`.
 
 Il file [`release-candidate.json`](release-candidate.json) è la fonte macchina unica per versione, stato del changelog, profilo e conteggi del quality gate. I componenti standalone mantengono costanti locali perché devono poter essere eseguiti senza dipendere da un file di repository; `run_tests.ps1` compensa questo trade-off verificando automaticamente tutte le copie applicative della versione e confrontando i conteggi del manifesto con le suite e i riepiloghi effettivi. Una centralizzazione runtime più ampia introdurrebbe una nuova dipendenza di distribuzione senza modificare il contratto funzionale e non è giustificata per questo candidato.
 
@@ -43,7 +43,17 @@ Un progetto `.pbproj` può salvare origine pianificata, radice sorgente, profilo
 
 ### 02 — Inventario file
 
-L'inventario usa estensione e metadati del filesystem senza aprire i documenti. Riconosce TXT, CSV, JSON, XML, XLSX, DOCX e ODT; PDF è revisionabile entro i limiti dedicati. File temporanei Office, link simbolici o reparse point, estensioni non ammesse e file fuori radice vengono esclusi.
+L'inventario usa estensione e metadati del filesystem senza aprire i documenti. La classificazione non valida il contenuto e non garantisce che un file produca candidati.
+
+<!-- source-format-contract:inventory:start -->
+**Estensioni rilevate dall'inventario (16):** `.txt`, `.csv`, `.tsv`, `.json`, `.xml`, `.yaml`, `.yml`, `.ini`, `.cfg`, `.conf`, `.env`, `.properties`, `.docx`, `.xlsx`, `.xls`, `.pdf`.
+<!-- source-format-contract:inventory:end -->
+
+<!-- source-format-contract:conversion-only:start -->
+**Rilevata ma da convertire prima della revisione:** `.xls`.
+<!-- source-format-contract:conversion-only:end -->
+
+Le altre 15 estensioni vengono aperte soltanto nella revisione locale, con parser e limiti specifici. `.pdf` resta soggetto al limite di pagine e all'estrazione testuale; `.docx` e `.xlsx` devono essere contenitori validi. I file legacy `.xls` sono inventariati per produrre un feedback di conversione controllato, ma non vengono analizzati e devono essere convertiti, per esempio in `.xlsx`, prima della revisione. ODT non appartiene al contratto sorgente corrente. File temporanei Office, link simbolici o reparse point, estensioni non ammesse e file fuori radice vengono esclusi.
 
 Il riepilogo **Esclusioni e conversioni** contiene soltanto contatori, codici e bucket di formato bounded. Nomi di file, clienti e percorsi non entrano nel feedback aggregato.
 
@@ -53,7 +63,7 @@ I documenti selezionati vengono aperti localmente e normalizzati nei cinque camp
 
 I profili di mappatura contengono esclusivamente alias di campo normalizzati. Alias duplicati, sovrapposti o ambigui bloccano la revisione; password e valori sorgente non sono serializzati. Profilo e digest accompagnano i candidati e vengono ricontrollati durante rilettura e pianificazione.
 
-Un `.xlsx` cifrato viene decifrato soltanto in memoria dopo richiesta interattiva della password. Non viene creata una copia in chiaro. I file legacy `.xls` non sono supportati e devono essere convertiti prima della revisione.
+Un `.xlsx` cifrato viene decifrato soltanto in memoria dopo richiesta interattiva della password. Non viene creata una copia in chiaro. Come dichiarato dal contratto d'inventario, i file legacy `.xls` sono soltanto rilevati e richiedono conversione prima della revisione.
 
 ### 04 — Operazioni Passbolt v4
 

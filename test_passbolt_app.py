@@ -2,12 +2,39 @@ from __future__ import annotations
 
 import builtins
 import csv
+import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from passbolt_app import ROOT_CLIENT_LABEL, build_inventory, human_size, write_inventory_csv
+from passbolt_app import (
+    ROOT_CLIENT_LABEL,
+    SUPPORTED_EXTENSIONS,
+    build_inventory,
+    human_size,
+    write_inventory_csv,
+)
+from passbolt_review import REVIEWABLE_EXTENSIONS
+
+
+SOURCE_FORMAT_SECTION_PATTERN = re.compile(
+    r"<!-- source-format-contract:(?P<section>[a-z-]+):start -->"
+    r"(?P<body>.*?)"
+    r"<!-- source-format-contract:(?P=section):end -->",
+    re.DOTALL,
+)
+
+
+def documented_source_formats(path: Path) -> dict[str, set[str]]:
+    text = path.read_text(encoding="utf-8")
+    sections: dict[str, set[str]] = {}
+    for match in SOURCE_FORMAT_SECTION_PATTERN.finditer(text):
+        section = match.group("section")
+        if section in sections:
+            raise AssertionError(f"Sezione contratto duplicata in {path.name}: {section}")
+        sections[section] = set(re.findall(r"`(\.[a-z0-9]+)`", match.group("body")))
+    return sections
 
 
 class InventoryTests(unittest.TestCase):
@@ -68,6 +95,18 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(issues[("legacy_xls_conversion", ".xls")], 1)
         self.assertEqual(issues[("unsupported_format", "(altro)")], 1)
         self.assertNotIn("private-customer-name", repr(result.issues))
+
+    def test_documented_source_format_contract_matches_implemented_lists(self) -> None:
+        project_root = Path(__file__).resolve().parent
+        implemented = set(SUPPORTED_EXTENSIONS)
+
+        self.assertEqual(len(implemented), 16)
+        self.assertEqual(set(REVIEWABLE_EXTENSIONS), implemented)
+        for document_name in ("README.md", "LEGGIMI-Passbolt-API.md"):
+            sections = documented_source_formats(project_root / document_name)
+            self.assertEqual(set(sections), {"inventory", "conversion-only"})
+            self.assertEqual(sections["inventory"], implemented)
+            self.assertEqual(sections["conversion-only"], {".xls"})
 
     def test_inventory_does_not_open_document_content(self) -> None:
         original_open = builtins.open

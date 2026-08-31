@@ -21,7 +21,7 @@ from passbolt_integration_matrix import (
 )
 
 
-APP_VERSION = "0.28.4-beta.1"
+APP_VERSION = "0.28.4-beta.2"
 MAX_READY_BYTES = 128 * 1024
 LOCAL_URL_PATTERN = re.compile(r"^https://localhost:[1-9][0-9]{0,4}$")
 
