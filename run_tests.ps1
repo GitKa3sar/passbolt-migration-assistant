@@ -161,16 +161,17 @@ function Read-ReleaseContract {
         "offline_stateful_scenarios",
         "offline_recovery_fault_paths",
         "wpf_controls",
+        "import_readiness_diagnostic_cases",
         "ui_previews_required",
         "real_v4_matrix_scenarios"
     ) "Il contratto del quality gate"
     if (
         [int]$Contract.schema_version -ne 1 -or
-        [string]$Contract.version -notmatch '^\d+\.\d+\.\d+$' -or
-        [string]$Contract.changelog_state -ne "unreleased_candidate" -or
+        [string]$Contract.version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$' -or
+        [string]$Contract.changelog_state -ne "technical_beta" -or
         [string]$Contract.compatibility_profile -ne "passbolt-v4-only"
     ) {
-        throw "Il manifesto del candidato non descrive una release v4-only non rilasciata valida."
+        throw "Il manifesto del candidato non descrive una beta tecnica v4-only valida."
     }
     foreach ($Property in $Contract.quality_gate.PSObject.Properties) {
         if ([int]$Property.Value -le 0) {
@@ -187,21 +188,24 @@ function Test-ReleaseIdentityBindings {
     $IdentityBindings = @(
         [pscustomobject]@{
             Path = "PassboltApp.ps1"
-            Pattern = '(?:\bv|\bapp_version\s*=\s*"|\bversion\s*(?:=|-ne)\s*")(?<version>\d+\.\d+\.\d+)'
+            Pattern = '(?:\bv|\bapp_version\s*=\s*"|\bversion\s*(?:=|-ne)\s*")(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)'
         },
-        [pscustomobject]@{ Path = "offline_lab_acceptance.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "offline_lab_server.mjs"; Pattern = "APP_VERSION\s*=\s*'(?<version>\d+\.\d+\.\d+)'" },
-        [pscustomobject]@{ Path = "offline_lab_setup.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "offline_lab_smoke.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "passbolt_api_probe.py"; Pattern = 'Passbolt-Migration-Assistant-Probe/(?<version>\d+\.\d+\.\d+)' },
-        [pscustomobject]@{ Path = "passbolt_app.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "passbolt_crypto.mjs"; Pattern = 'Passbolt-Migration-Assistant/(?<version>\d+\.\d+\.\d+)' },
-        [pscustomobject]@{ Path = "passbolt_import.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "passbolt_integration_matrix.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "passbolt_project.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "passbolt_receipt.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "passbolt_review.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+)"' },
-        [pscustomobject]@{ Path = "test_passbolt_project.py"; Pattern = '"app_version"\s*:\s*"(?<version>\d+\.\d+\.\d+)"' }
+        [pscustomobject]@{ Path = "offline_lab_acceptance.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "offline_lab_server.mjs"; Pattern = "APP_VERSION\s*=\s*'(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)'" },
+        [pscustomobject]@{ Path = "offline_lab_setup.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "offline_lab_smoke.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "passbolt_api_probe.py"; Pattern = 'Passbolt-Migration-Assistant-Probe/(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)' },
+        [pscustomobject]@{ Path = "passbolt_app.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "passbolt_crypto.mjs"; Pattern = 'Passbolt-Migration-Assistant/(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)' },
+        [pscustomobject]@{ Path = "passbolt_import.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "passbolt_integration_matrix.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "passbolt_project.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "passbolt_receipt.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "passbolt_review.py"; Pattern = 'APP_VERSION\s*=\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "test_passbolt_project.py"; Pattern = '"app_version"\s*:\s*"(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)"' },
+        [pscustomobject]@{ Path = "README.md"; Pattern = 'Version (?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?) is a technical beta' },
+        [pscustomobject]@{ Path = "LEGGIMI-Passbolt-API.md"; Pattern = 'contratti attivi di `(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?) - Technical beta`' },
+        [pscustomobject]@{ Path = "SECURITY.md"; Pattern = '\| (?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?) \(Technical beta\) \| Corrente, non production-ready \|' }
     )
     foreach ($Binding in $IdentityBindings) {
         $Text = Get-Content -LiteralPath (Join-Path $ProjectRoot $Binding.Path) -Raw
@@ -214,7 +218,7 @@ function Test-ReleaseIdentityBindings {
         }
     }
     $WpfText = Get-Content -LiteralPath (Join-Path $ProjectRoot "PassboltApp.ps1") -Raw
-    if (-not $WpfText.Contains("v$([regex]::Escape($Version))")) {
+    if (-not $WpfText.Contains("v$Version")) {
         throw "Il controllo del titolo WPF non coincide con il manifesto del candidato."
     }
 
@@ -225,10 +229,10 @@ function Test-ReleaseIdentityBindings {
     $ChangelogText = Get-Content -LiteralPath (Join-Path $ProjectRoot "CHANGELOG.md") -Raw
     $CandidateHeading = [regex]::Match(
         $ChangelogText,
-        '(?m)^##\s+(\d+\.\d+\.\d+)\s+-\s+Unreleased candidate\s*$'
+        '(?m)^##\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)\s+-\s+Technical beta\s*$'
     )
     if (-not $CandidateHeading.Success -or $CandidateHeading.Groups[1].Value -ne $Version) {
-        throw "Il primo candidato non rilasciato del changelog non coincide con il manifesto."
+        throw "La prima beta tecnica del changelog non coincide con il manifesto."
     }
 }
 
@@ -462,6 +466,8 @@ try {
     if (
         [string]$WpfSummary.version -ne [string]$ReleaseContract.version -or
         [int]$WpfSummary.controls -ne [int]$ReleaseContract.quality_gate.wpf_controls -or
+        [int]$WpfSummary.import_readiness_diagnostic_cases -ne [int]$ReleaseContract.quality_gate.import_readiness_diagnostic_cases -or
+        [string]$WpfSummary.import_readiness_diagnostics -ne "OK" -or
         [string]$WpfSummary.single_operational_state -ne "OK" -or
         [string]$WpfSummary.operation_reentrancy_guard -ne "OK" -or
         [string]$WpfSummary.centralized_interaction_lock -ne "OK" -or
@@ -554,6 +560,7 @@ try {
         offline_stateful_scenarios = [int]$OfflineAcceptanceEnvelope.result.scenario_count
         offline_recovery_fault_paths = [int]$OfflineAcceptanceEnvelope.result.recovery_fault_path_count
         wpf_controls = [int]$WpfSummary.controls
+        import_readiness_diagnostic_cases = [int]$WpfSummary.import_readiness_diagnostic_cases
         ui_preview_count = $UiPreviewCount
         real_instance_access = $(if ($Ci) { "blocked_in_ci" } else { "operator_controlled" })
         offline_gate = $(if ($SkipUiPreviews) { "partial_ui_previews_skipped" } else { "passed" })

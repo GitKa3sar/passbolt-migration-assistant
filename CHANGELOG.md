@@ -4,9 +4,58 @@ Le modifiche rilevanti del progetto sono documentate in questo file. Il formato 
 
 Le sezioni precedenti al candidato corrente sono cronologia: eventuali riferimenti v5 descrivono esperimenti e contratti storici e non costituiscono supporto, gate o flusso operativo della release `passbolt-v4-only`.
 
+## 0.28.4-beta.2 - Technical beta
+
+`0.28.4-beta.2` è una beta tecnica esclusivamente Passbolt v4 e non è production-ready. Mantiene `technical_beta`, il profilo `passbolt-v4-only` e `release_authorized=false`; non esistono tag o release per questa versione.
+
+### Fixed
+
+- rimosso il supporto ODT dichiarato per errore da README e guida tecnica, senza introdurre parser o dipendenze;
+- documentato il contratto effettivo delle 16 estensioni inventariate, distinguendo `.xls` come formato rilevato soltanto per richiedere la conversione prima della revisione;
+- aggiunta una regressione che confronta il contratto formati di README e guida con le liste implementate da inventario e revisione;
+- corretto il binding del titolo WPF nel quality gate, usando il confronto letterale previsto per la versione invece di cercare caratteri di escape da espressione regolare.
+
+### Changed
+
+- riallineate a `0.28.4-beta.2` identità UI, user agent, progetti, ricevute, laboratorio, matrice, test e manifesto del candidato;
+- aggiunti file di direzione, roadmap e checklist di release sintetici, con regole operative locali in `AGENTS.md` e rinvii ai contratti esistenti invece di duplicarli.
+
+### Security
+
+- nessun parser, protocollo Python/Node, journal, workflow ACL o comportamento di scrittura è stato modificato;
+- la matrice reale v4 resta separata dal gate offline e non deve essere contattata senza le autorizzazioni esplicite previste.
+
+### Known limitations
+
+- la CI GitHub sul commit del candidato non è ancora attestata;
+- la matrice reale `16/16` di `0.28.4-beta.2` resta pendente e non autorizza una release stabile.
+
+## 0.28.4-beta.1 - Technical beta
+
+`0.28.4-beta.1` è una beta tecnica esclusivamente Passbolt v4 e non è production-ready. L'identità beta è applicata in modo coerente a UI, user agent, progetti, ricevute, laboratorio, matrice e riepilogo del quality gate; non esistono tag o release per questa versione.
+
+### Fixed
+
+- corretta la diagnosi WPF dei piani non importabili: conflitti e duplicati di destinazione non vengono più attribuiti genericamente alle capability del server;
+- mantenuto il messaggio relativo alle capability quando il preflight segnala realmente l'assenza dei requisiti Passbolt v4;
+- aggiunta una proiezione diagnostica fail-closed che usa cause locali classificate e codici di attività enumerati, senza interpolare nel messaggio o nel log il motivo arbitrario ricevuto dal risultato;
+- aggiunte cinque regressioni sintetiche WPF per conflitto/duplicato, capability mancante, piano importabile, tipo malformato e risultato internamente incoerente.
+
+### Security
+
+- la correzione non modifica il piano Node/OpenPGP, i protocolli Python/Node, journal, receipt, operation lock, non-reentrancy, sessioni o semantica delle scritture;
+- `can_import` abilita la conferma soltanto quando è un booleano `true`; valori mancanti o di tipo inatteso restano bloccati;
+- il profilo resta rigidamente `passbolt-v4-only` e i server o formati v5 continuano a essere rifiutati fail-closed.
+
+### Known limitations
+
+- questa distribuzione è autorizzabile soltanto come beta tecnica non destinata alla produzione; il punto 4 del gate di release stabile non è superato;
+- la matrice reale del candidato precedente si è fermata a `7/16`: 7 scenari read-only superati, 0 falliti, 1 bloccato, 8 non eseguiti e 0 scritture remote; `summary --require-complete` non è passato;
+- la matrice reale `16/16` del commit di `0.28.4-beta.1` non è ancora attestata. Il rischio residuo è accettato esclusivamente per la beta tecnica e non autorizza una release stabile.
+
 ## 0.28.3 - Unreleased candidate
 
-`0.28.3` e l'unica identita applicativa del candidato corrente. Non esiste un tag locale per questa versione e questa sezione resta non rilasciata finche il quality gate offline e la nuova matrice reale Passbolt v4 completa non risultano entrambi superati sul medesimo candidato.
+`0.28.3` era l'identita applicativa del candidato precedente. Non esiste un tag locale per questa versione e la sezione resta storica e non rilasciata.
 
 ### Fixed
 

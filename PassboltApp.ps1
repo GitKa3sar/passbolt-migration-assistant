@@ -69,7 +69,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.28.3"
+        Title="Passbolt Migration Assistant - v0.28.4-beta.2"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -2208,7 +2208,7 @@ function Save-LocalPreparationProject([switch]$ReviewContext) {
         project = [pscustomobject][ordered]@{
             schema_version = 1
             kind = "passbolt-migration-preparation"
-            app_version = "0.28.3"
+            app_version = "0.28.4-beta.2"
             saved_at_utc = $SavedAtUtc
             server_origin = [string]$PlannedServerOrigin
             source_root = [string]$script:InventoryFolder
@@ -5735,6 +5735,177 @@ function Update-ImportSelectionState {
     }
 }
 
+function Test-ImportPlanCanImport([object]$Result) {
+    if ($null -eq $Result) { return $false }
+    $CanImportProperty = $Result.PSObject.Properties["can_import"]
+    if (-not (
+        $null -ne $CanImportProperty -and
+        $CanImportProperty.Value -is [bool] -and
+        [bool]$CanImportProperty.Value
+    )) { return $false }
+
+    $PreflightStatusProperty = $Result.PSObject.Properties["preflight_status"]
+    if (
+        $null -eq $PreflightStatusProperty -or
+        -not ($PreflightStatusProperty.Value -is [string]) -or
+        [string]$PreflightStatusProperty.Value -notin @("passed", "warning")
+    ) { return $false }
+
+    $PreflightChecksProperty = $Result.PSObject.Properties["preflight_checks"]
+    if ($null -eq $PreflightChecksProperty -or -not ($PreflightChecksProperty.Value -is [System.Array])) {
+        return $false
+    }
+    foreach ($Check in @($PreflightChecksProperty.Value)) {
+        if ($null -eq $Check) { return $false }
+        $StatusProperty = $Check.PSObject.Properties["status"]
+        $IdProperty = $Check.PSObject.Properties["id"]
+        if (
+            $null -eq $StatusProperty -or
+            $null -eq $IdProperty -or
+            -not ($StatusProperty.Value -is [string]) -or
+            -not ($IdProperty.Value -is [string]) -or
+            [string]::IsNullOrWhiteSpace([string]$IdProperty.Value) -or
+            [string]$StatusProperty.Value -notin @("passed", "warning", "not_required")
+        ) { return $false }
+    }
+
+    $CreateCountProperty = $Result.PSObject.Properties["create_count"]
+    if ($null -eq $CreateCountProperty -or -not ($CreateCountProperty.Value -is [int] -or $CreateCountProperty.Value -is [long])) {
+        return $false
+    }
+    $CreateCount = [long]$CreateCountProperty.Value
+    $CandidatesProperty = $Result.PSObject.Properties["candidates"]
+    if (
+        $CreateCount -lt 0 -or
+        $null -eq $CandidatesProperty -or
+        -not ($CandidatesProperty.Value -is [System.Array]) -or
+        $CreateCount -gt @($CandidatesProperty.Value).Count
+    ) { return $false }
+
+    $PlanDigestProperty = $Result.PSObject.Properties["plan_digest"]
+    if (
+        $null -eq $PlanDigestProperty -or
+        -not ($PlanDigestProperty.Value -is [string]) -or
+        [string]$PlanDigestProperty.Value -notmatch '^[0-9a-f]{64}$'
+    ) { return $false }
+
+    $UnavailableReasonProperty = $Result.PSObject.Properties["unavailable_reason"]
+    return (
+        $null -ne $UnavailableReasonProperty -and
+        ($null -eq $UnavailableReasonProperty.Value -or [string]::IsNullOrWhiteSpace([string]$UnavailableReasonProperty.Value))
+    )
+}
+
+function Get-ImportReadinessDiagnostic([object]$Result) {
+    $MalformedCause = "Il risultato del preflight e' incompleto o malformato; la scrittura resta bloccata."
+    if ($null -eq $Result) {
+        return [pscustomobject]@{
+            CanImport = $false
+            Cause = $MalformedCause
+            Hint = "Scrittura bloccata: $MalformedCause"
+            ActivityCode = "preflight_result_invalid"
+        }
+    }
+
+    $CanImportProperty = $Result.PSObject.Properties["can_import"]
+    if ($null -eq $CanImportProperty -or -not ($CanImportProperty.Value -is [bool])) {
+        return [pscustomobject]@{
+            CanImport = $false
+            Cause = $MalformedCause
+            Hint = "Scrittura bloccata: $MalformedCause"
+            ActivityCode = "preflight_result_invalid"
+        }
+    }
+    if ([bool]$CanImportProperty.Value -and (Test-ImportPlanCanImport $Result)) {
+        return [pscustomobject]@{
+            CanImport = $true
+            Cause = ""
+            Hint = ""
+            ActivityCode = "importable"
+        }
+    }
+    if ([bool]$CanImportProperty.Value) {
+        return [pscustomobject]@{
+            CanImport = $false
+            Cause = $MalformedCause
+            Hint = "Scrittura bloccata: $MalformedCause"
+            ActivityCode = "preflight_result_invalid"
+        }
+    }
+
+    $BlockedCheckIds = @()
+    $PreflightChecksProperty = $Result.PSObject.Properties["preflight_checks"]
+    if ($null -ne $PreflightChecksProperty -and $PreflightChecksProperty.Value -is [System.Collections.IEnumerable]) {
+        foreach ($Check in @($PreflightChecksProperty.Value)) {
+            if ($null -eq $Check) { continue }
+            $StatusProperty = $Check.PSObject.Properties["status"]
+            $IdProperty = $Check.PSObject.Properties["id"]
+            if (
+                $null -ne $StatusProperty -and
+                $null -ne $IdProperty -and
+                $StatusProperty.Value -is [string] -and
+                $IdProperty.Value -is [string] -and
+                [string]$StatusProperty.Value -eq "blocked"
+            ) {
+                $BlockedCheckIds += [string]$IdProperty.Value
+            }
+        }
+    }
+
+    $BlockedCount = 0L
+    $BlockedCountProperty = $Result.PSObject.Properties["blocked_count"]
+    if ($null -ne $BlockedCountProperty -and ($BlockedCountProperty.Value -is [int] -or $BlockedCountProperty.Value -is [long])) {
+        $CandidateBlockedCount = [long]$BlockedCountProperty.Value
+        if ($CandidateBlockedCount -ge 0 -and $CandidateBlockedCount -le 1000000) {
+            $BlockedCount = $CandidateBlockedCount
+        }
+    }
+
+    $UnavailableReason = ""
+    $UnavailableReasonProperty = $Result.PSObject.Properties["unavailable_reason"]
+    if ($null -ne $UnavailableReasonProperty -and $UnavailableReasonProperty.Value -is [string]) {
+        $UnavailableReason = [string]$UnavailableReasonProperty.Value
+    }
+    $KnownCapabilityReason = $UnavailableReason -match '^Il server non consente (?:un tipo password v4 compatibile|cartelle v4)\.$'
+
+    if ($BlockedCheckIds -contains "resource_format" -or $BlockedCheckIds -contains "folder_format" -or $KnownCapabilityReason) {
+        $Cause = "Il server non dichiara le capability Passbolt v4 richieste dal piano."
+        $ActivityCode = "server_capability_missing"
+    } elseif ($BlockedCount -gt 0 -or $BlockedCheckIds -contains "conflicts") {
+        if ($BlockedCount -gt 0) {
+            $Cause = "$BlockedCount credenziali esistono in una destinazione diversa o presentano conflitti o duplicati bloccanti. Il piano resta bloccato per evitare modifiche implicite."
+        } else {
+            $Cause = "Il preflight ha rilevato conflitti o duplicati bloccanti. Consultare il relativo controllo prima di riprovare."
+        }
+        $ActivityCode = "destination_conflict"
+    } elseif ($BlockedCheckIds -contains "resource_catalog") {
+        $Cause = "Il catalogo delle risorse non puo' essere confrontato in sicurezza per escludere duplicati o conflitti."
+        $ActivityCode = "resource_catalog_unavailable"
+    } elseif ($BlockedCheckIds -contains "folder_catalog") {
+        $Cause = "Il catalogo delle cartelle non puo' essere verificato in sicurezza."
+        $ActivityCode = "folder_catalog_unavailable"
+    } elseif ($BlockedCheckIds -contains "destination_access") {
+        $Cause = "La destinazione selezionata o la relativa ACL presenta un conflitto bloccante. Consultare il controllo di accesso alla destinazione."
+        $ActivityCode = "destination_access_blocked"
+    } elseif ($BlockedCheckIds -contains "permission_directory") {
+        $Cause = "La directory autenticata necessaria per verificare i permessi non e' disponibile."
+        $ActivityCode = "permission_directory_unavailable"
+    } elseif ($BlockedCheckIds -contains "csrf_token") {
+        $Cause = "Il token CSRF richiesto per una scrittura sicura non e' disponibile."
+        $ActivityCode = "csrf_token_unavailable"
+    } else {
+        $Cause = "Il preflight ha restituito un requisito bloccante non classificabile; la scrittura resta disabilitata."
+        $ActivityCode = "preflight_block_unclassified"
+    }
+
+    return [pscustomobject]@{
+        CanImport = $false
+        Cause = $Cause
+        Hint = "Scrittura bloccata: $Cause"
+        ActivityCode = $ActivityCode
+    }
+}
+
 function Update-ExecuteImportState {
     $SessionReady = (
         (Test-ImportSessionActive) -and
@@ -5745,7 +5916,7 @@ function Update-ExecuteImportState {
         $null -ne $script:ImportPlan -and
         $script:ConnectionVerified -and
         $SessionReady -and
-        [bool]$script:ImportPlan.can_import -and
+        (Test-ImportPlanCanImport $script:ImportPlan) -and
         [int]$script:ImportPlan.create_count -gt 0 -and
         $ImportConfirmation.Text.Trim() -eq "IMPORTA $([int]$script:ImportPlan.create_count)"
     )
@@ -5808,11 +5979,15 @@ function Open-ImportPreparation {
 
 function Set-ImportReadinessResult([object]$Result) {
     $script:ImportPlan = $Result
+    $ReadinessDiagnostic = Get-ImportReadinessDiagnostic $Result
     $script:ImportPlanKeyPath = $script:ImportSessionKeyPath
     $script:PreflightReceiptEvidence = New-PreflightReceiptEvidence $Result
     $script:MigrationReceiptEvidence = $null
     $ExportPreflightReceiptButton.IsEnabled = $true
     $ExportMigrationReceiptButton.IsEnabled = $false
+    $ImportConfirmation.Text = ""
+    $ImportConfirmation.IsEnabled = $false
+    $ExecuteImportButton.IsEnabled = $false
     Update-DestinationFolderOptions $Result.available_folders ([string]$Result.destination_folder_id)
 
     $PreflightRows = New-Object System.Collections.Generic.List[object]
@@ -5899,7 +6074,7 @@ function Set-ImportReadinessResult([object]$Result) {
     $PermissionIdentity = if ([string]$Result.permission_mode -eq "custom") { "ACL personalizzata ($([int]$Result.permission_template_entry_count) destinatari espliciti)" } else { "ACL ereditata" }
     $ImportIdentity.Text = "Utente verificato: $DisplayName <$($Result.user.username)> | chiave $($Result.user_key_fingerprint) | $($Result.authentication) | risorse $($Result.resource_format_selected) | $FolderIdentity | $PermissionIdentity | tipo $($Result.resource_type.slug)"
 
-    if ([bool]$Result.can_import -and [int]$Result.create_count -gt 0) {
+    if ([bool]$ReadinessDiagnostic.CanImport -and [int]$Result.create_count -gt 0) {
         $ExpectedPhrase = "IMPORTA $([int]$Result.create_count)"
         $SharedFolderSummary = if ([int]$Result.create_shared_folder_count -gt 0) {
             $PermissionSource = if ([string]$Result.permission_mode -eq "custom") { "personalizzati" } else { "ereditati" }
@@ -5915,14 +6090,14 @@ function Set-ImportReadinessResult([object]$Result) {
         $ConfirmationHint.Text = "Sessione sicura attiva. Digita: $ExpectedPhrase"
         $ImportConfirmation.IsEnabled = $true
         Add-Activity "Preflight superato e dry-run completato: $($Result.create_count) risorse e $($Result.create_folder_count) cartelle da creare, $($Result.reconcile_shared_folder_count) cartelle da riconciliare, incluse $($Result.create_shared_folder_count) nuove condivise; $($Result.duplicate_count) duplicati nella destinazione."
-    } elseif ([bool]$Result.can_import) {
+    } elseif ([bool]$ReadinessDiagnostic.CanImport) {
         $ImportPlanStatus.Text = "Dry-run completato: tutti i candidati selezionati risultano gia' presenti."
         $ConfirmationHint.Text = "Nessuna nuova risorsa da creare."
         Add-Activity "Dry-run completato: nessuna nuova risorsa; $($Result.duplicate_count) duplicati esatti."
     } else {
-        $ImportPlanStatus.Text = [string]$Result.unavailable_reason
-        $ConfirmationHint.Text = "Scrittura bloccata dalle capacita' dichiarate dal server."
-        Add-Activity "Dry-run completato; scrittura non disponibile per le capacita' dell'istanza."
+        $ImportPlanStatus.Text = [string]$ReadinessDiagnostic.Cause
+        $ConfirmationHint.Text = [string]$ReadinessDiagnostic.Hint
+        Add-Activity "Dry-run completato; scrittura bloccata ($([string]$ReadinessDiagnostic.ActivityCode))."
     }
 }
 
@@ -6021,7 +6196,7 @@ function Complete-ConfirmedImportFailure(
     Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
     Add-Activity "Importazione non completata: $FailureMessage"
     Update-ImportSessionState
-    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.3", "OK", "Error") | Out-Null
+    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.4-beta.2", "OK", "Error") | Out-Null
     Show-Phase04Workspace "recovery" -SkipRefresh
     Refresh-RecoveryBatches -Quiet
 }
@@ -7774,7 +7949,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.3"
+        version = "0.28.4-beta.2"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         import_tab = if ($RenderPreviewPage -eq "Import") { $RenderPreviewImportTab } else { $null }
@@ -7898,7 +8073,7 @@ if ($SelfTest) {
         }
     }
     if (
-        $Window.Title -notmatch "v0\.28\.3" -or
+        $Window.Title -notmatch "v0\.28\.4-beta\.2" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -8214,7 +8389,7 @@ for line in sys.stdin:
     $script:ImportCandidates = @()
     $LocalProjectBackendTest = Invoke-PythonJson $LocalProjectScript @("--self-test")
     if (
-        $LocalProjectBackendTest.version -ne "0.28.3" -or
+        $LocalProjectBackendTest.version -ne "0.28.4-beta.2" -or
         -not $LocalProjectBackendTest.dpapi_current_user_required -or
         $LocalProjectBackendTest.secret_fields_serialized -or
         $LocalProjectBackendTest.trusted_fingerprint_persisted -or
@@ -8563,12 +8738,73 @@ for line in sys.stdin:
         throw "L'editor dei candidati non espone i cinque campi previsti."
     }
     $ReviewEditorProbe.Window.Close()
+    $ConflictDiagnosticProbe = Get-ImportReadinessDiagnostic ([pscustomobject]@{
+        can_import = $false
+        blocked_count = 2
+        unavailable_reason = "2 credenziali esistono in una cartella diversa dalla destinazione prevista."
+        preflight_checks = @([pscustomobject]@{ id = "conflicts"; status = "blocked" })
+    })
+    $CapabilityDiagnosticProbe = Get-ImportReadinessDiagnostic ([pscustomobject]@{
+        can_import = $false
+        blocked_count = 0
+        unavailable_reason = "Il server non consente un tipo password v4 compatibile."
+        preflight_checks = @([pscustomobject]@{ id = "resource_format"; status = "blocked" })
+    })
+    $ImportablePlanProbe = [pscustomobject]@{
+        can_import = $true
+        preflight_status = "passed"
+        create_count = 1
+        blocked_count = 0
+        unavailable_reason = $null
+        plan_digest = ("a" * 64)
+        candidates = @([pscustomobject]@{ action = "create" })
+        preflight_checks = @([pscustomobject]@{ id = "conflicts"; status = "passed" })
+    }
+    $ImportableDiagnosticProbe = Get-ImportReadinessDiagnostic $ImportablePlanProbe
+    $UnsafeDiagnosticMarker = "REMOTE-VALUE-MUST-NOT-APPEAR"
+    $MalformedDiagnosticProbe = Get-ImportReadinessDiagnostic ([pscustomobject]@{
+        can_import = "true"
+        blocked_count = "2"
+        unavailable_reason = "$UnsafeDiagnosticMarker`r`npassword=synthetic"
+        preflight_checks = @([pscustomobject]@{ id = $UnsafeDiagnosticMarker; status = "blocked" })
+    })
+    $IncoherentDiagnosticProbe = Get-ImportReadinessDiagnostic ([pscustomobject]@{
+        can_import = $true
+        preflight_status = "blocked"
+        create_count = 1
+        blocked_count = 1
+        unavailable_reason = $null
+        plan_digest = ("b" * 64)
+        candidates = @([pscustomobject]@{ action = "blocked" })
+        preflight_checks = @([pscustomobject]@{ id = "conflicts"; status = "blocked" })
+    })
+    if (
+        [bool]$ConflictDiagnosticProbe.CanImport -or
+        [string]$ConflictDiagnosticProbe.ActivityCode -ne "destination_conflict" -or
+        [string]$ConflictDiagnosticProbe.Cause -notmatch "destinazione diversa" -or
+        [string]$ConflictDiagnosticProbe.Hint -match "capabilit" -or
+        [bool]$CapabilityDiagnosticProbe.CanImport -or
+        [string]$CapabilityDiagnosticProbe.ActivityCode -ne "server_capability_missing" -or
+        [string]$CapabilityDiagnosticProbe.Cause -notmatch "capability Passbolt v4" -or
+        -not [bool]$ImportableDiagnosticProbe.CanImport -or
+        -not (Test-ImportPlanCanImport $ImportablePlanProbe) -or
+        (Test-ImportPlanCanImport ([pscustomobject]@{ can_import = "true" })) -or
+        [bool]$MalformedDiagnosticProbe.CanImport -or
+        [string]$MalformedDiagnosticProbe.ActivityCode -ne "preflight_result_invalid" -or
+        "$($MalformedDiagnosticProbe.Cause) $($MalformedDiagnosticProbe.Hint) $($MalformedDiagnosticProbe.ActivityCode)" -match $UnsafeDiagnosticMarker -or
+        [bool]$IncoherentDiagnosticProbe.CanImport -or
+        [string]$IncoherentDiagnosticProbe.ActivityCode -ne "preflight_result_invalid"
+    ) {
+        throw "La diagnostica sintetica del preflight non distingue in modo fail-closed conflitti, capability e piani importabili."
+    }
+    $ImportReadinessDiagnosticCaseCount = 5
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.3"
+        version = "0.28.4-beta.2"
         ui = "WPF"
         phases = 4
         controls = 139
+        import_readiness_diagnostic_cases = $ImportReadinessDiagnosticCaseCount
         inventory_collection = "OK"
         review_backend = "OK"
         import_backend = "OK"
@@ -8601,6 +8837,7 @@ for line in sys.stdin:
         reconciliation_progress_protocol = "OK"
         batch_dashboard = "OK"
         authenticated_preflight = "OK"
+        import_readiness_diagnostics = "OK"
         post_import_verification = "OK"
         authenticated_recovery_protocol = "OK"
         guided_recovery_ui = "OK"

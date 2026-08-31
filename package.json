@@ -1,6 +1,6 @@
 {
   "name": "passbolt-migration-assistant",
-  "version": "0.28.3",
+  "version": "0.28.4-beta.2",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.19.0",

@@ -24,7 +24,7 @@ from passbolt_api_probe import ProbeError, normalize_base_url
 from passbolt_review import ReviewError, normalize_source_mapping_profile
 
 
-APP_VERSION = "0.28.3"
+APP_VERSION = "0.28.4-beta.2"
 PROJECT_SCHEMA_VERSION = 1
 PROJECT_KIND = "passbolt-migration-preparation"
 PROJECT_ENVELOPE_KIND = "passbolt-migration-project"
@@ -189,7 +189,7 @@ def normalize_project(value: object) -> dict[str, object]:
         raise ProjectError("Il tipo del progetto locale non è riconosciuto.")
 
     app_version = str(value.get("app_version", "")).strip()
-    if not re.fullmatch(r"\d+\.\d+\.\d+", app_version):
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?", app_version):
         raise ProjectError("La versione applicativa del progetto non è valida.")
     profile_value = value.get("source_mapping_profile")
     try:

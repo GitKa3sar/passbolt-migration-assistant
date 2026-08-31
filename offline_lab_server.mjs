@@ -14,7 +14,7 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.28.3';
+const APP_VERSION = '0.28.4-beta.2';
 const INPUT_LIMIT = 8 * 1024 * 1024;
 const PROFILES = new Set(['v4', 'v5']);
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
