@@ -14,9 +14,13 @@ import { createServer } from 'node:https';
 import { resolve } from 'node:path';
 import * as openpgp from 'openpgp';
 
-const APP_VERSION = '0.28.4-beta.2';
+const APP_VERSION = '0.29.0-beta.1';
 const INPUT_LIMIT = 8 * 1024 * 1024;
-const PROFILES = new Set(['v4', 'v5']);
+const PROFILE_FORMATS = Object.freeze({
+  v4: Object.freeze({ resource: 'v4', folder: 'v4' }),
+  v5: Object.freeze({ resource: 'v5', folder: 'v4' }),
+});
+const PROFILES = new Set(Object.keys(PROFILE_FORMATS));
 const SCENARIOS = new Set(['healthy', 'mfa-rejected', 'session-expired']);
 const FAULTS = new Set([
   'none',
@@ -153,7 +157,7 @@ function sanitizeFolder(entry) {
 }
 
 async function createLab(options) {
-  const profile = String(options.profile ?? 'v5').toLowerCase();
+  const profile = String(options.profile ?? 'v4').toLowerCase();
   const scenario = String(options.scenario ?? 'healthy').toLowerCase();
   const initialFault = String(options.fault ?? 'none').toLowerCase();
   if (!PROFILES.has(profile)) fail('Profilo offline non supportato.');
@@ -582,6 +586,16 @@ async function createLab(options) {
         send(response, 200, apiSuccess(state.folders.map(sanitizeFolder)));
         return;
       }
+      if (request.method === 'GET' && url.pathname.startsWith('/folders/') && url.pathname.endsWith('.json')) {
+        const id = url.pathname.split('/')[2]?.replace(/\.json$/, '');
+        const folder = state.folders.find((item) => item.id === id);
+        if (!folder) {
+          send(response, 404, apiError('Offline-lab folder not found.', 404));
+          return;
+        }
+        send(response, 200, apiSuccess(sanitizeFolder(folder)));
+        return;
+      }
       if (request.method === 'POST' && url.pathname === '/folders.json') {
         if (request.headers['x-csrf-token'] !== csrfToken) {
           send(response, 403, apiError('Invalid CSRF token.', 403));
@@ -596,6 +610,10 @@ async function createLab(options) {
           return;
         }
         const payload = await requestJson(request);
+        if (PROFILE_FORMATS[profile].folder === 'v4' && payload?.metadata) {
+          send(response, 422, apiError('Il profilo offline richiede cartelle v4 esplicite.', 422));
+          return;
+        }
         const id = randomUUID();
         const permission = ownerPermission('Folder', id, userId);
         state.folders.push({
@@ -636,6 +654,14 @@ async function createLab(options) {
           return;
         }
         const payload = await requestJson(request);
+        const hasV5Metadata = typeof payload?.metadata === 'string'
+          && payload.metadata.length > 0
+          && typeof payload?.metadata_key_id === 'string'
+          && ['shared_key', 'user_key'].includes(payload?.metadata_key_type);
+        if ((PROFILE_FORMATS[profile].resource === 'v5') !== hasV5Metadata) {
+          send(response, 422, apiError('Il payload risorsa non coincide con il profilo offline esplicito.', 422));
+          return;
+        }
         const id = randomUUID();
         const permission = ownerPermission('Resource', id, userId);
         state.resources.push({
@@ -810,14 +836,16 @@ async function main() {
     process.stdout.write(`${JSON.stringify({
       app: 'Passbolt Migration Assistant Offline Lab',
       version: APP_VERSION,
-      release_profiles: ['v4'],
-      dormant_internal_profiles: [...PROFILES].filter((profile) => profile !== 'v4'),
+      release_profiles: [...PROFILES],
+      profile_formats: PROFILE_FORMATS,
+      dormant_internal_profiles: [],
       scenarios: [...SCENARIOS],
       faults: [...FAULTS],
       stateful_acceptance_scenarios: 9,
       stateful_recovery_fault_paths: 12,
       effective_acl_simulation: true,
-      dormant_internal_v5_metadata_key_fixture: true,
+      v5_resource_preview_metadata_key_fixture: true,
+      v5_folder_capability_advertised_but_not_selected: true,
       loopback_only: true,
       request_bodies_logged: false,
       contains_real_credentials: false,

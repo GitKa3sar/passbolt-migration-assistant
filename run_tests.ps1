@@ -131,9 +131,191 @@ function Assert-ExactPropertyNames {
 
     $Actual = @($Value.PSObject.Properties.Name | Sort-Object)
     $ExpectedSorted = @($Expected | Sort-Object)
-    $Difference = @(Compare-Object -ReferenceObject $ExpectedSorted -DifferenceObject $Actual)
+    $Difference = @(Compare-Object -ReferenceObject $ExpectedSorted -DifferenceObject $Actual -CaseSensitive)
     if ($Difference.Count -ne 0) {
         throw "$Label non rispetta lo schema chiuso previsto."
+    }
+}
+
+function Assert-JsonObjectValue {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($null -eq $Value -or $Value.GetType() -ne [System.Management.Automation.PSCustomObject]) {
+        throw "$Label deve essere un oggetto JSON."
+    }
+}
+
+function Assert-JsonArrayValue {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($null -eq $Value -or $Value.GetType() -ne [object[]]) {
+        throw "$Label deve essere un array JSON."
+    }
+}
+
+function Assert-JsonStringValue {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][string]$Expected,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($null -eq $Value -or $Value.GetType() -ne [string] -or [string]$Value -cne $Expected) {
+        throw "$Label non contiene la stringa JSON prevista."
+    }
+}
+
+function Assert-JsonBooleanValue {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][bool]$Expected,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($null -eq $Value -or $Value.GetType() -ne [bool] -or [bool]$Value -ne $Expected) {
+        throw "$Label non contiene il booleano JSON previsto."
+    }
+}
+
+function Assert-JsonIntegerValue {
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][long]$Expected,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if (
+        $null -eq $Value -or
+        ($Value.GetType() -ne [int] -and $Value.GetType() -ne [long]) -or
+        [long]$Value -ne $Expected
+    ) {
+        throw "$Label non contiene l'intero JSON previsto."
+    }
+}
+
+function Assert-OfflineV5ReadOnlyEnvelope {
+    param(
+        [Parameter(Mandatory = $true)][object]$Envelope,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)][int]$ExpectedScenarioCount
+    )
+
+    Assert-JsonObjectValue $Envelope "L'envelope read-only v5"
+    Assert-ExactPropertyNames $Envelope @("ok", "result") "L'envelope read-only v5"
+    Assert-JsonBooleanValue $Envelope.ok $true "L'esito dell'envelope read-only v5"
+    Assert-JsonObjectValue $Envelope.result "Il risultato read-only v5"
+    Assert-ExactPropertyNames $Envelope.result @(
+        "app",
+        "version",
+        "profile",
+        "resource_format",
+        "folder_format",
+        "scenario",
+        "automated_scenarios_passed",
+        "manual_write_scenarios_executed",
+        "remote_resource_count",
+        "remote_folder_count",
+        "contains_real_credentials",
+        "status"
+    ) "Il risultato read-only v5"
+    Assert-JsonStringValue $Envelope.result.app "Passbolt Migration Assistant Offline Lab" "L'applicazione del risultato read-only v5"
+    Assert-JsonStringValue $Envelope.result.version $ExpectedVersion "La versione del risultato read-only v5"
+    Assert-JsonStringValue $Envelope.result.profile "v5" "Il profilo del risultato read-only v5"
+    Assert-JsonStringValue $Envelope.result.resource_format "v5" "Il formato risorsa del risultato read-only v5"
+    Assert-JsonStringValue $Envelope.result.folder_format "v4" "Il formato cartella del risultato read-only v5"
+    Assert-JsonStringValue $Envelope.result.scenario "healthy" "Lo scenario del risultato read-only v5"
+    Assert-JsonIntegerValue $Envelope.result.automated_scenarios_passed $ExpectedScenarioCount "Il conteggio degli scenari read-only v5"
+    Assert-JsonIntegerValue $Envelope.result.manual_write_scenarios_executed 0 "Il conteggio delle scritture manuali read-only v5"
+    Assert-JsonIntegerValue $Envelope.result.remote_resource_count 0 "Il conteggio delle risorse remote read-only v5"
+    Assert-JsonIntegerValue $Envelope.result.remote_folder_count 0 "Il conteggio delle cartelle remote read-only v5"
+    Assert-JsonBooleanValue $Envelope.result.contains_real_credentials $false "L'indicatore credenziali reali read-only v5"
+    Assert-JsonStringValue $Envelope.result.status "OK" "Lo stato del risultato read-only v5"
+}
+
+function Assert-OfflineV5StatefulEnvelope {
+    param(
+        [Parameter(Mandatory = $true)][object]$Envelope,
+        [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+        [Parameter(Mandatory = $true)][int]$ExpectedScenarioCount,
+        [Parameter(Mandatory = $true)][int]$ExpectedRecoveryFaultPathCount
+    )
+
+    $ScenarioContracts = @(
+        [pscustomobject]@{ Name = "import_root_resource"; Metrics = [ordered]@{ created = 1; verified = 1 } },
+        [pscustomobject]@{ Name = "import_new_client_folder"; Metrics = [ordered]@{ created_resources = 1; created_folders = 1 } },
+        [pscustomobject]@{ Name = "import_existing_destination"; Metrics = [ordered]@{ created = 1; destination_reused = 1 } },
+        [pscustomobject]@{ Name = "duplicate_detection"; Metrics = [ordered]@{ duplicates = 1; remote_writes = 0 } },
+        [pscustomobject]@{ Name = "custom_shared_permissions"; Metrics = [ordered]@{ blocked_shared_creations = 1; personal_fallback_created = 1; remote_writes_on_rejected_plan = 0 } },
+        [pscustomobject]@{ Name = "additive_acl_update"; Metrics = [ordered]@{ blocked_changes = 1; remote_writes = 0 } },
+        [pscustomobject]@{ Name = "restrictive_acl_update"; Metrics = [ordered]@{ blocked_changes = 1; remote_writes = 0 } },
+        [pscustomobject]@{ Name = "interrupted_import_recovery"; Metrics = [ordered]@{ failed_writes = 8; retried_writes = 4; remote_success_without_retry = 4; followup_resource_writes = 4 } },
+        [pscustomobject]@{ Name = "interrupted_acl_recovery"; Metrics = [ordered]@{ failed_writes = 4; retried_writes = 2; remote_success_without_retry = 2 } }
+    )
+
+    Assert-JsonObjectValue $Envelope "L'envelope stateful v5"
+    Assert-ExactPropertyNames $Envelope @("ok", "result") "L'envelope stateful v5"
+    Assert-JsonBooleanValue $Envelope.ok $true "L'esito dell'envelope stateful v5"
+    Assert-JsonObjectValue $Envelope.result "Il risultato stateful v5"
+    Assert-ExactPropertyNames $Envelope.result @(
+        "app",
+        "version",
+        "profile",
+        "resource_format",
+        "folder_format",
+        "synthetic_stateful",
+        "real_instance_attestation",
+        "scenario_count",
+        "passed_count",
+        "recovery_fault_path_count",
+        "scenarios",
+        "remote_resource_count",
+        "remote_folder_count",
+        "contains_real_credentials",
+        "status"
+    ) "Il risultato stateful v5"
+    Assert-JsonStringValue $Envelope.result.app "Passbolt Migration Assistant Offline Acceptance" "L'applicazione del risultato stateful v5"
+    Assert-JsonStringValue $Envelope.result.version $ExpectedVersion "La versione del risultato stateful v5"
+    Assert-JsonStringValue $Envelope.result.profile "v5" "Il profilo del risultato stateful v5"
+    Assert-JsonStringValue $Envelope.result.resource_format "v5" "Il formato risorsa del risultato stateful v5"
+    Assert-JsonStringValue $Envelope.result.folder_format "v4" "Il formato cartella del risultato stateful v5"
+    Assert-JsonBooleanValue $Envelope.result.synthetic_stateful $true "L'indicatore sintetico stateful v5"
+    Assert-JsonBooleanValue $Envelope.result.real_instance_attestation $false "L'attestazione reale stateful v5"
+    Assert-JsonIntegerValue $Envelope.result.scenario_count $ExpectedScenarioCount "Il conteggio degli scenari stateful v5"
+    Assert-JsonIntegerValue $Envelope.result.passed_count $ExpectedScenarioCount "Il conteggio degli scenari stateful v5 superati"
+    Assert-JsonIntegerValue $Envelope.result.recovery_fault_path_count $ExpectedRecoveryFaultPathCount "Il conteggio dei fault di recupero stateful v5"
+    Assert-JsonIntegerValue $Envelope.result.remote_resource_count 12 "Il conteggio delle risorse remote stateful v5"
+    Assert-JsonIntegerValue $Envelope.result.remote_folder_count 5 "Il conteggio delle cartelle remote stateful v5"
+    Assert-JsonBooleanValue $Envelope.result.contains_real_credentials $false "L'indicatore credenziali reali stateful v5"
+    Assert-JsonStringValue $Envelope.result.status "OK" "Lo stato del risultato stateful v5"
+    Assert-JsonArrayValue $Envelope.result.scenarios "Gli scenari stateful v5"
+    if ($Envelope.result.scenarios.Count -ne $ScenarioContracts.Count -or $Envelope.result.scenarios.Count -ne $ExpectedScenarioCount) {
+        throw "Gli scenari stateful v5 non hanno la cardinalita prevista."
+    }
+
+    $SeenScenarioNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    for ($Index = 0; $Index -lt $ScenarioContracts.Count; $Index++) {
+        $Scenario = $Envelope.result.scenarios[$Index]
+        $Contract = $ScenarioContracts[$Index]
+        $ScenarioLabel = "Lo scenario stateful v5 '$($Contract.Name)'"
+        Assert-JsonObjectValue $Scenario $ScenarioLabel
+        Assert-ExactPropertyNames $Scenario @("name", "status", "metrics") $ScenarioLabel
+        Assert-JsonStringValue $Scenario.name $Contract.Name "Il nome dello scenario stateful v5 in posizione $Index"
+        if (-not $SeenScenarioNames.Add([string]$Scenario.name)) {
+            throw "Gli scenari stateful v5 contengono un nome duplicato."
+        }
+        Assert-JsonStringValue $Scenario.status "passed" "Lo stato dello scenario stateful v5 '$($Contract.Name)'"
+        Assert-JsonObjectValue $Scenario.metrics "Le metriche dello scenario stateful v5 '$($Contract.Name)'"
+        Assert-ExactPropertyNames $Scenario.metrics @($Contract.Metrics.Keys) "Le metriche dello scenario stateful v5 '$($Contract.Name)'"
+        foreach ($MetricName in $Contract.Metrics.Keys) {
+            $MetricValue = $Scenario.metrics.PSObject.Properties[[string]$MetricName].Value
+            Assert-JsonIntegerValue $MetricValue ([long]$Contract.Metrics[$MetricName]) "La metrica '$MetricName' dello scenario stateful v5 '$($Contract.Name)'"
+        }
     }
 }
 
@@ -157,21 +339,25 @@ function Read-ReleaseContract {
     ) "Il manifesto del candidato"
     Assert-ExactPropertyNames $Contract.quality_gate @(
         "python_tests",
-        "offline_read_only_scenarios",
-        "offline_stateful_scenarios",
-        "offline_recovery_fault_paths",
+        "offline_read_only_scenarios_v4",
+        "offline_read_only_scenarios_v5_resource_preview",
+        "offline_stateful_scenarios_v4",
+        "offline_stateful_scenarios_v5_resource_preview",
+        "offline_recovery_fault_paths_v4",
+        "offline_recovery_fault_paths_v5_resource_preview",
         "wpf_controls",
         "import_readiness_diagnostic_cases",
         "ui_previews_required",
-        "real_v4_matrix_scenarios"
+        "real_v4_matrix_scenarios",
+        "real_v5_resource_matrix_scenarios"
     ) "Il contratto del quality gate"
     if (
-        [int]$Contract.schema_version -ne 1 -or
+        [int]$Contract.schema_version -ne 2 -or
         [string]$Contract.version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$' -or
         [string]$Contract.changelog_state -ne "technical_beta" -or
-        [string]$Contract.compatibility_profile -ne "passbolt-v4-only"
+        [string]$Contract.compatibility_profile -ne "passbolt-v4-v5-resource-preview"
     ) {
-        throw "Il manifesto del candidato non descrive una beta tecnica v4-only valida."
+        throw "Il manifesto del candidato non descrive una beta tecnica v4/v5-resource-preview valida."
     }
     foreach ($Property in $Contract.quality_gate.PSObject.Properties) {
         if ([int]$Property.Value -le 0) {
@@ -420,7 +606,7 @@ try {
     }
     Invoke-Checked "Suite Python" $PythonExecutable ($PythonPrefix + @("-m", "unittest") + $UnitTestFiles)
     Invoke-Checked "Suite Node/OpenPGP" $NodeExecutable @("test_passbolt_crypto.mjs")
-    $OfflineLabEnvelope = Invoke-CheckedJson "Laboratorio offline Passbolt v4" "powershell.exe" @(
+    $OfflineLabV4Envelope = Invoke-CheckedJson "Laboratorio offline Passbolt v4" "powershell.exe" @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
@@ -429,16 +615,22 @@ try {
         "-SelfTest"
     )
     if (
-        $OfflineLabEnvelope.ok -ne $true -or
-        [string]$OfflineLabEnvelope.result.version -ne [string]$ReleaseContract.version -or
-        [string]$OfflineLabEnvelope.result.profile -ne "v4" -or
-        [int]$OfflineLabEnvelope.result.automated_scenarios_passed -ne [int]$ReleaseContract.quality_gate.offline_read_only_scenarios -or
-        [int]$OfflineLabEnvelope.result.manual_write_scenarios_executed -ne 0 -or
-        $OfflineLabEnvelope.result.contains_real_credentials -ne $false
+        $OfflineLabV4Envelope.ok -ne $true -or
+        [string]$OfflineLabV4Envelope.result.version -ne [string]$ReleaseContract.version -or
+        [string]$OfflineLabV4Envelope.result.profile -ne "v4" -or
+        [string]$OfflineLabV4Envelope.result.resource_format -ne "v4" -or
+        [string]$OfflineLabV4Envelope.result.folder_format -ne "v4" -or
+        [string]$OfflineLabV4Envelope.result.scenario -ne "healthy" -or
+        [int]$OfflineLabV4Envelope.result.automated_scenarios_passed -ne [int]$ReleaseContract.quality_gate.offline_read_only_scenarios_v4 -or
+        [int]$OfflineLabV4Envelope.result.manual_write_scenarios_executed -ne 0 -or
+        [int]$OfflineLabV4Envelope.result.remote_resource_count -ne 0 -or
+        [int]$OfflineLabV4Envelope.result.remote_folder_count -ne 0 -or
+        [string]$OfflineLabV4Envelope.result.status -ne "OK" -or
+        $OfflineLabV4Envelope.result.contains_real_credentials -ne $false
     ) {
         throw "Il laboratorio read-only non coincide con il contratto del candidato."
     }
-    $OfflineAcceptanceEnvelope = Invoke-CheckedJson "Accettazione stateful offline Passbolt v4" "powershell.exe" @(
+    $OfflineAcceptanceV4Envelope = Invoke-CheckedJson "Accettazione stateful offline Passbolt v4" "powershell.exe" @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
@@ -446,16 +638,47 @@ try {
         "-AcceptanceTest"
     )
     if (
-        $OfflineAcceptanceEnvelope.ok -ne $true -or
-        [string]$OfflineAcceptanceEnvelope.result.version -ne [string]$ReleaseContract.version -or
-        [string]$OfflineAcceptanceEnvelope.result.profile -ne "v4" -or
-        [int]$OfflineAcceptanceEnvelope.result.scenario_count -ne [int]$ReleaseContract.quality_gate.offline_stateful_scenarios -or
-        [int]$OfflineAcceptanceEnvelope.result.passed_count -ne [int]$ReleaseContract.quality_gate.offline_stateful_scenarios -or
-        [int]$OfflineAcceptanceEnvelope.result.recovery_fault_path_count -ne [int]$ReleaseContract.quality_gate.offline_recovery_fault_paths -or
-        $OfflineAcceptanceEnvelope.result.contains_real_credentials -ne $false
+        $OfflineAcceptanceV4Envelope.ok -ne $true -or
+        [string]$OfflineAcceptanceV4Envelope.result.version -ne [string]$ReleaseContract.version -or
+        [string]$OfflineAcceptanceV4Envelope.result.profile -ne "v4" -or
+        [string]$OfflineAcceptanceV4Envelope.result.resource_format -ne "v4" -or
+        [string]$OfflineAcceptanceV4Envelope.result.folder_format -ne "v4" -or
+        $OfflineAcceptanceV4Envelope.result.synthetic_stateful -ne $true -or
+        $OfflineAcceptanceV4Envelope.result.real_instance_attestation -ne $false -or
+        [int]$OfflineAcceptanceV4Envelope.result.scenario_count -ne [int]$ReleaseContract.quality_gate.offline_stateful_scenarios_v4 -or
+        [int]$OfflineAcceptanceV4Envelope.result.passed_count -ne [int]$ReleaseContract.quality_gate.offline_stateful_scenarios_v4 -or
+        [int]$OfflineAcceptanceV4Envelope.result.recovery_fault_path_count -ne [int]$ReleaseContract.quality_gate.offline_recovery_fault_paths_v4 -or
+        [string]$OfflineAcceptanceV4Envelope.result.status -ne "OK" -or
+        $OfflineAcceptanceV4Envelope.result.contains_real_credentials -ne $false
     ) {
-        throw "L'accettazione stateful non coincide con il contratto del candidato."
+        throw "L'accettazione stateful v4 non coincide con il contratto del candidato."
     }
+    $OfflineLabV5Envelope = Invoke-CheckedJson "Laboratorio offline Passbolt v5 resource preview" "powershell.exe" @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
+        "-Profile", "v5",
+        "-Scenario", "healthy",
+        "-SelfTest"
+    )
+    Assert-OfflineV5ReadOnlyEnvelope `
+        -Envelope $OfflineLabV5Envelope `
+        -ExpectedVersion ([string]$ReleaseContract.version) `
+        -ExpectedScenarioCount ([int]$ReleaseContract.quality_gate.offline_read_only_scenarios_v5_resource_preview)
+    $OfflineAcceptanceV5Envelope = Invoke-CheckedJson "Accettazione stateful offline Passbolt v5 resource preview" "powershell.exe" @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $ProjectRoot "run_offline_lab.ps1"),
+        "-Profile", "v5",
+        "-AcceptanceTest"
+    )
+    Assert-OfflineV5StatefulEnvelope `
+        -Envelope $OfflineAcceptanceV5Envelope `
+        -ExpectedVersion ([string]$ReleaseContract.version) `
+        -ExpectedScenarioCount ([int]$ReleaseContract.quality_gate.offline_stateful_scenarios_v5_resource_preview) `
+        -ExpectedRecoveryFaultPathCount ([int]$ReleaseContract.quality_gate.offline_recovery_fault_paths_v5_resource_preview)
+    $V5ResourcePreviewGate = "passed"
+    $V5FolderAndAclMutationRejection = "OK"
     $WpfSummary = Invoke-CheckedJson "Self-test WPF" "powershell.exe" @(
         "-NoProfile",
         "-STA",
@@ -555,10 +778,17 @@ try {
         python_tests = $PythonTestCount
         node_suite = "OK"
         compatibility_profile = [string]$ReleaseContract.compatibility_profile
-        v5_format_and_server_rejection = "OK"
-        offline_read_only_scenarios = [int]$OfflineLabEnvelope.result.automated_scenarios_passed
-        offline_stateful_scenarios = [int]$OfflineAcceptanceEnvelope.result.scenario_count
-        offline_recovery_fault_paths = [int]$OfflineAcceptanceEnvelope.result.recovery_fault_path_count
+        v5_resource_preview_gate = $V5ResourcePreviewGate
+        v5_folder_and_acl_mutation_rejection = $V5FolderAndAclMutationRejection
+        offline_read_only_scenarios_v4 = [int]$OfflineLabV4Envelope.result.automated_scenarios_passed
+        offline_read_only_scenarios_v5_resource_preview = [int]$OfflineLabV5Envelope.result.automated_scenarios_passed
+        offline_read_only_scenarios = [int]$OfflineLabV4Envelope.result.automated_scenarios_passed + [int]$OfflineLabV5Envelope.result.automated_scenarios_passed
+        offline_stateful_scenarios_v4 = [int]$OfflineAcceptanceV4Envelope.result.scenario_count
+        offline_stateful_scenarios_v5_resource_preview = [int]$OfflineAcceptanceV5Envelope.result.scenario_count
+        offline_stateful_scenarios = [int]$OfflineAcceptanceV4Envelope.result.scenario_count + [int]$OfflineAcceptanceV5Envelope.result.scenario_count
+        offline_recovery_fault_paths_v4 = [int]$OfflineAcceptanceV4Envelope.result.recovery_fault_path_count
+        offline_recovery_fault_paths_v5_resource_preview = [int]$OfflineAcceptanceV5Envelope.result.recovery_fault_path_count
+        offline_recovery_fault_paths = [int]$OfflineAcceptanceV4Envelope.result.recovery_fault_path_count + [int]$OfflineAcceptanceV5Envelope.result.recovery_fault_path_count
         wpf_controls = [int]$WpfSummary.controls
         import_readiness_diagnostic_cases = [int]$WpfSummary.import_readiness_diagnostic_cases
         ui_preview_count = $UiPreviewCount
@@ -567,6 +797,8 @@ try {
         ui_previews_required = [int]$ReleaseContract.quality_gate.ui_previews_required
         real_v4_matrix_scenarios = [int]$ReleaseContract.quality_gate.real_v4_matrix_scenarios
         real_v4_matrix_gate = "not_attested_by_offline_gate"
+        real_v5_resource_matrix_scenarios = [int]$ReleaseContract.quality_gate.real_v5_resource_matrix_scenarios
+        real_v5_resource_matrix_gate = "not_attested_by_offline_gate"
         release_authorized = $false
         secrets_serialized = $false
         status = "OK"

@@ -714,6 +714,7 @@ def build_acl_recovery_state(batch_id: object, root: str | Path | None = None) -
     header = snapshot.events[0]["payload"]
     return {
         "batch_id": snapshot.batch_id,
+        "app_version": header["app_version"],
         "server_origin": header["server_origin"],
         "server_fingerprint": header["server_fingerprint"],
         "user_id_hash": header["user_id_hash"],

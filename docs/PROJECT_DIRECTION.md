@@ -2,11 +2,11 @@
 
 ## Missione
 
-Passbolt Migration Assistant aiuta un operatore Windows a inventariare, revisionare e migrare credenziali verso Passbolt v4 con controlli espliciti, dati sensibili confinati localmente e recupero fail-closed degli esiti incerti.
+Passbolt Migration Assistant aiuta un operatore Windows a inventariare, revisionare e migrare credenziali verso Passbolt con controlli espliciti, dati sensibili confinati localmente e recupero fail-closed degli esiti incerti.
 
 ## Fase corrente
 
-Il prodotto resta una **technical beta**, non production-ready, con profilo `passbolt-v4-only`. Il gate offline dimostra coerenza e comportamento su dati sintetici; non sostituisce la CI sul commit candidato né la matrice completa su un laboratorio Passbolt v4 reale. Lo stato macchina e i conteggi correnti sono in [`release-candidate.json`](../release-candidate.json).
+Il prodotto resta una **technical beta**, non production-ready, con profilo `passbolt-v4-v5-resource-preview`. Passbolt v4 rimane il percorso completo; le sole risorse v5 personali possono essere scelte esplicitamente, mentre `auto`, import v5 condivisi, cartelle v5, conversioni e ACL mutative v5 restano fail-closed. Il gate offline dimostra coerenza su dati sintetici e non sostituisce CI o matrici reali sul medesimo commit. Stato e conteggi sono in [`release-candidate.json`](../release-candidate.json).
 
 ## Principi decisionali
 
@@ -18,7 +18,8 @@ Il prodotto resta una **technical beta**, non production-ready, con profilo `pas
 
 ## Fuori perimetro corrente
 
-- Passbolt v5 e formati v5;
+- import v5 condivisi, creazione o riuso operativo di cartelle v5, conversioni v4/v5 e selezione automatica del formato;
+- modifica delle ACL di oggetti v5; il catalogo resta consultabile in sola lettura;
 - nuovi parser o formati sorgente non coperti da implementazione, dipendenze e test;
 - cancellazione o spostamento remoto e modifica della composizione dei gruppi;
 - automazione non autorizzata della matrice reale o uso del progetto in produzione.

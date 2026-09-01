@@ -23,7 +23,11 @@ from offline_lab_smoke import OfflineLabSmokeError, load_ready_file, read_lab_st
 from passbolt_integration_matrix import JsonLineBridge, MatrixError, locate_node
 
 
-APP_VERSION = "0.28.4-beta.2"
+APP_VERSION = "0.29.0-beta.1"
+PROFILE_FORMATS = {
+    "v4": ("v4", "v4"),
+    "v5": ("v5", "v4"),
+}
 STATEFUL_SCENARIOS = (
     "import_root_resource",
     "import_new_client_folder",
@@ -58,6 +62,16 @@ SENSITIVE_PROGRESS_KEYS = {
 
 class OfflineAcceptanceError(RuntimeError):
     """Bounded failure that never includes synthetic credential values."""
+
+
+def _profile_formats(profile: object) -> tuple[str, str]:
+    normalized = str(profile or "").strip().lower()
+    try:
+        return PROFILE_FORMATS[normalized]
+    except KeyError as exc:
+        raise OfflineAcceptanceError(
+            "Il profilo stateful deve usare risorse/cartelle v4 oppure risorse v5 con cartelle v4."
+        ) from exc
 
 
 def _success(envelope: Mapping[str, Any], phase: str) -> dict[str, Any]:
@@ -215,12 +229,12 @@ def _readiness(
     permission_mode: str = "inherited",
     permission_template: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    folder_format = profile
+    resource_format, folder_format = _profile_formats(profile)
     envelope = bridge.request(
         {
             "command": "session-readiness",
             "session_id": session_id,
-            "resource_format": profile,
+            "resource_format": resource_format,
             "destination_mode": destination_mode,
             "folder_format": folder_format,
             "destination_folder_id": destination_folder_id,
@@ -229,7 +243,26 @@ def _readiness(
             "candidates": [dict(candidate)],
         }
     )
-    return _success(envelope, "Preflight stateful")
+    result = _success(envelope, "Preflight stateful")
+    selected_resource_format = str(result.get("resource_format_selected", ""))
+    selected_folder_format = result.get("folder_format_selected")
+    creates_client_folder = (
+        destination_mode == "client_folders"
+        and candidate.get("source_at_root") is not True
+    )
+    if selected_resource_format != resource_format:
+        raise OfflineAcceptanceError(
+            "Il preflight stateful ha selezionato un formato risorsa inatteso."
+        )
+    if creates_client_folder and selected_folder_format != folder_format:
+        raise OfflineAcceptanceError(
+            "Il preflight stateful non ha mantenuto le cartelle nel formato v4 richiesto."
+        )
+    if selected_folder_format == "v5":
+        raise OfflineAcceptanceError(
+            "Il preflight stateful ha selezionato una cartella v5 non supportata."
+        )
+    return result
 
 
 def _import_candidate(
@@ -243,6 +276,7 @@ def _import_candidate(
     permission_mode: str = "inherited",
     permission_template: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    resource_format, folder_format = _profile_formats(profile)
     readiness = _readiness(
         bridge,
         session_id,
@@ -268,9 +302,9 @@ def _import_candidate(
         "command": "session-import",
         "session_id": session_id,
         "reconciliation_batch_id": batch_id,
-        "resource_format": profile,
+        "resource_format": resource_format,
         "destination_mode": destination_mode,
-        "folder_format": profile,
+        "folder_format": folder_format,
         "destination_folder_id": destination_folder_id,
         "permission_mode": permission_mode,
         "permission_template": permission_template,
@@ -305,13 +339,15 @@ def _acl_plan(
     session_id: str,
     object_id: str,
     desired_permissions: list[dict[str, Any]],
+    *,
+    object_type: str = "resource",
 ) -> dict[str, Any]:
     result = _success(
         bridge.request(
             {
                 "command": "session-acl-plan",
                 "session_id": session_id,
-                "object_type": "resource",
+                "object_type": object_type,
                 "object_id": object_id,
                 "desired_permissions": desired_permissions,
             }
@@ -321,6 +357,36 @@ def _acl_plan(
     if result.get("complete") is not True or result.get("apply_available") is not True:
         raise OfflineAcceptanceError("Il piano ACL stateful non e' applicabile.")
     return result
+
+
+def _expect_acl_plan_rejected(
+    bridge: JsonLineBridge,
+    ready: Mapping[str, Any],
+    session_id: str,
+    object_id: str,
+    desired_permissions: list[dict[str, Any]],
+) -> dict[str, int]:
+    before = read_lab_status(ready)
+    envelope = bridge.request(
+        {
+            "command": "session-acl-plan",
+            "session_id": session_id,
+            "object_type": "resource",
+            "object_id": object_id,
+            "desired_permissions": desired_permissions,
+        }
+    )
+    _expected_failure(
+        envelope,
+        "Blocco ACL risorsa v5",
+        {"ACL_V5_MUTATION_DISABLED"},
+    )
+    after = read_lab_status(ready)
+    if before.get("mutation_count") != after.get("mutation_count"):
+        raise OfflineAcceptanceError(
+            "Il rifiuto ACL v5 ha prodotto una mutazione remota inattesa."
+        )
+    return {"blocked_changes": 1, "remote_writes": 0}
 
 
 def _acl_apply_request(
@@ -372,6 +438,7 @@ def _exercise_import_recovery(
 ) -> dict[str, int]:
     if expected_resolution not in {"not_applied", "remote_success"}:
         raise OfflineAcceptanceError("Esito import atteso non valido.")
+    resource_format, folder_format = _profile_formats(profile)
     candidate = _candidate(label, at_root=True)
     readiness = _readiness(
         bridge,
@@ -387,9 +454,9 @@ def _exercise_import_recovery(
         "command": "session-import",
         "session_id": session_id,
         "reconciliation_batch_id": batch_id,
-        "resource_format": profile,
+        "resource_format": resource_format,
         "destination_mode": "root",
-        "folder_format": profile,
+        "folder_format": folder_format,
         "destination_folder_id": None,
         "permission_mode": "inherited",
         "permission_template": None,
@@ -435,7 +502,7 @@ def _exercise_import_recovery(
     recovery_state = {
         "schema_version": 1,
         "batch_id": batch_id,
-        "resource_format": profile,
+        "resource_format": resource_format,
         "folder_format": "none",
         "destination_mode": "root",
         "destination_folder_id": None,
@@ -454,7 +521,7 @@ def _exercise_import_recovery(
         "command": "session-recovery-readiness",
         "session_id": session_id,
         "reconciliation_batch_id": batch_id,
-        "resource_format": profile,
+        "resource_format": resource_format,
         "destination_mode": "root",
         "folder_format": "none",
         "destination_folder_id": None,
@@ -525,6 +592,7 @@ def _exercise_folder_recovery(
 ) -> dict[str, int]:
     if expected_resolution not in {"not_applied", "remote_success"}:
         raise OfflineAcceptanceError("Esito cartella atteso non valido.")
+    resource_format, folder_format = _profile_formats(profile)
     candidate = _candidate(
         label,
         at_root=False,
@@ -552,9 +620,9 @@ def _exercise_folder_recovery(
         "command": "session-import",
         "session_id": session_id,
         "reconciliation_batch_id": batch_id,
-        "resource_format": profile,
+        "resource_format": resource_format,
         "destination_mode": "client_folders",
-        "folder_format": profile,
+        "folder_format": folder_format,
         "destination_folder_id": None,
         "permission_mode": "inherited",
         "permission_template": None,
@@ -624,8 +692,8 @@ def _exercise_folder_recovery(
     recovery_state = {
         "schema_version": 1,
         "batch_id": batch_id,
-        "resource_format": profile,
-        "folder_format": profile,
+        "resource_format": resource_format,
+        "folder_format": folder_format,
         "destination_mode": "client_folders",
         "destination_folder_id": None,
         "permission_mode": "inherited",
@@ -643,9 +711,9 @@ def _exercise_folder_recovery(
         "command": "session-recovery-readiness",
         "session_id": session_id,
         "reconciliation_batch_id": batch_id,
-        "resource_format": profile,
+        "resource_format": resource_format,
         "destination_mode": "client_folders",
-        "folder_format": profile,
+        "folder_format": folder_format,
         "destination_folder_id": None,
         "permission_mode": "inherited",
         "permission_template": None,
@@ -717,6 +785,7 @@ def _exercise_acl_recovery(
     object_id: str,
     recipient_id: str,
     *,
+    object_type: str = "resource",
     desired_type: int,
     fault: str,
     expected_resolution: str,
@@ -728,6 +797,7 @@ def _exercise_acl_recovery(
         session_id,
         object_id,
         [{"aro": "User", "aro_foreign_key": recipient_id, "type": desired_type}],
+        object_type=object_type,
     )
     batch_id = str(uuid.uuid4())
     _set_fault(ready, fault)
@@ -808,6 +878,7 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
             "L'accettazione stateful richiede un laboratorio sano senza fault iniziale."
         )
     profile = str(ready["profile"])
+    resource_format, folder_format = _profile_formats(profile)
     crypto_script = Path(__file__).resolve().with_name("passbolt_crypto.mjs")
     node = locate_node()
     results: list[dict[str, Any]] = []
@@ -946,81 +1017,159 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
             {"aro": "Group", "aro_foreign_key": group_id, "type": 1},
         ]
         shared_candidate = _candidate("Custom sharing", at_root=True)
-        shared_import, _, _ = _import_candidate(
-            bridge,
-            session_id,
-            profile,
-            shared_candidate,
-            destination_mode="root",
-            permission_mode="custom",
-            permission_template=custom_template,
-        )
-        if shared_import.get("shared_created_count") != 1:
-            raise OfflineAcceptanceError("La condivisione personalizzata non e' stata verificata.")
-        results.append(
-            {
-                "name": "custom_shared_permissions",
-                "status": "passed",
-                "metrics": {"shared_resources": 1, "verified": 1},
-            }
-        )
+        if resource_format == "v5":
+            before_shared = read_lab_status(ready)
+            shared_readiness = _readiness(
+                bridge,
+                session_id,
+                profile,
+                shared_candidate,
+                destination_mode="root",
+                permission_mode="custom",
+                permission_template=custom_template,
+            )
+            after_shared = read_lab_status(ready)
+            if (
+                shared_readiness.get("preflight_status") != "blocked"
+                or shared_readiness.get("can_import") is not False
+                or shared_readiness.get("create_count") != 1
+                or shared_readiness.get("shared_create_count") != 1
+                or before_shared.get("mutation_count")
+                != after_shared.get("mutation_count")
+            ):
+                raise OfflineAcceptanceError(
+                    "Il profilo preview non ha bloccato la condivisione v5 senza scritture."
+                )
+            personal_fallback, _, _ = _import_candidate(
+                bridge,
+                session_id,
+                profile,
+                shared_candidate,
+                destination_mode="root",
+            )
+            if personal_fallback.get("created")[0].get("resource_id") is None:
+                raise OfflineAcceptanceError(
+                    "Il fallback personale v5 non e' stato verificato."
+                )
+            results.append(
+                {
+                    "name": "custom_shared_permissions",
+                    "status": "passed",
+                    "metrics": {
+                        "blocked_shared_creations": 1,
+                        "personal_fallback_created": 1,
+                        "remote_writes_on_rejected_plan": 0,
+                    },
+                }
+            )
+        else:
+            shared_import, _, _ = _import_candidate(
+                bridge,
+                session_id,
+                profile,
+                shared_candidate,
+                destination_mode="root",
+                permission_mode="custom",
+                permission_template=custom_template,
+            )
+            if shared_import.get("shared_created_count") != 1:
+                raise OfflineAcceptanceError(
+                    "La condivisione personalizzata non e' stata verificata."
+                )
+            results.append(
+                {
+                    "name": "custom_shared_permissions",
+                    "status": "passed",
+                    "metrics": {"shared_resources": 1, "verified": 1},
+                }
+            )
 
-        additive_plan = _acl_plan(
-            bridge,
-            session_id,
-            root_resource_id,
-            [{"aro": "User", "aro_foreign_key": recipient_id, "type": 1}],
-        )
-        additive_batch_id = str(uuid.uuid4())
-        additive_envelope, additive_events = _request_with_progress(
-            bridge,
-            _acl_apply_request(session_id, additive_batch_id, additive_plan),
-            additive_batch_id,
-        )
-        additive_result = _success(additive_envelope, "ACL additiva stateful")
-        if (
-            additive_result.get("complete") is not True
-            or additive_result.get("added_user_count") != 1
-            or additive_result.get("destructive_actions_performed") is not False
-            or [item["event_type"] for item in additive_events][-1:]
-            != ["acl_batch_completed"]
-        ):
-            raise OfflineAcceptanceError("La ACL additiva stateful non e' coerente.")
-        results.append(
-            {
-                "name": "additive_acl_update",
-                "status": "passed",
-                "metrics": {"changes": 1, "added_users": 1},
-            }
-        )
+        if resource_format == "v5":
+            additive_metrics = _expect_acl_plan_rejected(
+                bridge,
+                ready,
+                session_id,
+                root_resource_id,
+                [{"aro": "User", "aro_foreign_key": recipient_id, "type": 1}],
+            )
+            results.append(
+                {
+                    "name": "additive_acl_update",
+                    "status": "passed",
+                    "metrics": additive_metrics,
+                }
+            )
+            restrictive_metrics = _expect_acl_plan_rejected(
+                bridge,
+                ready,
+                session_id,
+                root_resource_id,
+                [],
+            )
+            results.append(
+                {
+                    "name": "restrictive_acl_update",
+                    "status": "passed",
+                    "metrics": restrictive_metrics,
+                }
+            )
+        else:
+            additive_plan = _acl_plan(
+                bridge,
+                session_id,
+                root_resource_id,
+                [{"aro": "User", "aro_foreign_key": recipient_id, "type": 1}],
+            )
+            additive_batch_id = str(uuid.uuid4())
+            additive_envelope, additive_events = _request_with_progress(
+                bridge,
+                _acl_apply_request(session_id, additive_batch_id, additive_plan),
+                additive_batch_id,
+            )
+            additive_result = _success(additive_envelope, "ACL additiva stateful")
+            if (
+                additive_result.get("complete") is not True
+                or additive_result.get("added_user_count") != 1
+                or additive_result.get("destructive_actions_performed") is not False
+                or [item["event_type"] for item in additive_events][-1:]
+                != ["acl_batch_completed"]
+            ):
+                raise OfflineAcceptanceError("La ACL additiva stateful non e' coerente.")
+            results.append(
+                {
+                    "name": "additive_acl_update",
+                    "status": "passed",
+                    "metrics": {"changes": 1, "added_users": 1},
+                }
+            )
 
-        restrictive_plan = _acl_plan(
-            bridge, session_id, root_resource_id, []
-        )
-        restrictive_batch_id = str(uuid.uuid4())
-        restrictive_envelope, restrictive_events = _request_with_progress(
-            bridge,
-            _acl_apply_request(session_id, restrictive_batch_id, restrictive_plan),
-            restrictive_batch_id,
-        )
-        restrictive_result = _success(
-            restrictive_envelope, "ACL restrittiva stateful"
-        )
-        if (
-            restrictive_result.get("complete") is not True
-            or restrictive_result.get("removed_user_count") != 1
-            or restrictive_result.get("destructive_actions_performed") is not True
-            or [item["event_type"] for item in restrictive_events][-1:]
-            != ["acl_batch_completed"]
-        ):
-            raise OfflineAcceptanceError("La ACL restrittiva stateful non e' coerente.")
-        results.append(
-            {
-                "name": "restrictive_acl_update",
-                "status": "passed",
-                "metrics": {"changes": 1, "removed_users": 1},
-            }
-        )
+            restrictive_plan = _acl_plan(
+                bridge, session_id, root_resource_id, []
+            )
+            restrictive_batch_id = str(uuid.uuid4())
+            restrictive_envelope, restrictive_events = _request_with_progress(
+                bridge,
+                _acl_apply_request(session_id, restrictive_batch_id, restrictive_plan),
+                restrictive_batch_id,
+            )
+            restrictive_result = _success(
+                restrictive_envelope, "ACL restrittiva stateful"
+            )
+            if (
+                restrictive_result.get("complete") is not True
+                or restrictive_result.get("removed_user_count") != 1
+                or restrictive_result.get("destructive_actions_performed") is not True
+                or [item["event_type"] for item in restrictive_events][-1:]
+                != ["acl_batch_completed"]
+            ):
+                raise OfflineAcceptanceError("La ACL restrittiva stateful non e' coerente.")
+            results.append(
+                {
+                    "name": "restrictive_acl_update",
+                    "status": "passed",
+                    "metrics": {"changes": 1, "removed_users": 1},
+                }
+            )
 
         import_recovery_metrics = [
             _exercise_import_recovery(
@@ -1111,8 +1260,9 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
                 bridge,
                 ready,
                 session_id,
-                root_resource_id,
+                destination_folder_id if resource_format == "v5" else root_resource_id,
                 recipient_id,
+                object_type="folder" if resource_format == "v5" else "resource",
                 desired_type=desired_type,
                 fault=fault,
                 expected_resolution=resolution,
@@ -1157,6 +1307,8 @@ def run_acceptance(ready: dict[str, Any]) -> dict[str, Any]:
         "app": "Passbolt Migration Assistant Offline Acceptance",
         "version": APP_VERSION,
         "profile": profile,
+        "resource_format": resource_format,
+        "folder_format": folder_format,
         "synthetic_stateful": True,
         "real_instance_attestation": False,
         "scenario_count": len(results),

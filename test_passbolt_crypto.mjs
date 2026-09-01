@@ -7,7 +7,7 @@ import * as openpgp from 'openpgp';
 import {
   PassboltSession,
   PersistentImportSession,
-  assertV4OnlyServer,
+  assertPreviewServerCapabilities,
   analyzeCapabilities,
   authenticate,
   buildCandidatePlan,
@@ -20,6 +20,7 @@ import {
   encryptSecret,
   permissionMaskDigest,
   readCapabilities,
+  shareCreatedResource,
 } from './passbolt_crypto.mjs';
 
 function apiSuccess(body) {
@@ -28,6 +29,39 @@ function apiSuccess(body) {
 
 function apiError(message) {
   return JSON.stringify({ header: { status: 'error', message }, body: null });
+}
+
+function canonicalJsonForDigestFixture(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonForDigestFixture).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJsonForDigestFixture(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function historicalAclPlanDigest(plan, appVersion) {
+  const payload = {
+    object_state_digest: plan.object_state_digest,
+    desired_acl_digest: plan.desired_acl_digest,
+    directory_state_digest: plan.directory_state_digest,
+    operations: plan.operations.map((operation) => ({
+      action: operation.action,
+      subject_kind: operation.subject_kind,
+      subject_id: operation.subject_id,
+      before_permission_type: operation.before_permission_type,
+      after_permission_type: operation.after_permission_type,
+    })),
+  };
+  if (!String(appVersion).startsWith('0.16.')) {
+    payload.effective_user_changes = plan.effective_user_changes.map((entry) => ({
+      user_id: entry.user_id,
+      action: entry.action,
+      before_permission_type: entry.before_permission_type,
+      after_permission_type: entry.after_permission_type,
+    }));
+    payload.owner_count_after = plan.last_owner_protection.owner_count_after;
+  }
+  return createHash('sha256').update(canonicalJsonForDigestFixture(payload), 'utf8').digest('hex');
 }
 
 async function requestJson(request) {
@@ -64,48 +98,187 @@ function encodeGpgAuthHeader(value) {
 }
 
 async function main() {
-  const v4OnlyWorker = new PersistentImportSession();
+  const previewBoundaryWorker = new PersistentImportSession();
   await assert.rejects(
-    v4OnlyWorker.dispatch({
+    previewBoundaryWorker.dispatch({
       command: 'session-readiness',
       resource_format: 'v5',
       folder_format: 'v5',
     }),
-    (error) => error?.code === 'PASSBOLT_V5_DISABLED',
+    (error) => error?.code === 'PASSBOLT_V5_FOLDER_DISABLED',
   );
-  const compatibilitySession = (v5) => ({
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'auto',
+      folder_format: 'v4',
+    }),
+    (error) => error?.code === 'PASSBOLT_AUTOMATIC_FORMAT_DISABLED',
+  );
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v4',
+      folder_format: 'auto',
+    }),
+    (error) => error?.code === 'PASSBOLT_AUTOMATIC_FORMAT_DISABLED',
+  );
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v6',
+      folder_format: 'v4',
+    }),
+    (error) => error?.code === 'INVALID_RESOURCE_FORMAT',
+  );
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v4',
+      folder_format: 'v6',
+    }),
+    (error) => error?.code === 'INVALID_FOLDER_FORMAT',
+  );
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v5',
+      folder_format: 'none',
+    }),
+    (error) => error?.code === 'INVALID_FOLDER_FORMAT',
+  );
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-readiness',
+      resource_format: 'v5',
+      folder_format: 'v4',
+    }),
+    (error) => error?.code === 'IMPORT_SESSION_NOT_OPEN',
+  );
+  await assert.rejects(
+    previewBoundaryWorker.dispatch({
+      command: 'session-recovery-readiness',
+      resource_format: 'v5',
+      folder_format: 'none',
+    }),
+    (error) => error?.code === 'IMPORT_SESSION_NOT_OPEN',
+  );
+  const compatibilitySession = ({
+    metadataEnabled = false,
+    metadataStatus = 404,
+    metadataSettings = null,
+    resourceTypes = [{ id: 'v4-id', slug: 'password-and-description' }],
+  } = {}) => ({
     async request(path) {
       if (path.startsWith('/settings.json')) {
         return {
           status: 200,
           document: JSON.parse(apiSuccess({
-            passbolt: { plugins: { metadata: { enabled: v5 } } },
+            passbolt: { plugins: { metadata: { enabled: metadataEnabled } } },
           })),
         };
       }
       if (path.startsWith('/metadata/types/settings.json')) {
         return {
-          status: v5 ? 200 : 404,
-          document: JSON.parse(v5
-            ? apiSuccess({ default_resource_types: 'v5' })
+          status: metadataStatus,
+          document: JSON.parse(metadataStatus >= 200 && metadataStatus < 300
+            ? apiSuccess(metadataSettings)
             : apiError('Route not available.')),
         };
       }
       if (path.startsWith('/resource-types.json')) {
         return {
           status: 200,
-          document: JSON.parse(apiSuccess(v5
-            ? [{ id: 'v5-id', slug: 'v5-default' }]
-            : [{ id: 'v4-id', slug: 'password-and-description' }])),
+          document: JSON.parse(apiSuccess(resourceTypes)),
         };
       }
       throw new Error(`Unexpected compatibility path: ${path}`);
     },
   });
-  await assert.doesNotReject(assertV4OnlyServer(compatibilitySession(false)));
+  const v4Compatibility = await assertPreviewServerCapabilities(compatibilitySession());
+  assert.deepEqual({
+    ...v4Compatibility,
+    capability_attestation_digest: undefined,
+  }, {
+    server_profile: 'v4',
+    metadata_plugin_enabled: false,
+    metadata_route_available: false,
+    v5_resource_type_advertised: false,
+    v5_resource_creation_allowed: false,
+    capability_attestation_digest: undefined,
+  });
+  assert.match(v4Compatibility.capability_attestation_digest, /^[0-9a-f]{64}$/);
+  const coherentV5Session = compatibilitySession({
+    metadataEnabled: true,
+    metadataStatus: 200,
+    metadataSettings: {
+      default_resource_types: 'v5',
+      default_folder_type: 'v4',
+      allow_creation_of_v4_resources: true,
+      allow_creation_of_v5_resources: true,
+      allow_creation_of_v4_folders: true,
+      allow_creation_of_v5_folders: false,
+    },
+    resourceTypes: [
+      { id: 'v4-id', slug: 'password-and-description' },
+      { id: 'v5-id', slug: 'v5-default' },
+    ],
+  });
+  assert.equal((await assertPreviewServerCapabilities(coherentV5Session)).server_profile, 'v5-resource-preview');
   await assert.rejects(
-    assertV4OnlyServer(compatibilitySession(true)),
-    (error) => error?.code === 'PASSBOLT_V5_SERVER_DISABLED',
+    assertPreviewServerCapabilities(compatibilitySession({ metadataEnabled: true })),
+    (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITIES_INCOHERENT',
+  );
+  await assert.rejects(
+    assertPreviewServerCapabilities(compatibilitySession({
+      metadataEnabled: true,
+      metadataStatus: 200,
+      metadataSettings: {
+        default_resource_types: 'v5',
+        default_folder_type: 'v4',
+        allow_creation_of_v4_resources: true,
+        allow_creation_of_v5_resources: true,
+        allow_creation_of_v4_folders: true,
+        allow_creation_of_v5_folders: false,
+      },
+    })),
+    (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITIES_INCOHERENT',
+  );
+  await assert.rejects(
+    assertPreviewServerCapabilities(compatibilitySession({ metadataEnabled: 'false' })),
+    (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+  );
+  await assert.rejects(
+    assertPreviewServerCapabilities(compatibilitySession({
+      resourceTypes: [
+        { id: 'v4-id', slug: 'password-and-description' },
+        { id: 'v4-id', slug: 'password-string' },
+      ],
+    })),
+    (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+  );
+  await assert.rejects(
+    assertPreviewServerCapabilities(compatibilitySession({ resourceTypes: { invalid: true } })),
+    (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+  );
+  await assert.rejects(
+    assertPreviewServerCapabilities(compatibilitySession({
+      metadataEnabled: true,
+      metadataStatus: 200,
+      metadataSettings: {
+        default_resource_types: 'v5',
+        default_folder_type: 'v4',
+        allow_creation_of_v4_resources: true,
+        allow_creation_of_v5_resources: 'false',
+        allow_creation_of_v4_folders: true,
+        allow_creation_of_v5_folders: false,
+      },
+      resourceTypes: [
+        { id: 'v4-id', slug: 'password-and-description' },
+        { id: 'v5-id', slug: 'v5-default' },
+      ],
+    })),
+    (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
   );
 
   const recoveryCandidate = {
@@ -453,15 +626,23 @@ async function main() {
   let completedLoginCount = 0;
   let identityMode = 'redirect-success';
   let resourceMode = 'v4';
+  let metadataEnabledOverride = null;
+  let includeExtraResourceType = false;
+  let resourceTypeCatalogMode = 'normal';
+  let v5ResourceMetadataMode = 'encrypted';
   let folderMode = 'empty';
+  let createdFolderAclMode = 'personal';
   let personalMetadataMode = false;
+  let metadataKeyMode = 'primary';
   let existingResourceFolderId = null;
   let createdPayload = null;
   let createdPayloadV5 = null;
   let createdFolderPayload = null;
   let createdFolderRequestCount = 0;
+  let createdResourceRequestCount = 0;
   let createdResourceReadMode = 'normal';
   let metadataPrivateKeyEnvelope = null;
+  let rotatedMetadataPrivateKeyEnvelope = null;
   let existingV5Metadata = null;
   let existingV5FolderMetadata = null;
   let shareDirectoryMode = 'valid';
@@ -610,7 +791,7 @@ async function main() {
       }
       if (request.method === 'GET' && url.pathname === '/settings.json') {
         send(response, 200, apiSuccess({
-          passbolt: { plugins: { metadata: { enabled: resourceMode === 'v5' }, jwtAuthentication: { enabled: false } } },
+          passbolt: { plugins: { metadata: { enabled: metadataEnabledOverride ?? (resourceMode === 'v5') }, jwtAuthentication: { enabled: false } } },
         }));
         return;
       }
@@ -637,10 +818,11 @@ async function main() {
         return;
       }
       if (request.method === 'GET' && url.pathname === '/metadata/keys.json') {
+        const rotatedMetadataKey = metadataKeyMode === 'rotated';
         send(response, 200, apiSuccess([{
           id: 'metadata-key-id',
-          fingerprint: metadataFingerprint,
-          armored_key: metadataGenerated.publicKey,
+          fingerprint: rotatedMetadataKey ? directRecipientFingerprint : metadataFingerprint,
+          armored_key: rotatedMetadataKey ? directRecipientGenerated.publicKey : metadataGenerated.publicKey,
           created: '2026-01-02T00:00:00Z',
           expired: null,
           deleted: null,
@@ -648,12 +830,16 @@ async function main() {
             id: 'metadata-private-key-id',
             metadata_key_id: 'metadata-key-id',
             user_id: 'user-id',
-            data: metadataPrivateKeyEnvelope,
+            data: rotatedMetadataKey ? rotatedMetadataPrivateKeyEnvelope : metadataPrivateKeyEnvelope,
           }],
         }]));
         return;
       }
       if (request.method === 'GET' && url.pathname === '/resource-types.json') {
+        if (resourceTypeCatalogMode === 'malformed') {
+          send(response, 200, apiSuccess({ invalid: true }));
+          return;
+        }
         const types = [{
           id: 'resource-type-id',
           slug: 'password-and-description',
@@ -666,12 +852,30 @@ async function main() {
         if (resourceMode === 'v5') {
           types.push({
             id: 'v5-resource-type-id',
-            slug: 'v5-default',
+            slug: resourceTypeCatalogMode === 'relabel-v5' ? 'password-renamed' : 'v5-default',
             name: 'V5 default',
             definition: JSON.stringify({
               resource: { type: 'object', properties: { name: {}, username: {}, uris: {}, object_type: {}, resource_type_id: {} } },
               secret: { type: 'object', properties: { password: {}, description: {}, object_type: {} } },
             }),
+          });
+          if (resourceTypeCatalogMode === 'relabel-v5') {
+            types.push({
+              id: 'alternate-v5-resource-type-id',
+              slug: 'v5-default',
+              name: 'Alternate V5',
+              definition: JSON.stringify({
+                resource: { type: 'object', properties: { name: {}, username: {}, uris: {}, object_type: {}, resource_type_id: {} } },
+                secret: { type: 'object', properties: { password: {}, description: {}, object_type: {} } },
+              }),
+            });
+          }
+        }
+        if (includeExtraResourceType) {
+          types.push({
+            id: 'extra-resource-type-id',
+            slug: 'password-string',
+            name: 'Additional v4 password type',
           });
         }
         send(response, 200, apiSuccess(types));
@@ -740,9 +944,15 @@ async function main() {
         send(response, 200, apiSuccess(resourceMode === 'v5' ? [{
           id: 'existing-v5-resource-id',
           resource_type_id: 'v5-resource-type-id',
-          metadata_key_id: 'metadata-key-id',
-          metadata_key_type: 'shared_key',
-          metadata: existingV5Metadata,
+          ...(v5ResourceMetadataMode === 'type-only' ? {
+            name: 'Portale v5 con marker incompleti',
+            username: 'incomplete-v5-user',
+            uri: 'https://incomplete-v5.example.test',
+          } : {
+            metadata_key_id: 'metadata-key-id',
+            metadata_key_type: 'shared_key',
+            metadata: existingV5Metadata,
+          }),
           folder_parent_id: existingResourceFolderId,
         }] : [{
           id: 'existing-resource-id',
@@ -868,6 +1078,22 @@ async function main() {
             name: 'Cliente Alfa',
             folder_parent_id: null,
           }]));
+        } else if (folderMode === 'personal-v4') {
+          send(response, 200, apiSuccess([{
+            id: 'folder-personal-id',
+            name: 'Cliente Personale',
+            folder_parent_id: null,
+            personal: true,
+            permission: { type: 15 },
+            permissions: [{
+              id: 'folder-personal-owner-permission-id',
+              aco: 'Folder',
+              aco_foreign_key: 'folder-personal-id',
+              aro: 'User',
+              aro_foreign_key: 'user-id',
+              type: 15,
+            }],
+          }]));
         } else if (folderMode === 'nested-v4') {
           send(response, 200, apiSuccess([{
             id: 'folder-container-id',
@@ -961,9 +1187,65 @@ async function main() {
             folder_parent_id: null,
             personal: true,
           }]));
+        } else if (folderMode === 'v5-marker-only') {
+          send(response, 200, apiSuccess([{
+            id: 'folder-v5-marker-only-id',
+            name: 'Cartella v5 con marker incompleti',
+            metadata_key_id: 'metadata-key-id',
+            metadata_key_type: 'shared_key',
+            folder_parent_id: null,
+            personal: true,
+          }]));
         } else {
           send(response, 200, apiSuccess([]));
         }
+        return;
+      }
+      if (request.method === 'GET' && url.pathname === '/folders/created-folder-id.json') {
+        const ownerUserId = createdFolderAclMode === 'wrong-owner' ? 'direct-recipient-id' : 'user-id';
+        const ownerType = createdFolderAclMode === 'not-owner' ? 7 : 15;
+        const ownerPermission = {
+          id: 'created-folder-permission-id',
+          aco: 'Folder',
+          aco_foreign_key: 'created-folder-id',
+          aro: 'User',
+          aro_foreign_key: ownerUserId,
+          type: ownerType,
+        };
+        const permissions = createdFolderAclMode === 'missing'
+          ? []
+          : [
+            ownerPermission,
+            ...(createdFolderAclMode === 'multiple' ? [{
+              id: 'created-folder-extra-permission-id',
+              aco: 'Folder',
+              aco_foreign_key: 'created-folder-id',
+              aro: 'User',
+              aro_foreign_key: 'direct-recipient-id',
+              type: 1,
+            }] : []),
+          ];
+        send(response, 200, apiSuccess({
+          id: 'created-folder-id',
+          name: createdFolderAclMode === 'wrong-name' ? 'Destinazione inattesa' : 'Cliente Nuovo Personale',
+          folder_parent_id: createdFolderAclMode === 'wrong-parent' ? 'folder-alpha-id' : null,
+          ...(createdFolderAclMode === 'v5-marker' ? {
+            metadata_key_id: 'metadata-key-id',
+            metadata_key_type: 'shared_key',
+          } : {}),
+          personal: createdFolderAclMode !== 'shared',
+          permission: createdFolderAclMode === 'missing' ? null : ownerPermission,
+          permissions: createdFolderAclMode === 'shared'
+            ? [...permissions, {
+              id: 'created-folder-group-permission-id',
+              aco: 'Folder',
+              aco_foreign_key: 'created-folder-id',
+              aro: 'Group',
+              aro_foreign_key: 'shared-group-id',
+              type: 1,
+            }]
+            : permissions,
+        }));
         return;
       }
       if (request.method === 'POST' && url.pathname === '/folders.json') {
@@ -992,6 +1274,7 @@ async function main() {
           return;
         }
         const requestPayload = await requestJson(request);
+        createdResourceRequestCount += 1;
         sharedApplyPayload = null;
         sharedApplyTargetPath = '';
         if (resourceMode === 'v5') {
@@ -1220,6 +1503,19 @@ async function main() {
         armored_key: metadataGenerated.privateKey,
         passphrase: '',
         signed: '2026-01-02T00:00:00Z',
+      }) }),
+      encryptionKeys: userPublicKey,
+      signingKeys: userPrivateKey,
+      format: 'armored',
+    });
+    rotatedMetadataPrivateKeyEnvelope = await openpgp.encrypt({
+      message: await openpgp.createMessage({ text: JSON.stringify({
+        object_type: 'PASSBOLT_METADATA_PRIVATE_KEY',
+        domain: baseUrl,
+        fingerprint: directRecipientFingerprint,
+        armored_key: directRecipientGenerated.privateKey,
+        passphrase: '',
+        signed: '2026-01-03T00:00:00Z',
       }) }),
       encryptionKeys: userPublicKey,
       signingKeys: userPrivateKey,
@@ -2066,9 +2362,12 @@ async function main() {
       uri: 'https://alpha-v5.example.test',
     }];
     const v5FolderReuseAnalysis = await analyzeCapabilities(v5Session, v5Authentication.user, v5FolderCandidate, keyMaterial, 'v5', 'client_folders', 'auto');
-    assert.equal(v5FolderReuseAnalysis.capabilities.can_import, true);
+    assert.equal(v5FolderReuseAnalysis.capabilities.can_import, false);
+    assert.match(v5FolderReuseAnalysis.capabilities.unavailable_reason, /catalogo ACL read-only/i);
     assert.equal(v5FolderReuseAnalysis.capabilities.reuse_folder_count, 1);
     assert.equal(v5FolderReuseAnalysis.capabilities.candidates[0].folder_id, 'folder-alpha-v5-id');
+    assert.equal(v5FolderReuseAnalysis.runtime.folders[0].format, 'v5');
+    assert.equal(v5FolderReuseAnalysis.capabilities.available_folders.some((folder) => folder.id === 'folder-alpha-v5-id'), false);
     const v5ClientMappingAnalysis = await analyzeCapabilities(
       v5Session,
       v5Authentication.user,
@@ -2080,28 +2379,96 @@ async function main() {
       null,
       [{ client: 'Cliente Alfa', folder_id: 'folder-alpha-v5-id' }],
     );
-    assert.equal(v5ClientMappingAnalysis.capabilities.can_import, true);
+    assert.equal(v5ClientMappingAnalysis.capabilities.can_import, false);
+    assert.match(v5ClientMappingAnalysis.capabilities.unavailable_reason, /catalogo ACL read-only/i);
     assert.equal(v5ClientMappingAnalysis.capabilities.folder_format_selected, null);
     assert.equal(v5ClientMappingAnalysis.capabilities.candidates[0].folder_id, 'folder-alpha-v5-id');
-    const v5MappedResourcePayload = await buildResourcePayload({
-      title: 'Portale Cliente Alfa v5',
-      username: 'alpha-v5-user',
-      uri: 'https://alpha-v5.example.test',
-      password: 'alpha-v5-password',
-      description: '',
-    }, v5FolderReuseAnalysis.runtime, keyMaterial, 'folder-alpha-v5-id');
-    assert.equal(v5MappedResourcePayload.folder_parent_id, 'folder-alpha-v5-id');
+    const publicV5FolderWorker = new PersistentImportSession(async () => {});
+    publicV5FolderWorker.state = {
+      sessionId: 'public-v5-folder-boundary-session',
+      baseUrl,
+      expectedFingerprint: serverFingerprint,
+      session: v5Session,
+      key: keyMaterial,
+      user: v5Authentication.user,
+      mfaProvider: null,
+    };
+    const publicV5FolderCandidate = {
+      candidate_id: 'candidate-public-v5-folder-boundary',
+      source_sha256: '6'.repeat(64),
+      client: 'Cliente Alfa',
+      source_at_root: false,
+      title: 'Portale bloccato su cartella v5',
+      username: 'blocked-v5-folder-user',
+      uri: 'https://blocked-v5-folder.example.test',
+    };
+    const mutationCountBeforeV5FolderBoundary = authenticatedMutationCount;
+    const publicV5DirectFolderReadiness = await publicV5FolderWorker.dispatch({
+      command: 'session-readiness',
+      session_id: 'public-v5-folder-boundary-session',
+      candidates: [publicV5FolderCandidate],
+      resource_format: 'v5',
+      destination_mode: 'direct_folder',
+      destination_folder_id: 'folder-alpha-v5-id',
+      folder_format: 'v4',
+    });
+    assert.equal(publicV5DirectFolderReadiness.can_import, false);
+    assert.match(publicV5DirectFolderReadiness.unavailable_reason, /catalogo ACL read-only/i);
+    assert.equal(publicV5DirectFolderReadiness.available_folders.some((folder) => folder.id === 'folder-alpha-v5-id'), false);
+    const publicV5MappedFolderReadiness = await publicV5FolderWorker.dispatch({
+      command: 'session-readiness',
+      session_id: 'public-v5-folder-boundary-session',
+      candidates: [publicV5FolderCandidate],
+      resource_format: 'v5',
+      destination_mode: 'client_mapping',
+      client_destination_mapping: [{ client: 'Cliente Alfa', folder_id: 'folder-alpha-v5-id' }],
+      folder_format: 'v4',
+    });
+    assert.equal(publicV5MappedFolderReadiness.can_import, false);
+    assert.match(publicV5MappedFolderReadiness.unavailable_reason, /catalogo ACL read-only/i);
+    await assert.rejects(
+      publicV5FolderWorker.dispatch({
+        command: 'session-import',
+        session_id: 'public-v5-folder-boundary-session',
+        reconciliation_batch_id: '66666666-6666-4666-8666-666666666666',
+        candidates: [publicV5FolderCandidate],
+        resources: [{ ...publicV5FolderCandidate, password: 'must-not-be-written', description: '' }],
+        resource_format: 'v5',
+        destination_mode: 'direct_folder',
+        destination_folder_id: 'folder-alpha-v5-id',
+        folder_format: 'v4',
+        plan_digest: publicV5DirectFolderReadiness.plan_digest,
+        confirmation: 'IMPORTA 1',
+      }),
+      (error) => error?.code === 'IMPORT_NOT_SUPPORTED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeV5FolderBoundary);
+    await assert.rejects(
+      buildResourcePayload({
+        title: 'Portale Cliente Alfa v5',
+        username: 'alpha-v5-user',
+        uri: 'https://alpha-v5.example.test',
+        password: 'alpha-v5-password',
+        description: '',
+      }, v5FolderReuseAnalysis.runtime, keyMaterial, 'folder-alpha-v5-id'),
+      (error) => error?.code === 'PASSBOLT_V5_FOLDER_DISABLED',
+    );
 
     const v5NestedFolderAnalysis = await analyzeCapabilities(v5Session, v5Authentication.user, [{
       ...v5FolderCandidate[0],
       candidate_id: 'candidate-folder-v5-nested',
       client: 'Cliente Gamma',
-    }], keyMaterial, 'v5', 'client_folders', 'v5', 'folder-alpha-v5-id');
+    }], keyMaterial, 'v5', 'client_folders', 'v4', 'folder-alpha-v5-id');
+    assert.equal(v5NestedFolderAnalysis.capabilities.can_import, false);
+    assert.match(v5NestedFolderAnalysis.capabilities.unavailable_reason, /contenitore.*metadati v5/i);
     assert.equal(v5NestedFolderAnalysis.capabilities.create_folder_count, 1);
     assert.equal(v5NestedFolderAnalysis.runtime.folders[0].folder_parent_id, 'folder-alpha-v5-id');
+    assert.equal(v5NestedFolderAnalysis.runtime.folders[0].parent_format, 'v5');
     assert.equal(v5NestedFolderAnalysis.runtime.folders[0].path, 'Cliente Alfa / Cliente Gamma');
-    const v5NestedFolderPayload = await buildFolderPayload(v5NestedFolderAnalysis.runtime.folders[0], v5NestedFolderAnalysis.runtime, keyMaterial);
-    assert.equal(v5NestedFolderPayload.folder_parent_id, 'folder-alpha-v5-id');
+    await assert.rejects(
+      buildFolderPayload(v5NestedFolderAnalysis.runtime.folders[0], v5NestedFolderAnalysis.runtime, keyMaterial),
+      (error) => error?.code === 'PASSBOLT_V5_FOLDER_DISABLED',
+    );
 
     folderMode = 'empty';
     const v5FolderCreateAnalysis = await analyzeCapabilities(v5Session, v5Authentication.user, [{
@@ -2109,21 +2476,14 @@ async function main() {
       candidate_id: 'candidate-folder-v5-create',
       client: 'Cliente Gamma',
     }], keyMaterial, 'v5', 'client_folders', 'v5');
+    assert.equal(v5FolderCreateAnalysis.capabilities.can_import, false);
+    assert.match(v5FolderCreateAnalysis.capabilities.unavailable_reason, /cartelle operative esclusivamente v4/i);
     assert.equal(v5FolderCreateAnalysis.capabilities.create_folder_count, 1);
     assert.equal(v5FolderCreateAnalysis.capabilities.folder_format_selected, 'v5');
-    const v5FolderPayload = await buildFolderPayload(v5FolderCreateAnalysis.runtime.folders[0], v5FolderCreateAnalysis.runtime, keyMaterial);
-    assert.equal(Object.hasOwn(v5FolderPayload, 'name'), false);
-    const decryptedFolderMetadata = await openpgp.decrypt({
-      message: await openpgp.readMessage({ armoredMessage: v5FolderPayload.metadata }),
-      decryptionKeys: metadataPrivateKey,
-      verificationKeys: userPublicKey,
-      format: 'utf8',
-    });
-    await Promise.all(decryptedFolderMetadata.signatures.map((signature) => signature.verified));
-    assert.deepEqual(JSON.parse(decryptedFolderMetadata.data), {
-      object_type: 'PASSBOLT_FOLDER_METADATA',
-      name: 'Cliente Gamma',
-    });
+    await assert.rejects(
+      buildFolderPayload(v5FolderCreateAnalysis.runtime.folders[0], v5FolderCreateAnalysis.runtime, keyMaterial),
+      (error) => error?.code === 'PASSBOLT_V5_FOLDER_DISABLED',
+    );
 
     const v5Payload = await buildResourcePayload({
       title: 'Nuovo portale v5',
@@ -2163,6 +2523,130 @@ async function main() {
     );
     assert.equal(v5Verification[0].metadata_match, true);
     assert.equal(v5Verification[0].content_match, true);
+    const publicV5Progress = [];
+    const publicV5Worker = new PersistentImportSession(
+      async (envelope) => publicV5Progress.push(envelope),
+    );
+    publicV5Worker.state = {
+      sessionId: 'public-v5-preview-session',
+      baseUrl,
+      expectedFingerprint: serverFingerprint,
+      session: v5Session,
+      key: keyMaterial,
+      user: v5Authentication.user,
+      mfaProvider: null,
+    };
+    const publicV5Candidate = {
+      candidate_id: 'candidate-public-v5-preview',
+      source_sha256: '5'.repeat(64),
+      client: '(radice)',
+      source_at_root: true,
+      title: 'Nuovo portale v5',
+      username: 'new-v5-user',
+      uri: 'https://new-v5.example.test',
+    };
+    const publicV5Readiness = await publicV5Worker.dispatch({
+      command: 'session-readiness',
+      session_id: 'public-v5-preview-session',
+      candidates: [publicV5Candidate],
+      resource_format: 'v5',
+      destination_mode: 'root',
+      folder_format: 'v4',
+    });
+    assert.equal(publicV5Readiness.resource_format_selected, 'v5');
+    assert.equal(publicV5Readiness.folder_format_requested, 'v4');
+    assert.equal(publicV5Readiness.can_import, true);
+    const mutationCountBeforeCapabilityDrift = authenticatedMutationCount;
+    metadataEnabledOverride = false;
+    await assert.rejects(
+      publicV5Worker.dispatch({
+        command: 'session-import',
+        session_id: 'public-v5-preview-session',
+        reconciliation_batch_id: '99999999-9999-4999-8999-999999999999',
+        candidates: [publicV5Candidate],
+        resources: [{
+          ...publicV5Candidate,
+          password: 'must-not-be-written-after-drift',
+          description: '',
+        }],
+        resource_format: 'v5',
+        destination_mode: 'root',
+        folder_format: 'v4',
+        plan_digest: publicV5Readiness.plan_digest,
+        confirmation: 'IMPORTA 1',
+      }),
+      (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITIES_INCOHERENT',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeCapabilityDrift);
+    metadataEnabledOverride = null;
+    const publicV5Import = await publicV5Worker.dispatch({
+      command: 'session-import',
+      session_id: 'public-v5-preview-session',
+      reconciliation_batch_id: '55555555-5555-4555-8555-555555555555',
+      candidates: [publicV5Candidate],
+      resources: [{
+        ...publicV5Candidate,
+        password: 'mock-v5-password',
+        description: 'mock v5 description',
+      }],
+      resource_format: 'v5',
+      destination_mode: 'root',
+      folder_format: 'v4',
+      plan_digest: publicV5Readiness.plan_digest,
+      confirmation: 'IMPORTA 1',
+    });
+    assert.equal(publicV5Import.complete, true);
+    assert.equal(publicV5Import.verified_resource_count, 1);
+    assert.deepEqual(
+      publicV5Progress.map((envelope) => envelope.event_type),
+      ['operation_intent', 'resource_created', 'resource_verified', 'batch_completed'],
+    );
+    assert.equal(JSON.stringify(publicV5Progress).includes('mock-v5-password'), false);
+    v5ResourceMetadataMode = 'type-only';
+    const metadataRotationWorker = new PersistentImportSession(async () => {});
+    metadataRotationWorker.state = {
+      sessionId: 'metadata-rotation-session',
+      baseUrl,
+      expectedFingerprint: serverFingerprint,
+      session: v5Session,
+      key: keyMaterial,
+      user: v5Authentication.user,
+      mfaProvider: null,
+    };
+    const metadataRotationReadiness = await metadataRotationWorker.dispatch({
+      command: 'session-readiness',
+      session_id: 'metadata-rotation-session',
+      candidates: [{ ...publicV5Candidate, candidate_id: 'candidate-metadata-key-rotation' }],
+      resource_format: 'v5',
+      destination_mode: 'root',
+      folder_format: 'v4',
+    });
+    assert.equal(metadataRotationReadiness.can_import, true);
+    const mutationCountBeforeMetadataKeyRotation = authenticatedMutationCount;
+    metadataKeyMode = 'rotated';
+    await assert.rejects(
+      metadataRotationWorker.dispatch({
+        command: 'session-import',
+        session_id: 'metadata-rotation-session',
+        reconciliation_batch_id: '88888888-8888-4888-8888-888888888888',
+        candidates: [{ ...publicV5Candidate, candidate_id: 'candidate-metadata-key-rotation' }],
+        resources: [{
+          ...publicV5Candidate,
+          candidate_id: 'candidate-metadata-key-rotation',
+          password: 'must-not-be-written-after-key-rotation',
+          description: '',
+        }],
+        resource_format: 'v5',
+        destination_mode: 'root',
+        folder_format: 'v4',
+        plan_digest: metadataRotationReadiness.plan_digest,
+        confirmation: 'IMPORTA 1',
+      }),
+      (error) => error?.code === 'STALE_PLAN',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeMetadataKeyRotation);
+    metadataKeyMode = 'primary';
+    v5ResourceMetadataMode = 'encrypted';
     createdResourceReadMode = 'wrong-folder';
     await assert.rejects(
       verifyCreatedResources(
@@ -2185,10 +2669,19 @@ async function main() {
     );
     createdResourceReadMode = 'normal';
 
+    personalMetadataMode = 'false';
+    const mutationCountBeforeMalformedMetadataPolicy = authenticatedMutationCount;
+    await assert.rejects(
+      analyzeCapabilities(v5Session, v5Authentication.user, v5Candidates, keyMaterial, 'v5'),
+      (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeMalformedMetadataPolicy);
     personalMetadataMode = true;
     const personalV5Analysis = await analyzeCapabilities(v5Session, v5Authentication.user, v5Candidates, keyMaterial, 'v5');
     assert.equal(personalV5Analysis.capabilities.metadata_key.type, 'user_key');
     assert.equal(personalV5Analysis.capabilities.metadata_key.id, 'user-gpg-key-id');
+    assert.notEqual(personalV5Analysis.capabilities.capability_attestation_digest, v5Analysis.capabilities.capability_attestation_digest);
+    assert.notEqual(personalV5Analysis.capabilities.plan_digest, v5Analysis.capabilities.plan_digest);
     const personalV5Payload = await buildResourcePayload({
       title: 'Risorsa v5 personale',
       username: 'personal-user',
@@ -2205,6 +2698,147 @@ async function main() {
     await Promise.all(personalMetadata.signatures.map((signature) => signature.verified));
     assert.equal(JSON.parse(personalMetadata.data).name, 'Risorsa v5 personale');
     assert.equal(personalV5Payload.metadata_key_type, 'user_key');
+
+    folderMode = 'v4';
+    const unknownAclCandidate = [{
+      candidate_id: 'candidate-v5-unknown-folder-acl',
+      client: 'Cliente Alfa',
+      source_at_root: false,
+      title: 'Risorsa con destinazione non attestata',
+      username: 'unknown-acl-user',
+      uri: 'https://unknown-acl.example.test',
+    }];
+    const unknownAclV5Analysis = await analyzeCapabilities(
+      v5Session,
+      v5Authentication.user,
+      unknownAclCandidate,
+      keyMaterial,
+      'v5',
+      'direct_folder',
+      'v4',
+      'folder-alpha-id',
+    );
+    assert.equal(unknownAclV5Analysis.capabilities.can_import, false);
+    assert.match(unknownAclV5Analysis.capabilities.unavailable_reason, /ACL personale verificata/i);
+    assert.equal(unknownAclV5Analysis.capabilities.available_folders.some((folder) => folder.id === 'folder-alpha-id'), false);
+    let unknownAclSinkWriteCount = 0;
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { unknownAclSinkWriteCount += 1; throw new Error('Unexpected write.'); } },
+        unknownAclV5Analysis.capabilities.candidates.filter((candidate) => candidate.action === 'create'),
+        [{ ...unknownAclCandidate[0], password: 'must-not-be-written', description: '' }],
+        unknownAclV5Analysis.runtime,
+        keyMaterial,
+      ),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    assert.equal(unknownAclSinkWriteCount, 0);
+    const unknownAclV4Control = await analyzeCapabilities(
+      v5Session,
+      v5Authentication.user,
+      unknownAclCandidate,
+      keyMaterial,
+      'v4',
+      'direct_folder',
+      'v4',
+      'folder-alpha-id',
+    );
+    assert.equal(unknownAclV4Control.capabilities.can_import, true);
+
+    folderMode = 'personal-v4';
+    const personalFolderCandidate = [{
+      ...unknownAclCandidate[0],
+      candidate_id: 'candidate-v5-personal-folder',
+      client: 'Cliente Personale',
+      title: 'Risorsa v5 in cartella personale attestata',
+    }];
+    const personalFolderV5Analysis = await analyzeCapabilities(
+      v5Session,
+      v5Authentication.user,
+      personalFolderCandidate,
+      keyMaterial,
+      'v5',
+      'direct_folder',
+      'v4',
+      'folder-personal-id',
+    );
+    assert.equal(personalFolderV5Analysis.capabilities.can_import, true);
+    assert.equal(personalFolderV5Analysis.capabilities.candidates[0].personal_acl_verified, true);
+    assert.equal(personalFolderV5Analysis.capabilities.available_folders[0].personal_acl_verified, true);
+    await buildResourcePayload({
+      ...personalFolderV5Analysis.capabilities.candidates[0],
+      password: 'personal-folder-password',
+      description: '',
+    }, personalFolderV5Analysis.runtime, keyMaterial, 'folder-personal-id');
+
+    personalMetadataMode = false;
+    folderMode = 'empty';
+    const newPersonalFolderV5Candidate = [{
+      candidate_id: 'candidate-v5-new-personal-folder',
+      client: 'Cliente Nuovo Personale',
+      source_at_root: false,
+      title: 'Nuovo portale v5',
+      username: 'new-v5-user',
+      uri: 'https://new-v5.example.test',
+    }];
+    const newPersonalFolderV5Analysis = await analyzeCapabilities(
+      v5Session,
+      v5Authentication.user,
+      newPersonalFolderV5Candidate,
+      keyMaterial,
+      'v5',
+      'client_folders',
+      'v4',
+    );
+    assert.equal(newPersonalFolderV5Analysis.capabilities.can_import, true);
+    assert.equal(newPersonalFolderV5Analysis.capabilities.create_folder_count, 1);
+    const newPersonalFolderV5Resource = [{
+      ...newPersonalFolderV5Candidate[0],
+      password: 'mock-v5-password',
+      description: 'mock v5 description',
+    }];
+    for (const invalidAclMode of [
+      'missing',
+      'shared',
+      'wrong-owner',
+      'not-owner',
+      'multiple',
+      'wrong-name',
+      'wrong-parent',
+      'v5-marker',
+    ]) {
+      createdFolderAclMode = invalidAclMode;
+      const resourceWritesBeforeInvalidFolderAcl = createdResourceRequestCount;
+      const expectedCauseCode = ['wrong-name', 'wrong-parent'].includes(invalidAclMode)
+        ? 'FOLDER_PERSONAL_DESTINATION_MISMATCH'
+        : (invalidAclMode === 'v5-marker' ? 'PASSBOLT_V5_FOLDER_DISABLED' : 'FOLDER_PERSONAL_ACL_NOT_VERIFIED');
+      await assert.rejects(
+        createPlannedContent(
+          v5Session,
+          newPersonalFolderV5Analysis.capabilities.candidates,
+          newPersonalFolderV5Resource,
+          newPersonalFolderV5Analysis.runtime,
+          keyMaterial,
+        ),
+        (error) => error?.code === 'IMPORT_PARTIAL_FAILURE'
+          && error?.details?.cause_code === expectedCauseCode
+          && error?.details?.created_unverified_folder_id === 'created-folder-id',
+      );
+      assert.equal(createdResourceRequestCount, resourceWritesBeforeInvalidFolderAcl);
+    }
+    createdFolderAclMode = 'personal';
+    const resourceWritesBeforeVerifiedFolderAcl = createdResourceRequestCount;
+    const newPersonalFolderV5Created = await createPlannedContent(
+      v5Session,
+      newPersonalFolderV5Analysis.capabilities.candidates,
+      newPersonalFolderV5Resource,
+      newPersonalFolderV5Analysis.runtime,
+      keyMaterial,
+    );
+    assert.equal(newPersonalFolderV5Created.createdFolders.length, 1);
+    assert.equal(newPersonalFolderV5Created.created.length, 1);
+    assert.equal(createdResourceRequestCount, resourceWritesBeforeVerifiedFolderAcl + 1);
+    personalMetadataMode = true;
 
     folderMode = 'shared-v4';
     const sharedV5Candidate = [{
@@ -2226,22 +2860,45 @@ async function main() {
       null,
       [{ client: 'Cliente Condiviso v5', folder_id: 'folder-shared-id' }],
     );
-    assert.equal(sharedV5Analysis.capabilities.can_import, true);
+    assert.equal(sharedV5Analysis.capabilities.can_import, false);
+    assert.match(sharedV5Analysis.capabilities.unavailable_reason, /modifiche ACL/i);
     assert.equal(sharedV5Analysis.capabilities.metadata_key.type, 'shared_key');
-    const sharedV5Payload = await buildResourcePayload({
-      ...sharedV5Analysis.capabilities.candidates[0],
-      password: 'shared-v5-password',
-      description: 'shared v5 description',
-    }, sharedV5Analysis.runtime, keyMaterial, 'folder-shared-id');
-    assert.equal(sharedV5Payload.metadata_key_type, 'shared_key');
-    const sharedV5Metadata = await openpgp.decrypt({
-      message: await openpgp.readMessage({ armoredMessage: sharedV5Payload.metadata }),
-      decryptionKeys: metadataPrivateKey,
-      verificationKeys: userPublicKey,
-      format: 'utf8',
-    });
-    await Promise.all(sharedV5Metadata.signatures.map((signature) => signature.verified));
-    assert.equal(JSON.parse(sharedV5Metadata.data).name, 'Risorsa v5 condivisa');
+    const mutationCountBeforeSharedV5Payload = authenticatedMutationCount;
+    await assert.rejects(
+      buildResourcePayload({
+        ...sharedV5Analysis.capabilities.candidates[0],
+        password: 'shared-v5-password',
+        description: 'shared v5 description',
+      }, sharedV5Analysis.runtime, keyMaterial, 'folder-shared-id'),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    let sharedV5SinkWriteCount = 0;
+    await assert.rejects(
+      createPlannedContent(
+        { async request() { sharedV5SinkWriteCount += 1; throw new Error('Unexpected v5 shared write.'); } },
+        sharedV5Analysis.capabilities.candidates.filter((candidate) => candidate.action === 'create'),
+        [{ ...sharedV5Analysis.capabilities.candidates[0], password: 'shared-v5-password', description: '' }],
+        sharedV5Analysis.runtime,
+        keyMaterial,
+      ),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    assert.equal(sharedV5SinkWriteCount, 0);
+    assert.equal(authenticatedMutationCount, mutationCountBeforeSharedV5Payload);
+    let directV5ShareSinkWriteCount = 0;
+    await assert.rejects(
+      shareCreatedResource(
+        { async request() { directV5ShareSinkWriteCount += 1; throw new Error('Unexpected ACL request.'); } },
+        'resource-v5-id',
+        { id: 'owner-permission-id', type: 15 },
+        { share_permissions: [] },
+        { password: 'must-not-be-encrypted' },
+        { selectedFormat: 'v5', resourceType: { slug: 'v5-default' } },
+        keyMaterial,
+      ),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    assert.equal(directV5ShareSinkWriteCount, 0);
 
     const sharedV5ChildAnalysis = await analyzeCapabilities(
       v5Session,
@@ -2253,23 +2910,18 @@ async function main() {
       'v5',
       'folder-shared-id',
     );
-    assert.equal(sharedV5ChildAnalysis.capabilities.can_import, true);
+    assert.equal(sharedV5ChildAnalysis.capabilities.can_import, false);
+    assert.match(sharedV5ChildAnalysis.capabilities.unavailable_reason, /cartelle operative esclusivamente v4/i);
     assert.equal(sharedV5ChildAnalysis.capabilities.create_shared_folder_count, 1);
     assert.equal(sharedV5ChildAnalysis.capabilities.metadata_key.type, 'shared_key');
-    const sharedV5FolderPayload = await buildFolderPayload(sharedV5ChildAnalysis.runtime.folders[0], sharedV5ChildAnalysis.runtime, keyMaterial);
-    assert.equal(sharedV5FolderPayload.metadata_key_type, 'shared_key');
-    assert.equal(sharedV5FolderPayload.metadata_key_id, 'metadata-key-id');
-    const sharedV5FolderMetadata = await openpgp.decrypt({
-      message: await openpgp.readMessage({ armoredMessage: sharedV5FolderPayload.metadata }),
-      decryptionKeys: metadataPrivateKey,
-      verificationKeys: userPublicKey,
-      format: 'utf8',
-    });
-    await Promise.all(sharedV5FolderMetadata.signatures.map((signature) => signature.verified));
-    assert.equal(JSON.parse(sharedV5FolderMetadata.data).name, 'Cliente Nuovo v5');
+    await assert.rejects(
+      buildFolderPayload(sharedV5ChildAnalysis.runtime.folders[0], sharedV5ChildAnalysis.runtime, keyMaterial),
+      (error) => error?.code === 'PASSBOLT_V5_FOLDER_DISABLED',
+    );
     folderMode = 'v5';
     existingResourceFolderId = 'folder-alpha-v5-id';
     const v5AclWorker = new PersistentImportSession();
+    const v5AclServerCapabilities = await assertPreviewServerCapabilities(v5Session);
     v5AclWorker.state = {
       sessionId: 'v5-acl-session',
       baseUrl,
@@ -2278,14 +2930,103 @@ async function main() {
       key: keyMaterial,
       user: v5Authentication.user,
       mfaProvider: null,
+      serverCapabilities: v5AclServerCapabilities,
     };
     const v5AclCatalog = await v5AclWorker.dispatch({
       command: 'session-acl-catalog',
       session_id: 'v5-acl-session',
     });
-    assert.equal(v5AclCatalog.objects.some((entry) => entry.object_type === 'folder' && entry.path === 'Cliente Alfa'), true);
+    assert.equal(v5AclCatalog.objects.some((entry) => entry.object_type === 'folder' && entry.path === 'Cliente Alfa' && entry.format === 'v5'), true);
     assert.equal(v5AclCatalog.objects.some((entry) => entry.object_type === 'resource' && entry.path === 'Cliente Alfa / Portale v5 esistente'), true);
     assert.equal(JSON.stringify(v5AclCatalog).includes('BEGIN PGP'), false);
+    const mutationCountBeforeV5AclPlan = authenticatedMutationCount;
+    await assert.rejects(
+      v5AclWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'v5-acl-session',
+        object_type: 'resource',
+        object_id: 'existing-v5-resource-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    await assert.rejects(
+      v5AclWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'v5-acl-session',
+        object_type: 'folder',
+        object_id: 'folder-alpha-v5-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeV5AclPlan);
+    v5ResourceMetadataMode = 'type-only';
+    folderMode = 'v5-marker-only';
+    existingResourceFolderId = null;
+    const incompleteV5AclCatalog = await v5AclWorker.dispatch({
+      command: 'session-acl-catalog',
+      session_id: 'v5-acl-session',
+    });
+    assert.equal(incompleteV5AclCatalog.objects.some((entry) => (
+      entry.object_type === 'resource'
+      && entry.object_id === 'existing-v5-resource-id'
+      && entry.name === 'Portale v5 con marker incompleti'
+    )), true);
+    assert.equal(incompleteV5AclCatalog.objects.some((entry) => (
+      entry.object_type === 'folder'
+      && entry.object_id === 'folder-v5-marker-only-id'
+      && entry.name === 'Cartella v5 con marker incompleti'
+      && entry.format === 'v5'
+    )), true);
+    const mutationCountBeforeAclCapabilityDrift = authenticatedMutationCount;
+    resourceTypeCatalogMode = 'malformed';
+    await assert.rejects(
+      v5AclWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'v5-acl-session',
+        object_type: 'resource',
+        object_id: 'existing-v5-resource-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+    );
+    resourceTypeCatalogMode = 'relabel-v5';
+    await assert.rejects(
+      v5AclWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'v5-acl-session',
+        object_type: 'resource',
+        object_id: 'existing-v5-resource-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'PASSBOLT_SERVER_CAPABILITIES_CHANGED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeAclCapabilityDrift);
+    resourceTypeCatalogMode = 'normal';
+    const mutationCountBeforeIncompleteV5AclPlan = authenticatedMutationCount;
+    await assert.rejects(
+      v5AclWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'v5-acl-session',
+        object_type: 'resource',
+        object_id: 'existing-v5-resource-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    await assert.rejects(
+      v5AclWorker.dispatch({
+        command: 'session-acl-plan',
+        session_id: 'v5-acl-session',
+        object_type: 'folder',
+        object_id: 'folder-v5-marker-only-id',
+        desired_permissions: [],
+      }),
+      (error) => error?.code === 'ACL_V5_MUTATION_DISABLED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeIncompleteV5AclPlan);
+    v5ResourceMetadataMode = 'encrypted';
     folderMode = 'empty';
     existingResourceFolderId = null;
     personalMetadataMode = false;
@@ -2315,6 +3056,7 @@ async function main() {
     const persistentWorker = new PersistentImportSession(
       async (envelope) => persistentProgress.push(envelope),
     );
+    const persistentServerCapabilities = await assertPreviewServerCapabilities(mfaSession);
     persistentWorker.state = {
       sessionId: 'persistent-test-session',
       baseUrl,
@@ -2323,6 +3065,7 @@ async function main() {
       key: keyMaterial,
       user: mfaAuthentication.user,
       mfaProvider: mfaAuthentication.mfaProvider,
+      serverCapabilities: persistentServerCapabilities,
     };
     const loginCountBeforePersistentRequests = completedLoginCount;
     const persistentPermissionCatalog = await persistentWorker.permissions({
@@ -2629,6 +3372,45 @@ async function main() {
       ['acl_operation_intent', 'acl_operation_applied', 'acl_batch_completed'],
     );
     assert.equal(JSON.stringify(persistentProgress).includes('existing-resource-password'), false);
+    const legacy016UpgradePlan = await persistentWorker.dispatch({
+      command: 'session-acl-plan',
+      session_id: 'persistent-test-session',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      desired_permissions: [
+        { aro: 'User', aro_foreign_key: 'direct-recipient-id', type: 7 },
+      ],
+    });
+    assert.equal(legacy016UpgradePlan.counts.upgrade, 1);
+    const legacy016UpgradePlanDigest = historicalAclPlanDigest(legacy016UpgradePlan, '0.16.0');
+    assert.equal(legacy016UpgradePlanDigest, persistentWorker.state.aclPlan.legacyPlanDigests.v0_16);
+    assert.notEqual(legacy016UpgradePlanDigest, legacy016UpgradePlan.plan_digest);
+    const mutationCountBeforeLegacy016Recovery = authenticatedMutationCount;
+    const legacy016RecoveryReadiness = await persistentWorker.dispatch({
+      command: 'session-acl-recovery-readiness',
+      session_id: 'persistent-test-session',
+      acl_batch_id: '66666666-6666-4666-8666-666666666666',
+      acl_recovery_state: {
+        batch_id: '66666666-6666-4666-8666-666666666666',
+        app_version: '0.16.0',
+        object_type: 'resource',
+        object_id: 'existing-resource-id',
+        object_state_digest: legacy016UpgradePlan.object_state_digest,
+        desired_acl_digest: legacy016UpgradePlan.desired_acl_digest,
+        plan_digest: legacy016UpgradePlanDigest,
+        desired_permissions: legacy016UpgradePlan.desired_permissions,
+        change_count: legacy016UpgradePlan.change_count,
+        add_count: legacy016UpgradePlan.counts.add,
+        upgrade_count: legacy016UpgradePlan.counts.upgrade,
+        downgrade_count: 0,
+        revoke_count: 0,
+        apply_mode: 'additive',
+      },
+    });
+    assert.equal(legacy016RecoveryReadiness.resolution, 'not_applied');
+    assert.equal(legacy016RecoveryReadiness.retry_write_required, true);
+    assert.match(legacy016RecoveryReadiness.confirmation_required, /^RECUPERA ACL 1 [0-9A-F]{8}$/);
+    assert.equal(authenticatedMutationCount, mutationCountBeforeLegacy016Recovery);
     const revokeResourcePlan = await persistentWorker.dispatch({
       command: 'session-acl-plan',
       session_id: 'persistent-test-session',
@@ -2639,6 +3421,10 @@ async function main() {
     assert.equal(revokeResourcePlan.counts.revoke, 1);
     assert.equal(revokeResourcePlan.effective_user_counts.loss, 1);
     assert.equal(revokeResourcePlan.last_owner_protection.owner_count_after, 1);
+    const legacyRevokeResourcePlanDigest = historicalAclPlanDigest(revokeResourcePlan, '0.28.4-beta.2');
+    assert.match(legacyRevokeResourcePlanDigest, /^[0-9a-f]{64}$/);
+    assert.equal(legacyRevokeResourcePlanDigest, persistentWorker.state.aclPlan.legacyPlanDigests.v0_17_to_0_28);
+    assert.notEqual(legacyRevokeResourcePlanDigest, revokeResourcePlan.plan_digest);
     const secretReadsBeforeRestrictiveApply = existingResourceSecretReadCount;
     existingAclSimulationMode = 'mismatch';
     await assert.rejects(
@@ -2657,26 +3443,58 @@ async function main() {
     );
     assert.equal(resourceAclMode, 'direct');
     existingAclSimulationMode = 'normal';
+    const legacyRestrictiveRecoveryState = {
+      batch_id: '55555555-5555-4555-8555-555555555555',
+      app_version: '0.28.4-beta.2',
+      object_type: 'resource',
+      object_id: 'existing-resource-id',
+      object_state_digest: revokeResourcePlan.object_state_digest,
+      desired_acl_digest: revokeResourcePlan.desired_acl_digest,
+      plan_digest: legacyRevokeResourcePlanDigest,
+      desired_permissions: revokeResourcePlan.desired_permissions,
+      change_count: revokeResourcePlan.change_count,
+      add_count: revokeResourcePlan.counts.add,
+      upgrade_count: revokeResourcePlan.counts.upgrade,
+      downgrade_count: revokeResourcePlan.counts.downgrade,
+      revoke_count: revokeResourcePlan.counts.revoke,
+      apply_mode: revokeResourcePlan.apply_mode,
+    };
+    const mutationCountBeforeInvalidLegacyRecovery = authenticatedMutationCount;
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-recovery-readiness',
+        session_id: 'persistent-test-session',
+        acl_batch_id: '55555555-5555-4555-8555-555555555555',
+        acl_recovery_state: {
+          ...legacyRestrictiveRecoveryState,
+          plan_digest: 'f'.repeat(64),
+        },
+      }),
+      (error) => error?.code === 'ACL_RECOVERY_PLAN_CHANGED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeInvalidLegacyRecovery);
+    const legacy016RestrictiveDigest = historicalAclPlanDigest(revokeResourcePlan, '0.16.0');
+    assert.equal(legacy016RestrictiveDigest, persistentWorker.state.aclPlan.legacyPlanDigests.v0_16);
+    await assert.rejects(
+      persistentWorker.dispatch({
+        command: 'session-acl-recovery-readiness',
+        session_id: 'persistent-test-session',
+        acl_batch_id: '55555555-5555-4555-8555-555555555555',
+        acl_recovery_state: {
+          ...legacyRestrictiveRecoveryState,
+          app_version: '0.16.0',
+          plan_digest: legacy016RestrictiveDigest,
+        },
+      }),
+      (error) => error?.code === 'ACL_RECOVERY_PLAN_CHANGED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeInvalidLegacyRecovery);
     const restrictiveRecoveryProgressStart = persistentProgress.length;
     const restrictiveRecoveryReadiness = await persistentWorker.dispatch({
       command: 'session-acl-recovery-readiness',
       session_id: 'persistent-test-session',
       acl_batch_id: '55555555-5555-4555-8555-555555555555',
-      acl_recovery_state: {
-        batch_id: '55555555-5555-4555-8555-555555555555',
-        object_type: 'resource',
-        object_id: 'existing-resource-id',
-        object_state_digest: revokeResourcePlan.object_state_digest,
-        desired_acl_digest: revokeResourcePlan.desired_acl_digest,
-        plan_digest: revokeResourcePlan.plan_digest,
-        desired_permissions: revokeResourcePlan.desired_permissions,
-        change_count: revokeResourcePlan.change_count,
-        add_count: revokeResourcePlan.counts.add,
-        upgrade_count: revokeResourcePlan.counts.upgrade,
-        downgrade_count: revokeResourcePlan.counts.downgrade,
-        revoke_count: revokeResourcePlan.counts.revoke,
-        apply_mode: revokeResourcePlan.apply_mode,
-      },
+      acl_recovery_state: legacyRestrictiveRecoveryState,
     });
     assert.equal(restrictiveRecoveryReadiness.resolution, 'not_applied');
     assert.equal(restrictiveRecoveryReadiness.destructive_actions_planned, true);
@@ -2935,6 +3753,31 @@ async function main() {
     assert.equal(recoveryReadiness.not_applied_count, 1);
     assert.equal(recoveryReadiness.retry_action_count, 1);
     assert.deepEqual(recoveryReadiness.resource_candidate_ids, [persistentCandidates[0].candidate_id]);
+    const mutationCountBeforeRecoveryCapabilityDrift = authenticatedMutationCount;
+    includeExtraResourceType = true;
+    await assert.rejects(
+      persistentWorker.recoveryImport({
+        command: 'session-recovery-import',
+        session_id: 'persistent-test-session',
+        reconciliation_batch_id: verifiedRecoveryBatchId,
+        recovery_id: recoveryReadiness.recovery_id,
+        recovery_plan_digest: recoveryReadiness.recovery_plan_digest,
+        candidates: persistentCandidates,
+        recovery_state: verifiedRecoveryState,
+        resources: [{
+          ...persistentCandidates[0],
+          password: 'must-not-be-written-after-recovery-drift',
+          description: '',
+        }],
+        resource_format: 'v4',
+        destination_mode: 'root',
+        folder_format: 'none',
+        confirmation: 'RECUPERA 1',
+      }),
+      (error) => error?.code === 'RECOVERY_PLAN_CHANGED',
+    );
+    assert.equal(authenticatedMutationCount, mutationCountBeforeRecoveryCapabilityDrift);
+    includeExtraResourceType = false;
     const recovered = await persistentWorker.recoveryImport({
       command: 'session-recovery-import',
       session_id: 'persistent-test-session',
@@ -2991,8 +3834,27 @@ async function main() {
         reconciliation_progress_envelopes: true,
         batch_dashboard_progress_protocol: true,
         authenticated_preflight_checks: true,
-        release_v4_only_format_rejection: true,
-        release_v5_server_rejection: true,
+        public_v5_resource_format_supported: true,
+        public_v5_folder_format_rejected: true,
+        public_automatic_format_rejected: true,
+        public_unknown_format_rejected: true,
+        public_recovery_none_folder_only: true,
+        dual_profile_server_capability_attestation: true,
+        strict_capability_schema_fail_closed: true,
+        capability_attestation_bound_to_plan: true,
+        metadata_key_material_bound_to_plan: true,
+        persistent_capability_drift_zero_writes: true,
+        recovery_capability_drift_zero_writes: true,
+        acl_capability_drift_zero_writes: true,
+        public_v5_acl_mutation_rejected: true,
+        direct_v5_acl_sink_zero_writes: true,
+        personal_v5_folder_acl_attested: true,
+        new_v5_folder_acl_attested_before_resource_write: true,
+        new_v5_folder_identity_hierarchy_and_format_attested: true,
+        unknown_v5_folder_acl_rejected_with_v4_control: true,
+        public_v5_existing_folder_destination_rejected: true,
+        public_v5_existing_folder_import_zero_writes: true,
+        incomplete_v5_acl_markers_rejected: true,
         post_import_verification_v4_acl: true,
         authenticated_recovery_classification: true,
         recovery_conflicts_blocked: true,
@@ -3008,8 +3870,8 @@ async function main() {
         dormant_internal_v5_resource_creation: true,
         dormant_internal_v5_metadata_and_secret_encrypted: true,
         v4_folder_creation: true,
-        dormant_internal_v5_folder_metadata_decryption: true,
-        dormant_internal_v5_folder_creation: true,
+        v5_folder_catalog_decryption_readonly: true,
+        v5_folder_payload_sink_rejected: true,
         folder_parent_id_assignment: true,
         folder_catalog_paths: true,
         selected_parent_folder: true,
@@ -3017,7 +3879,7 @@ async function main() {
         per_client_destination_mapping: true,
         per_client_mapping_in_digest: true,
         per_client_root_destination: true,
-        dormant_internal_v5_per_client_destination_mapping: true,
+        v5_existing_folder_mapping_rejected: true,
         destination_folder_in_digest: true,
         readonly_destination_filtered: true,
         shared_destination_permission_mask: true,
@@ -3028,6 +3890,8 @@ async function main() {
         existing_acl_restrictive_apply: true,
         existing_acl_resource_secret_reencryption: true,
         existing_acl_idempotent_recovery: true,
+        legacy_acl_journal_recovery_supported: true,
+        legacy_0_16_restrictive_recovery_rejected: true,
         custom_permission_editor_plan: true,
         custom_permissions_bound_to_new_objects: true,
         current_owner_permission_immutable: true,
@@ -3035,7 +3899,8 @@ async function main() {
         shared_recipient_deduplication: true,
         shared_recipient_key_validation: true,
         shared_secret_multi_recipient_encryption: true,
-        dormant_internal_shared_v5_metadata_key_enforced: true,
+        v5_shared_resource_payload_sink_rejected: true,
+        v5_shared_resource_sink_zero_writes: true,
         shared_simulation_before_apply: true,
         shared_partial_failure_reconciliation: true,
         shared_child_folder_permission_inheritance: true,
@@ -3046,7 +3911,7 @@ async function main() {
         empty_personal_child_folder_reconciled: true,
         nonempty_personal_child_folder_blocked: true,
         duplicate_personal_child_folders_identified: true,
-        dormant_internal_shared_v5_folder_metadata_key_enforced: true,
+        v5_shared_folder_payload_sink_rejected: true,
         duplicate_destination_classification: true,
         duplicate_elsewhere_blocked: true,
         partial_failure_reconciliation: true,

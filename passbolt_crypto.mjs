@@ -26,8 +26,8 @@ const MAX_ACL_PERMISSION_ROWS = 20_000;
 const MAX_ACL_CATALOG_BYTES = 3 * 1024 * 1024;
 const MAX_ACL_PLAN_OPERATIONS = 2_000;
 const MAX_GPG_AUTH_CLOCK_SKEW_SECONDS = 300;
-const USER_AGENT = 'Passbolt-Migration-Assistant/0.28.4-beta.2';
-const RELEASE_COMPATIBILITY_PROFILE = 'passbolt-v4-only';
+const USER_AGENT = 'Passbolt-Migration-Assistant/0.29.0-beta.1';
+const RELEASE_COMPATIBILITY_PROFILE = 'passbolt-v4-v5-resource-preview';
 const RESOURCE_METADATA_OBJECT_TYPE = 'PASSBOLT_RESOURCE_METADATA';
 const FOLDER_METADATA_OBJECT_TYPE = 'PASSBOLT_FOLDER_METADATA';
 const SECRET_DATA_OBJECT_TYPE = 'PASSBOLT_SECRET_DATA';
@@ -819,28 +819,271 @@ function normalizeClientDestinationMapping(value, candidates) {
   };
 }
 
-function settingsValue(settings, path, fallback = undefined) {
-  let current = settings;
-  for (const segment of path) {
-    if (!current || typeof current !== 'object' || !Object.hasOwn(current, segment)) return fallback;
-    current = current[segment];
-  }
-  return current;
-}
-
-function requireV4OnlyFormats(resourceFormatValue, folderFormatValue, { allowNoFolder = false } = {}) {
+function requirePreviewFormats(resourceFormatValue, folderFormatValue, { allowNoFolder = false } = {}) {
   const resourceFormat = String(resourceFormatValue ?? '').trim().toLowerCase();
   const folderFormat = String(folderFormatValue ?? '').trim().toLowerCase();
   const allowedFolderFormats = allowNoFolder ? new Set(['v4', 'none']) : new Set(['v4']);
   assert(
-    resourceFormat === 'v4' && allowedFolderFormats.has(folderFormat),
-    'PASSBOLT_V5_DISABLED',
-    'Questa release supporta esclusivamente server e formati Passbolt v4; i formati automatici o v5 sono disabilitati in modo fail-closed.',
+    resourceFormat !== 'auto' && folderFormat !== 'auto',
+    'PASSBOLT_AUTOMATIC_FORMAT_DISABLED',
+    'Il profilo preview richiede formati Passbolt espliciti; la selezione automatica e disabilitata in modo fail-closed.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+  assert(
+    ['v4', 'v5'].includes(resourceFormat),
+    'INVALID_RESOURCE_FORMAT',
+    'Il formato risorsa deve essere esplicitamente v4 oppure v5.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+  assert(
+    folderFormat !== 'v5',
+    'PASSBOLT_V5_FOLDER_DISABLED',
+    'Il profilo preview consente risorse v5 ma non consente la creazione di cartelle v5.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+  assert(
+    allowedFolderFormats.has(folderFormat),
+    'INVALID_FOLDER_FORMAT',
+    allowNoFolder
+      ? 'Il formato cartella deve essere v4 oppure none durante il recupero.'
+      : 'Il formato cartella deve essere esplicitamente v4.',
     { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
   );
 }
 
-async function assertV4OnlyServer(session) {
+function normalizeCapabilityResourceTypes(document) {
+  const body = apiBody(document);
+  assert(
+    Array.isArray(body),
+    'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+    'Il catalogo dei tipi di risorsa Passbolt non e un array valido.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'resource_types' },
+  );
+  const ids = new Set();
+  const slugs = new Set();
+  const types = body.map((entry) => {
+    assert(
+      entry && typeof entry === 'object' && !Array.isArray(entry),
+      'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+      'Il catalogo dei tipi di risorsa Passbolt contiene una voce non valida.',
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'resource_types' },
+    );
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const slug = typeof entry.slug === 'string' ? entry.slug.trim() : '';
+    assert(
+      id && slug && !ids.has(id) && !slugs.has(slug),
+      'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+      'Il catalogo dei tipi di risorsa Passbolt contiene identificatori o slug mancanti o duplicati.',
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'resource_types' },
+    );
+    ids.add(id);
+    slugs.add(slug);
+    let definition = null;
+    if (Object.hasOwn(entry, 'definition')) {
+      definition = parseResourceDefinition(entry.definition);
+      assert(
+        definition,
+        'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+        `La definizione del tipo di risorsa ${slug} non e un oggetto JSON valido.`,
+        { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'resource_types', resource_type_slug: slug },
+      );
+    }
+    return {
+      id,
+      slug,
+      name: typeof entry.name === 'string' ? entry.name.slice(0, 200) : '',
+      definition,
+    };
+  });
+  return types.sort((left, right) => left.slug.localeCompare(right.slug) || left.id.localeCompare(right.id));
+}
+
+function optionalCapabilityBoolean(settings, path, label) {
+  let current = settings;
+  for (let index = 0; index < path.length; index += 1) {
+    const segment = path[index];
+    if (!Object.hasOwn(current, segment)) return false;
+    const value = current[segment];
+    if (index === path.length - 1) {
+      assert(
+        typeof value === 'boolean',
+        'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+        `La capability ${label} deve essere un booleano JSON.`,
+        { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: label },
+      );
+      return value;
+    }
+    assert(
+      value && typeof value === 'object' && !Array.isArray(value),
+      'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+      `La capability ${label} non appartiene a un oggetto JSON valido.`,
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: label },
+    );
+    current = value;
+  }
+  return false;
+}
+
+function normalizeMetadataCapabilitySettings(document) {
+  const body = apiBody(document);
+  assert(
+    body && typeof body === 'object' && !Array.isArray(body),
+    'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+    'Le impostazioni metadata Passbolt non sono un oggetto JSON valido.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'metadata_settings' },
+  );
+  const booleanKeys = [
+    'allow_creation_of_v4_resources',
+    'allow_creation_of_v5_resources',
+    'allow_creation_of_v4_folders',
+    'allow_creation_of_v5_folders',
+  ];
+  const normalized = {};
+  for (const key of booleanKeys) {
+    if (!Object.hasOwn(body, key)) {
+      normalized[key] = null;
+      continue;
+    }
+    assert(
+      typeof body[key] === 'boolean',
+      'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+      `La capability ${key} deve essere un booleano JSON.`,
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: key },
+    );
+    normalized[key] = body[key];
+  }
+  for (const key of ['default_resource_types', 'default_folder_type']) {
+    if (!Object.hasOwn(body, key)) {
+      normalized[key] = null;
+      continue;
+    }
+    assert(
+      typeof body[key] === 'string' && ['v4', 'v5'].includes(body[key]),
+      'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+      `La capability ${key} deve essere v4 oppure v5.`,
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: key },
+    );
+    normalized[key] = body[key];
+  }
+  return normalized;
+}
+
+function attestPreviewCapabilityResponses(settingsResponse, metadataResponse, resourceTypesResponse) {
+  const settings = apiBody(settingsResponse.document);
+  assert(
+    settings && typeof settings === 'object' && !Array.isArray(settings),
+    'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+    'Le impostazioni Passbolt non sono un oggetto JSON valido.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'settings' },
+  );
+  const metadataEnabled = optionalCapabilityBoolean(settings, ['passbolt', 'plugins', 'metadata', 'enabled'], 'metadata.enabled');
+  const jwtEnabled = optionalCapabilityBoolean(settings, ['passbolt', 'plugins', 'jwtAuthentication', 'enabled'], 'jwtAuthentication.enabled');
+  const metadataRouteAvailable = metadataResponse.status >= 200 && metadataResponse.status < 300;
+  const resourceTypes = normalizeCapabilityResourceTypes(resourceTypesResponse.document);
+  const v5ResourceTypeAdvertised = resourceTypes.some((resourceType) => resourceType.slug.startsWith('v5-'));
+  const supportedV5ResourceType = selectResourceType(resourceTypes, 'v5');
+  const v5CapabilityAdvertised = metadataEnabled || metadataRouteAvailable || v5ResourceTypeAdvertised;
+  if (!v5CapabilityAdvertised) {
+    const digestPayload = {
+      server_profile: 'v4',
+      metadata_plugin_enabled: false,
+      metadata_route_available: false,
+      jwt_enabled: jwtEnabled,
+      default_resource_types: 'v4',
+      allow_creation_of_v4_resources: true,
+      allow_creation_of_v5_resources: false,
+      default_folder_type: 'v4',
+      allow_creation_of_v4_folders: true,
+      allow_creation_of_v5_folders: false,
+      resource_types: resourceTypes.map((resourceType) => ({
+        id: resourceType.id,
+        slug: resourceType.slug,
+        definition_digest: resourceType.definition ? digestPlan(resourceType.definition) : null,
+      })),
+    };
+    return {
+      summary: {
+        server_profile: 'v4',
+        metadata_plugin_enabled: false,
+        metadata_route_available: false,
+        v5_resource_type_advertised: false,
+        v5_resource_creation_allowed: false,
+      },
+      normalized: {
+        metadataEnabled: false,
+        jwtEnabled,
+        metadataSettings: null,
+        resourceTypes,
+      },
+      digestPayload,
+    };
+  }
+
+  const metadataSettings = metadataRouteAvailable
+    ? normalizeMetadataCapabilitySettings(metadataResponse.document)
+    : null;
+  const allowV4Resources = metadataSettings?.allow_creation_of_v4_resources;
+  const allowV5Resources = metadataSettings?.allow_creation_of_v5_resources;
+  const allowV4Folders = metadataSettings?.allow_creation_of_v4_folders;
+  const allowV5Folders = metadataSettings?.allow_creation_of_v5_folders;
+  const defaultResourceTypes = metadataSettings?.default_resource_types;
+  const defaultFolderType = metadataSettings?.default_folder_type;
+  assert(
+    metadataEnabled
+      && metadataRouteAvailable
+      && typeof allowV4Resources === 'boolean'
+      && typeof allowV5Resources === 'boolean'
+      && typeof allowV4Folders === 'boolean'
+      && typeof allowV5Folders === 'boolean'
+      && ['v4', 'v5'].includes(defaultResourceTypes)
+      && ['v4', 'v5'].includes(defaultFolderType)
+      && Boolean(supportedV5ResourceType)
+      && (!allowV5Resources || v5ResourceTypeAdvertised)
+      && (defaultResourceTypes !== 'v5' || allowV5Resources)
+      && (defaultFolderType !== 'v5' || allowV5Folders),
+    'PASSBOLT_SERVER_CAPABILITIES_INCOHERENT',
+    'Il server espone capability metadata v5 incomplete o incoerenti; il profilo preview interrompe la sessione in modo fail-closed.',
+    {
+      compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+      metadata_plugin_enabled: metadataEnabled,
+      metadata_route_available: metadataRouteAvailable,
+      v5_resource_type_advertised: v5ResourceTypeAdvertised,
+      supported_v5_resource_type: Boolean(supportedV5ResourceType),
+      allow_creation_of_v5_resources: typeof allowV5Resources === 'boolean' ? allowV5Resources : null,
+      default_resource_types: typeof defaultResourceTypes === 'string' ? defaultResourceTypes : null,
+    },
+  );
+  const digestPayload = {
+    server_profile: 'v5-resource-preview',
+    metadata_plugin_enabled: true,
+    metadata_route_available: true,
+    jwt_enabled: jwtEnabled,
+    ...metadataSettings,
+    resource_types: resourceTypes.map((resourceType) => ({
+      id: resourceType.id,
+      slug: resourceType.slug,
+      definition_digest: resourceType.definition ? digestPlan(resourceType.definition) : null,
+    })),
+  };
+  return {
+    summary: {
+      server_profile: 'v5-resource-preview',
+      metadata_plugin_enabled: true,
+      metadata_route_available: true,
+      v5_resource_type_advertised: true,
+      v5_resource_creation_allowed: allowV5Resources,
+    },
+    normalized: {
+      metadataEnabled: true,
+      jwtEnabled,
+      metadataSettings,
+      resourceTypes,
+    },
+    digestPayload,
+  };
+}
+
+async function assertPreviewServerCapabilities(session) {
   const [settingsResponse, metadataResponse, resourceTypesResponse] = await Promise.all([
     session.request('/settings.json?api-version=v2', { allowError: true }),
     session.request('/metadata/types/settings.json?api-version=v2', { allowError: true }),
@@ -850,25 +1093,18 @@ async function assertV4OnlyServer(session) {
     settingsResponse.status >= 200 && settingsResponse.status < 300
       && resourceTypesResponse.status >= 200 && resourceTypesResponse.status < 300,
     'SERVER_COMPATIBILITY_CHECK_FAILED',
-    'Impossibile attestare che il server appartenga al profilo Passbolt v4 supportato da questa release.',
+    'Impossibile attestare le capability Passbolt richieste dal profilo preview.',
     { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
   );
-  const settings = apiBody(settingsResponse.document) ?? {};
-  const metadataEnabled = Boolean(settingsValue(settings, ['passbolt', 'plugins', 'metadata', 'enabled'], false));
-  const metadataRouteAvailable = metadataResponse.status >= 200 && metadataResponse.status < 300;
-  const v5ResourceTypeAdvertised = simplifyResourceTypes(resourceTypesResponse.document)
-    .some((resourceType) => resourceType.slug.startsWith('v5-'));
-  assert(
-    !metadataEnabled && !metadataRouteAvailable && !v5ResourceTypeAdvertised,
-    'PASSBOLT_V5_SERVER_DISABLED',
-    'Questa release e limitata a Passbolt v4 e rifiuta i server che espongono capability v5.',
-    {
-      compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
-      metadata_plugin_enabled: metadataEnabled,
-      metadata_route_available: metadataRouteAvailable,
-      v5_resource_type_advertised: v5ResourceTypeAdvertised,
-    },
+  const attestation = attestPreviewCapabilityResponses(
+    settingsResponse,
+    metadataResponse,
+    resourceTypesResponse,
   );
+  return {
+    ...attestation.summary,
+    capability_attestation_digest: digestPlan(attestation.digestPayload),
+  };
 }
 
 function normalizeComparable(value) {
@@ -923,6 +1159,23 @@ function isEncryptedMetadataResource(resource) {
 
 function isEncryptedMetadataFolder(folder) {
   return typeof folder?.metadata === 'string' && folder.metadata.includes('-----BEGIN PGP MESSAGE-----');
+}
+
+function hasMetadataKeyMarker(entry) {
+  return Boolean(
+    String(entry?.metadata_key_id ?? '').trim()
+    || String(entry?.metadata_key_type ?? '').trim(),
+  );
+}
+
+function isV5MetadataResource(resource, v5ResourceTypeIds = new Set()) {
+  return isEncryptedMetadataResource(resource)
+    || hasMetadataKeyMarker(resource)
+    || v5ResourceTypeIds.has(String(resource?.resource_type_id ?? '').trim());
+}
+
+function isV5MetadataFolder(folder) {
+  return isEncryptedMetadataFolder(folder) || hasMetadataKeyMarker(folder);
 }
 
 async function decryptMessageText(armoredMessage, decryptionKeys, verificationKeys = undefined, signatureRequired = false, errorCode = 'OPENPGP_DECRYPT_FAILED', errorMessage = 'Decifratura OpenPGP non riuscita.') {
@@ -1408,14 +1661,16 @@ async function decryptExistingFolders(entries, user, keyMaterial, baseUrl, share
   for (const entry of entries) {
     const id = typeof entry.id === 'string' ? entry.id : '';
     assert(id, 'FOLDER_METADATA_INVALID', 'Una cartella esistente non contiene un identificatore valido.');
+    const format = isV5MetadataFolder(entry) ? 'v5' : 'v4';
     const folderParentId = typeof entry.folder_parent_id === 'string' ? entry.folder_parent_id : null;
-    const permissionType = normalizePermissionType(entry.permission?.type);
-    const personal = typeof entry.personal === 'boolean' ? entry.personal : null;
-    const permissions = normalizeFolderPermissions(entry.permissions);
-    const rawPermissionCount = Array.isArray(entry.permissions)
-      ? entry.permissions.filter((permission) => permission && typeof permission === 'object').length
-      : 0;
-    const personalOwnerPermission = findPersonalFolderOwnerPermission(entry.permissions, String(user.id ?? ''), id);
+    const {
+      permissionType,
+      personal,
+      permissions,
+      rawPermissionCount,
+      personalOwnerPermission,
+      personalAclVerified,
+    } = personalFolderAclEvidence(entry, String(user.id ?? ''), id);
     const inferredShared = personal === false || permissions.length > 1 || permissions.some((permission) => (
       permission.aro === 'Group' || permission.aro_foreign_key !== String(user.id ?? '')
     ));
@@ -1427,17 +1682,20 @@ async function decryptExistingFolders(entries, user, keyMaterial, baseUrl, share
       : permissionType === null || permissionType === 7 || permissionType === 15;
     const folderSummary = {
       id,
+      format,
       folder_parent_id: folderParentId,
       permission_type: permissionType,
       personal,
       shared: inferredShared,
-      can_create: canCreateByPermission && sharePlan.ready,
+      operational: format === 'v4',
+      can_create: format === 'v4' && canCreateByPermission && sharePlan.ready,
       share_ready: sharePlan.ready,
       share_failure: sharePlan.failure,
       share_permissions: permissions,
       share_recipients: sharePlan.recipients,
       raw_permission_count: rawPermissionCount,
       personal_owner_permission: personalOwnerPermission,
+      personal_acl_verified: personalAclVerified,
     };
     if (!isEncryptedMetadataFolder(entry)) {
       assert(typeof entry.name === 'string' && entry.name.length > 0, 'FOLDER_METADATA_UNAVAILABLE', 'I metadati di una cartella esistente non sono disponibili.');
@@ -1506,6 +1764,7 @@ function folderSharingFields(folder) {
   if (!folder?.shared) {
     return {
       shared: false,
+      personal_acl_verified: folder?.personal_acl_verified === true,
       share_permissions: [],
       share_recipients: [],
       share_recipient_count: 0,
@@ -1514,11 +1773,20 @@ function folderSharingFields(folder) {
   }
   return {
     shared: true,
+    personal_acl_verified: false,
     share_permissions: folder.share_permissions,
     share_recipients: folder.share_recipients,
     share_recipient_count: folder.share_recipients.length,
     share_permission_count: folder.share_permissions.length,
   };
+}
+
+function existingFolderOperationalFailure(folder, subject = 'La cartella selezionata') {
+  if (!folder || folder.format === 'v4') return null;
+  if (folder.format === 'v5') {
+    return `${subject} usa metadati v5 ed e disponibile soltanto nel catalogo ACL read-only; il profilo preview consente come destinazioni operative esclusivamente cartelle v4.`;
+  }
+  return `${subject} non espone un formato cartella v4 attestato e non puo essere usata come destinazione operativa.`;
 }
 
 function planDestinations(candidates, existingFolders, existingResources, destinationMode, folderFormat, destinationFolderId = null, clientDestinationMapping = null) {
@@ -1599,7 +1867,10 @@ function planDestinations(candidates, existingFolders, existingResources, destin
         });
         continue;
       }
-      if (!folder.can_create && !failure) {
+      const operationalFailure = existingFolderOperationalFailure(folder, `La cartella ${folder.path}, configurata per ${candidate.client},`);
+      if (operationalFailure && !failure) {
+        failure = operationalFailure;
+      } else if (!folder.can_create && !failure) {
         failure = folder.shared && folder.share_failure
           ? `La cartella condivisa ${folder.path} non e utilizzabile: ${folder.share_failure}`
           : `Non disponi del permesso necessario per creare risorse nella cartella ${folder.path}, configurata per ${candidate.client}.`;
@@ -1613,7 +1884,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
           action: 'reuse',
           folder_id: folder.id,
           folder_parent_id: folder.folder_parent_id,
-          format: null,
+          format: folder.format,
+          parent_format: null,
           ...folderSharingFields(folder),
         });
       }
@@ -1638,6 +1910,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
       failure = 'Selezionare la cartella Passbolt nella quale importare direttamente le risorse.';
     } else if (!selectedFolder) {
       failure = 'La cartella Passbolt selezionata non e piu disponibile.';
+    } else if (existingFolderOperationalFailure(selectedFolder)) {
+      failure = existingFolderOperationalFailure(selectedFolder);
     } else if (!selectedFolder.can_create) {
       failure = selectedFolder.shared && selectedFolder.share_failure
         ? `La cartella condivisa selezionata non e utilizzabile: ${selectedFolder.share_failure}`
@@ -1652,7 +1926,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
         action: 'reuse',
         folder_id: selectedFolder.id,
         folder_parent_id: selectedFolder.folder_parent_id,
-        format: null,
+        format: selectedFolder.format,
+        parent_format: null,
         ...folderSharingFields(selectedFolder),
       }] : [],
       destinations: new Map(candidates.map((candidate) => [candidate.candidate_id, {
@@ -1671,6 +1946,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
   let failure = null;
   if (destinationFolderId && !selectedFolder) {
     failure = 'La cartella Passbolt scelta come contenitore non e piu disponibile.';
+  } else if (selectedFolder && existingFolderOperationalFailure(selectedFolder, 'Il contenitore selezionato')) {
+    failure = existingFolderOperationalFailure(selectedFolder, 'Il contenitore selezionato');
   } else if (selectedFolder && !selectedFolder.can_create) {
     failure = selectedFolder.shared && selectedFolder.share_failure
       ? `Il contenitore condiviso selezionato non e utilizzabile: ${selectedFolder.share_failure}`
@@ -1692,7 +1969,12 @@ function planDestinations(candidates, existingFolders, existingResources, destin
     }
     const match = matches.length === 1 ? matches[0] : null;
     let reconcilePersonalFolder = false;
-    if (match && selectedFolder?.shared && !match.shared) {
+    const matchOperationalFailure = match
+      ? existingFolderOperationalFailure(match, `La cartella ${match.path}`)
+      : null;
+    if (matchOperationalFailure) {
+      if (!failure) failure = matchOperationalFailure;
+    } else if (match && selectedFolder?.shared && !match.shared) {
       const containsResources = resourceFolderIds.has(match.id);
       const containsFolders = folderParentIds.has(match.id);
       const hasSoleVerifiedOwner = match.personal === true
@@ -1719,7 +2001,9 @@ function planDestinations(candidates, existingFolders, existingResources, destin
       action: reconcilePersonalFolder ? 'repair_share' : (match ? 'reuse' : 'create'),
       folder_id: match?.id ?? null,
       folder_parent_id: parentId,
-      format: match ? null : folderFormat,
+      format: match ? match.format : folderFormat,
+      parent_format: selectedFolder?.format ?? null,
+      parent_personal_acl_verified: selectedFolder ? selectedFolder.personal_acl_verified === true : null,
       ...((match && !reconcilePersonalFolder) ? folderSharingFields(match) : folderSharingFields(inheritedSharedFolder)),
       existing_permission: reconcilePersonalFolder ? match.personal_owner_permission : null,
       share_inherited_from_folder_id: inheritedSharedFolder?.id ?? null,
@@ -1747,6 +2031,8 @@ function planDestinations(candidates, existingFolders, existingResources, destin
       folder_name: folder.name,
       folder_path: folder.path,
       shared: folder.shared,
+      personal_acl_verified: folder.personal_acl_verified,
+      parent_personal_acl_verified: folder.parent_personal_acl_verified,
       share_permissions: folder.share_permissions,
       share_recipients: folder.share_recipients,
       share_recipient_count: folder.share_recipient_count,
@@ -1756,6 +2042,55 @@ function planDestinations(candidates, existingFolders, existingResources, destin
     });
   }
   return { folders: [...folderPlans.values()], destinations, failure };
+}
+
+function v5PersonalDestinationFailure(selectedFormat, candidatePlan, folderPlan) {
+  if (selectedFormat !== 'v5') return null;
+  const foldersByKey = new Map(folderPlan.map((folder) => [folder.destination_key, folder]));
+  for (const candidate of candidatePlan.filter((item) => item.action === 'create')) {
+    if (candidate.folder_action === 'root') continue;
+    if (candidate.folder_action === 'reuse') {
+      if (candidate.personal_acl_verified !== true) {
+        return `La destinazione ${candidate.folder_path || candidate.folder_id || 'selezionata'} non espone una ACL personale verificata con l’utente autenticato come unico proprietario; la risorsa v5 non verra scritta.`;
+      }
+      continue;
+    }
+    if (candidate.folder_action === 'create') {
+      const folder = foldersByKey.get(candidate.destination_key);
+      if (folder?.folder_parent_id && folder.parent_personal_acl_verified !== true) {
+        return `Il contenitore ${folder.path || folder.folder_parent_id} non espone una ACL personale verificata con l’utente autenticato come unico proprietario; la risorsa v5 non verra scritta.`;
+      }
+      continue;
+    }
+    return 'Il piano v5 contiene una destinazione non personale o non verificabile e viene bloccato prima della scrittura.';
+  }
+  return null;
+}
+
+function personalFolderAclEvidence(entry, currentUserId, folderId) {
+  const permissionType = normalizePermissionType(entry?.permission?.type);
+  const personal = typeof entry?.personal === 'boolean' ? entry.personal : null;
+  const permissions = normalizeFolderPermissions(entry?.permissions);
+  const rawPermissionCount = Array.isArray(entry?.permissions)
+    ? entry.permissions.filter((permission) => permission && typeof permission === 'object').length
+    : 0;
+  const personalOwnerPermission = findPersonalFolderOwnerPermission(
+    entry?.permissions,
+    String(currentUserId ?? ''),
+    String(folderId ?? ''),
+  );
+  return {
+    permissionType,
+    personal,
+    permissions,
+    rawPermissionCount,
+    personalOwnerPermission,
+    personalAclVerified: personal === true
+      && permissionType === 15
+      && rawPermissionCount === 1
+      && permissions.length === 1
+      && Boolean(personalOwnerPermission?.id),
+  };
 }
 
 function credentialIdentityKey(title, username, uri) {
@@ -1898,7 +2233,7 @@ function buildAclObjectCatalog(existingFolders, existingResources, shareDirector
   const objects = [];
   let totalPermissionRows = 0;
 
-  const addObject = ({ objectType, id, name, path, parentPath, permission, permissions, rawPermissionCount }) => {
+  const addObject = ({ objectType, id, name, path, parentPath, format = null, permission, permissions, rawPermissionCount }) => {
     totalPermissionRows += permissions.length;
     assert(totalPermissionRows <= MAX_ACL_PERMISSION_ROWS, 'ACL_CATALOG_TOO_LARGE', `Il catalogo contiene piu di ${MAX_ACL_PERMISSION_ROWS} righe di permesso e non puo essere mostrato in un'unica operazione.`);
     const rows = aclPermissionRows(permissions, shareDirectory, currentUserId);
@@ -1925,6 +2260,7 @@ function buildAclObjectCatalog(existingFolders, existingResources, shareDirector
       name: String(name).slice(0, 300),
       path: String(path).slice(0, 4_096),
       parent_path: parentPath ? String(parentPath).slice(0, 4_096) : null,
+      ...(format ? { format } : {}),
       shared,
       sharing_label: shared ? 'Condiviso' : 'Personale',
       current_access_type: normalizePermissionType(permission?.type),
@@ -1947,6 +2283,7 @@ function buildAclObjectCatalog(existingFolders, existingResources, shareDirector
       name: folder.name,
       path: folder.path,
       parentPath: parent?.path ?? null,
+      format: folder.format,
       permission: folder.permission_type === null ? null : { type: folder.permission_type },
       permissions: folder.share_permissions,
       rawPermissionCount: folder.raw_permission_count,
@@ -1975,18 +2312,75 @@ function buildAclObjectCatalog(existingFolders, existingResources, shareDirector
   ));
 }
 
-async function analyzeAclCatalog(session, user, keyMaterial) {
-  const [resourcesResponse, foldersResponse, shareDirectoryResponse] = await Promise.all([
+async function analyzeAclCatalog(
+  session,
+  user,
+  keyMaterial,
+  expectedCapabilityAttestationDigest = null,
+) {
+  const [
+    settingsResponse,
+    metadataResponse,
+    resourcesResponse,
+    foldersResponse,
+    shareDirectoryResponse,
+    resourceTypesResponse,
+  ] = await Promise.all([
+    session.request('/settings.json?api-version=v2', { allowError: true }),
+    session.request('/metadata/types/settings.json?api-version=v2', { allowError: true }),
     session.request('/resources.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
     session.request('/folders.json?api-version=v2&contain[permission]=1&contain[permissions]=1&contain[permissions.user.profile]=1&contain[permissions.group]=1', { allowError: true }),
     session.request('/share/search-aros.json?api-version=v2&contain[gpgkey]=1&contain[groups_users]=1', { allowError: true }),
+    session.request('/resource-types.json?api-version=v2', { allowError: true }),
   ]);
+  assert(settingsResponse.status >= 200 && settingsResponse.status < 300, 'ACL_SETTINGS_READ_FAILED', apiMessage(settingsResponse.document, 'Impossibile attestare le impostazioni necessarie per classificare gli oggetti ACL v5.'));
   assert(resourcesResponse.status >= 200 && resourcesResponse.status < 300, 'ACL_RESOURCES_READ_FAILED', apiMessage(resourcesResponse.document, 'Impossibile leggere le risorse Passbolt per il visualizzatore dei permessi.'));
   assert(foldersResponse.status >= 200 && foldersResponse.status < 300, 'ACL_FOLDERS_READ_FAILED', apiMessage(foldersResponse.document, 'Impossibile leggere le cartelle Passbolt per il visualizzatore dei permessi.'));
   assert(shareDirectoryResponse.status >= 200 && shareDirectoryResponse.status < 300, 'ACL_DIRECTORY_READ_FAILED', apiMessage(shareDirectoryResponse.document, 'Impossibile leggere la directory autenticata dei soggetti Passbolt.'));
+  assert(resourceTypesResponse.status >= 200 && resourceTypesResponse.status < 300, 'ACL_RESOURCE_TYPES_READ_FAILED', apiMessage(resourceTypesResponse.document, 'Impossibile attestare i tipi risorsa necessari per classificare gli oggetti ACL v5.'));
+
+  const capabilityAttestation = attestPreviewCapabilityResponses(
+    settingsResponse,
+    metadataResponse,
+    resourceTypesResponse,
+  );
+  const capabilityAttestationDigest = digestPlan(capabilityAttestation.digestPayload);
+  if (expectedCapabilityAttestationDigest) {
+    assert(
+      capabilityAttestationDigest === expectedCapabilityAttestationDigest,
+      'PASSBOLT_SERVER_CAPABILITIES_CHANGED',
+      'Le capability Passbolt sono cambiate durante la sessione; riaprire la sessione prima di consultare o modificare ACL.',
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+    );
+  }
 
   const resourceEntries = rawExistingResources(resourcesResponse.document);
   const folderEntries = rawExistingFolders(foldersResponse.document);
+  const resourceTypes = capabilityAttestation.normalized.resourceTypes;
+  const knownResourceTypeIds = new Set(resourceTypes.map((resourceType) => resourceType.id));
+  const unknownTypedResource = resourceEntries.find((entry) => {
+    const resourceTypeId = String(entry?.resource_type_id ?? '').trim();
+    return resourceTypeId && !knownResourceTypeIds.has(resourceTypeId);
+  });
+  assert(
+    !unknownTypedResource,
+    'ACL_RESOURCE_TYPE_UNKNOWN',
+    'Una risorsa ACL usa un tipo non presente nel catalogo attestato; la classificazione viene bloccata in modo fail-closed.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE },
+  );
+  const v5ResourceTypeIds = new Set(
+    resourceTypes
+      .filter((resourceType) => resourceType.slug.startsWith('v5-'))
+      .map((resourceType) => resourceType.id),
+  );
+  const v5ObjectKeys = new Set([
+    ...resourceEntries
+      .filter((entry) => isV5MetadataResource(entry, v5ResourceTypeIds))
+      .map((entry) => `resource:${String(entry.id ?? '').trim()}`),
+    ...folderEntries
+      .filter(isV5MetadataFolder)
+      .map((entry) => `folder:${String(entry.id ?? '').trim()}`),
+  ].filter((key) => !key.endsWith(':')));
   assert(resourceEntries.length + folderEntries.length <= MAX_ACL_OBJECTS, 'ACL_CATALOG_TOO_LARGE', `Il visualizzatore supporta al massimo ${MAX_ACL_OBJECTS} cartelle e risorse per sessione.`);
   const needsMetadataKeys = resourceEntries.some(isEncryptedMetadataResource) || folderEntries.some(isEncryptedMetadataFolder);
   let metadataKeyList = [];
@@ -2028,12 +2422,22 @@ async function analyzeAclCatalog(session, user, keyMaterial) {
       verified_count: objects.filter((entry) => entry.inspection_status === 'verified').length,
       warning_count: objects.filter((entry) => entry.inspection_status !== 'verified').length,
     },
-    runtime: { shareDirectory, permissionRecordsByObject },
+    runtime: {
+      shareDirectory,
+      permissionRecordsByObject,
+      v5ObjectKeys,
+      capabilityAttestationDigest,
+    },
   };
 }
 
-async function readAclCatalog(session, user, keyMaterial) {
-  const analysis = await analyzeAclCatalog(session, user, keyMaterial);
+async function readAclCatalog(session, user, keyMaterial, expectedCapabilityAttestationDigest = null) {
+  const analysis = await analyzeAclCatalog(
+    session,
+    user,
+    keyMaterial,
+    expectedCapabilityAttestationDigest,
+  );
   return analysis.catalog;
 }
 
@@ -2047,6 +2451,17 @@ function normalizeAclObjectId(value) {
   const objectId = String(value ?? '').trim();
   assert(objectId && objectId.length <= 200 && !/[\u0000-\u001f\u007f]/.test(objectId), 'ACL_PLAN_OBJECT_ID_INVALID', 'L’identificativo dell’oggetto selezionato non e valido.');
   return objectId;
+}
+
+function assertAclMutationSupported(runtime, objectTypeValue, objectIdValue) {
+  const objectType = normalizeAclObjectType(objectTypeValue);
+  const objectId = normalizeAclObjectId(objectIdValue);
+  assert(
+    !runtime?.v5ObjectKeys?.has(`${objectType}:${objectId}`),
+    'ACL_V5_MUTATION_DISABLED',
+    'Il profilo preview consente la lettura degli oggetti v5 ma non consente modifiche ACL su cartelle o risorse v5.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: objectType },
+  );
 }
 
 function aclMaskFromRows(rows) {
@@ -2166,7 +2581,13 @@ function aclEffectiveUserImpact(currentPermissions, desiredPermissions, shareDir
   return { before, after, changes, counts };
 }
 
-function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, currentUserId) {
+function buildAclChangePlan(
+  target,
+  desiredPermissionValue,
+  shareDirectory,
+  currentUserId,
+  capabilityAttestationDigest,
+) {
   assert(target && typeof target === 'object', 'ACL_PLAN_OBJECT_NOT_FOUND', 'L’oggetto selezionato non e piu presente su Passbolt.');
   assert(target.acl_complete, 'ACL_PLAN_OBJECT_INCOMPLETE', 'La maschera ACL dell’oggetto selezionato non e completa; il dry-run e bloccato.');
   assert(target.subjects_verified, 'ACL_PLAN_SUBJECTS_UNVERIFIED', 'Uno o piu soggetti della ACL corrente non sono verificabili; il dry-run e bloccato.');
@@ -2268,7 +2689,12 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
     normalizeFolderPermissions([...currentPermissions, ...desiredPermissions]),
     shareDirectory,
   );
-  const planDigest = digestPlan({
+  assert(
+    /^[0-9a-f]{64}$/.test(String(capabilityAttestationDigest ?? '')),
+    'ACL_CAPABILITY_ATTESTATION_REQUIRED',
+    'Il piano ACL non contiene una attestazione valida delle capability Passbolt.',
+  );
+  const legacy016PlanDigestPayload = {
     object_state_digest: objectStateDigest,
     desired_acl_digest: desiredAclDigest,
     directory_state_digest: directoryStateDigest,
@@ -2279,6 +2705,9 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
       before_permission_type: operation.before_permission_type,
       after_permission_type: operation.after_permission_type,
     })),
+  };
+  const legacy017PlanDigestPayload = {
+    ...legacy016PlanDigestPayload,
     effective_user_changes: effectiveImpact.changes.map((entry) => ({
       user_id: entry.user_id,
       action: entry.action,
@@ -2286,8 +2715,14 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
       after_permission_type: entry.after_permission_type,
     })),
     owner_count_after: desiredOwnerCount,
+  };
+  const legacy016PlanDigest = digestPlan(legacy016PlanDigestPayload);
+  const legacy017PlanDigest = digestPlan(legacy017PlanDigestPayload);
+  const planDigest = digestPlan({
+    capability_attestation_digest: capabilityAttestationDigest,
+    ...legacy017PlanDigestPayload,
   });
-  return {
+  const plan = {
     plan_id: randomUUID(),
     object: {
       object_type: target.object_type,
@@ -2299,6 +2734,7 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
     object_state_digest: objectStateDigest,
     desired_acl_digest: desiredAclDigest,
     directory_state_digest: directoryStateDigest,
+    capability_attestation_digest: capabilityAttestationDigest,
     plan_digest: planDigest,
     current_permission_count: currentPermissions.length,
     desired_permission_count: desiredPermissions.length,
@@ -2315,6 +2751,34 @@ function buildAclChangePlan(target, desiredPermissionValue, shareDirectory, curr
     counts,
     operations,
   };
+  Object.defineProperty(plan, 'legacyPlanDigests', {
+    value: Object.freeze({
+      v0_16: legacy016PlanDigest,
+      v0_17_to_0_28: legacy017PlanDigest,
+    }),
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return plan;
+}
+
+function legacyAclJournalDigestScheme(value) {
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.-]+)?$/.exec(String(value ?? '').trim());
+  if (!match || Number(match[1]) !== 0) return null;
+  const minor = Number(match[2]);
+  if (minor === 16) return 'legacy_0_16';
+  if (minor >= 17 && minor <= 28) return 'legacy_0_17_to_0_28';
+  return null;
+}
+
+function aclRecoveryPlanDigestScheme(freshPlan, recovery) {
+  const journalPlanDigest = String(recovery?.plan_digest ?? '');
+  if (freshPlan.plan_digest === journalPlanDigest) return 'capability_bound';
+  const legacyScheme = legacyAclJournalDigestScheme(recovery?.app_version);
+  if (legacyScheme === 'legacy_0_16' && freshPlan.legacyPlanDigests.v0_16 === journalPlanDigest) return legacyScheme;
+  if (legacyScheme === 'legacy_0_17_to_0_28' && freshPlan.legacyPlanDigests.v0_17_to_0_28 === journalPlanDigest) return legacyScheme;
+  return null;
 }
 
 function customSharingFields(permissionConfiguration) {
@@ -2771,27 +3235,27 @@ async function analyzeCapabilities(
   assert(resourcesResponse.status >= 200 && resourcesResponse.status < 300, 'RESOURCES_READ_FAILED', apiMessage(resourcesResponse.document, 'Impossibile leggere i metadati delle risorse Passbolt.'));
   assert(!needsFolderInventory || (foldersResponse.status >= 200 && foldersResponse.status < 300), 'FOLDERS_READ_FAILED', apiMessage(foldersResponse.document, 'Impossibile leggere le cartelle Passbolt.'));
 
-  const settings = apiBody(settingsResponse.document) ?? {};
-  const metadataEnabled = Boolean(settingsValue(settings, ['passbolt', 'plugins', 'metadata', 'enabled'], false));
-  const metadataResponseSucceeded = metadataResponse.status >= 200 && metadataResponse.status < 300;
-  assert(!metadataEnabled || metadataResponseSucceeded, 'METADATA_SETTINGS_READ_FAILED', apiMessage(metadataResponse.document, 'Il plugin metadata e attivo ma le relative impostazioni non sono leggibili.'));
-  const metadataSettings = metadataResponseSucceeded ? (apiBody(metadataResponse.document) ?? {}) : null;
-  const types = simplifyResourceTypes(resourceTypesResponse.document);
+  const capabilityAttestation = attestPreviewCapabilityResponses(
+    settingsResponse,
+    metadataResponse,
+    resourceTypesResponse,
+  );
+  const {
+    metadataEnabled,
+    jwtEnabled,
+    metadataSettings,
+    resourceTypes: types,
+  } = capabilityAttestation.normalized;
   const resourceEntries = rawExistingResources(resourcesResponse.document);
   const folderEntries = foldersResponse.status >= 200 && foldersResponse.status < 300
     ? rawExistingFolders(foldersResponse.document)
     : [];
-  const jwtEnabled = Boolean(settingsValue(settings, ['passbolt', 'plugins', 'jwtAuthentication', 'enabled'], false));
-  const allowV4 = metadataSettings === null ? true : Boolean(metadataSettings.allow_creation_of_v4_resources);
-  const allowV5 = metadataSettings === null ? false : Boolean(metadataSettings.allow_creation_of_v5_resources);
-  const allowV4Folders = metadataSettings === null ? true : Boolean(metadataSettings.allow_creation_of_v4_folders);
-  const allowV5Folders = metadataSettings === null ? false : Boolean(metadataSettings.allow_creation_of_v5_folders);
-  const defaultResourceTypes = metadataSettings && typeof metadataSettings.default_resource_types === 'string'
-    ? metadataSettings.default_resource_types
-    : 'v4';
-  const defaultFolderType = metadataSettings && typeof metadataSettings.default_folder_type === 'string'
-    ? metadataSettings.default_folder_type
-    : 'v4';
+  const allowV4 = metadataSettings === null ? true : metadataSettings.allow_creation_of_v4_resources;
+  const allowV5 = metadataSettings === null ? false : metadataSettings.allow_creation_of_v5_resources;
+  const allowV4Folders = metadataSettings === null ? true : metadataSettings.allow_creation_of_v4_folders;
+  const allowV5Folders = metadataSettings === null ? false : metadataSettings.allow_creation_of_v5_folders;
+  const defaultResourceTypes = metadataSettings?.default_resource_types ?? 'v4';
+  const defaultFolderType = metadataSettings?.default_folder_type ?? 'v4';
 
   const formatOrder = requestedFormat === 'auto'
     ? [...new Set([defaultResourceTypes === 'v5' ? 'v5' : 'v4', defaultResourceTypes === 'v5' ? 'v4' : 'v5'])]
@@ -2830,12 +3294,30 @@ async function analyzeCapabilities(
       session.request('/metadata/keys.json?api-version=v2&contain[metadata_private_keys]=1', { allowError: true }),
     ]);
     if (keySettingsResponse.status >= 200 && keySettingsResponse.status < 300) {
-      metadataKeySettings = apiBody(keySettingsResponse.document) ?? {};
+      const body = apiBody(keySettingsResponse.document);
+      assert(
+        body && typeof body === 'object' && !Array.isArray(body)
+          && Object.hasOwn(body, 'allow_usage_of_personal_keys')
+          && typeof body.allow_usage_of_personal_keys === 'boolean',
+        'PASSBOLT_SERVER_CAPABILITY_SCHEMA_INVALID',
+        'La capability allow_usage_of_personal_keys deve essere un booleano JSON.',
+        { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, capability: 'allow_usage_of_personal_keys' },
+      );
+      metadataKeySettings = {
+        allow_usage_of_personal_keys: body.allow_usage_of_personal_keys,
+      };
     }
     if (keysResponse.status >= 200 && keysResponse.status < 300) {
       metadataKeyList = metadataKeyEntries(keysResponse.document);
     }
   }
+  const capabilityAttestationPayload = {
+    ...capabilityAttestation.digestPayload,
+    metadata_key_policy: needsMetadataSupport ? {
+      route_available: metadataKeySettings !== null,
+      allow_usage_of_personal_keys: metadataKeySettings?.allow_usage_of_personal_keys ?? null,
+    } : null,
+  };
   const sharedKeyEntries = new Map(metadataKeyList.map((entry) => [String(entry.id), entry]));
   const sharedKeyCache = new Map();
   let shareDirectory = null;
@@ -2881,7 +3363,7 @@ async function analyzeCapabilities(
       metadataKeyFailure = 'La chiave utente e necessaria per preparare contenuti v5.';
     } else if (!metadataKeySettings) {
       metadataKeyFailure = 'Le impostazioni delle chiavi metadati v5 non sono leggibili.';
-    } else if (Boolean(metadataKeySettings.allow_usage_of_personal_keys)) {
+    } else if (metadataKeySettings.allow_usage_of_personal_keys) {
       const userGpgKeyId = String(user.gpgkey?.id ?? '');
       if (!userGpgKeyId) {
         metadataKeyFailure = 'Passbolt non ha restituito l’identificatore della chiave personale dell’utente.';
@@ -3001,9 +3483,25 @@ async function analyzeCapabilities(
     metadataEncryptionKey = null;
   }
   const sharedMetadataKeyInUse = sharedResourceMetadataRequired || sharedFolderMetadataRequired;
+  const capabilityAttestationDigest = digestPlan({
+    ...capabilityAttestationPayload,
+    selected_metadata_key: metadataEncryptionKey ? {
+      id: metadataEncryptionKey.id,
+      type: metadataEncryptionKey.type,
+      fingerprint: metadataEncryptionKey.fingerprint,
+    } : null,
+    selected_shared_metadata_key: sharedMetadataKeyInUse && sharedMetadataEncryptionKey ? {
+      id: sharedMetadataEncryptionKey.id,
+      type: sharedMetadataEncryptionKey.type,
+      fingerprint: sharedMetadataEncryptionKey.fingerprint,
+    } : null,
+  });
   const blockedCount = candidatePlan.filter((item) => item.action === 'blocked').length;
   const csrfAvailable = Boolean(session.csrfToken);
   const folderFormatAvailable = !needsClientFolderMapping || Boolean(selectedFolderFormat);
+  const v5FolderFormatBlocked = selectedFolderFormat === 'v5';
+  const v5AclMutationBlocked = selectedFormat === 'v5' && sharedCreateCount > 0;
+  const v5PersonalDestinationReason = v5PersonalDestinationFailure(selectedFormat, candidatePlan, folderPlan);
   const canImport = Boolean(resourceType)
     && folderFormatAvailable
     && duplicateDetectionAvailable
@@ -3012,7 +3510,10 @@ async function analyzeCapabilities(
     && blockedCount === 0
     && csrfAvailable
     && !metadataKeyFailure
-    && !sharedMetadataKeyFailure;
+    && !sharedMetadataKeyFailure
+    && !v5FolderFormatBlocked
+    && !v5AclMutationBlocked
+    && !v5PersonalDestinationReason;
   let reason = null;
   if (!resourceType) {
     reason = requestedFormat === 'auto'
@@ -3028,12 +3529,18 @@ async function analyzeCapabilities(
     reason = folderFailure;
   } else if (destinationPlan.failure) {
     reason = destinationPlan.failure;
+  } else if (v5FolderFormatBlocked) {
+    reason = 'Il profilo preview consente cartelle operative esclusivamente v4 e blocca la creazione o il riuso operativo di cartelle v5.';
   } else if (blockedCount > 0) {
     reason = `${blockedCount} credenziali esistono in una cartella diversa dalla destinazione prevista. Il piano e bloccato per evitare spostamenti impliciti.`;
   } else if (metadataKeyFailure) {
     reason = metadataKeyFailure;
   } else if (sharedMetadataKeyFailure) {
     reason = sharedMetadataKeyFailure;
+  } else if (v5AclMutationBlocked) {
+    reason = 'Il profilo preview consente risorse v5 personali ma blocca le modifiche ACL necessarie per creare o condividere una risorsa v5 condivisa.';
+  } else if (v5PersonalDestinationReason) {
+    reason = v5PersonalDestinationReason;
   } else if (!csrfAvailable) {
     reason = 'Il server non ha fornito il token CSRF richiesto per una scrittura sicura.';
   }
@@ -3065,9 +3572,11 @@ async function analyzeCapabilities(
     {
       id: 'folder_format',
       label: 'Formato cartelle',
-      status: needsClientFolderMapping ? (folderFormatAvailable ? 'passed' : 'blocked') : 'not_required',
+      status: needsClientFolderMapping ? ((folderFormatAvailable && !v5FolderFormatBlocked) ? 'passed' : 'blocked') : 'not_required',
       detail: needsClientFolderMapping
-        ? (folderFormatAvailable ? `Formato ${selectedFolderFormat}.` : 'Nessun formato cartella compatibile disponibile.')
+        ? (v5FolderFormatBlocked
+          ? 'Le cartelle v5 non sono destinazioni operative nel profilo preview.'
+          : (folderFormatAvailable ? `Formato ${selectedFolderFormat}.` : 'Nessun formato cartella compatibile disponibile.'))
         : 'Il piano non deve creare cartelle per cliente.',
     },
     {
@@ -3097,16 +3606,20 @@ async function analyzeCapabilities(
     {
       id: 'permission_directory',
       label: 'Directory permessi',
-      status: permissionDirectoryRequired ? (shareDirectory ? 'passed' : 'blocked') : (shareDirectory ? 'passed' : 'not_required'),
-      detail: shareDirectory
-        ? 'Utenti, gruppi e chiavi pubbliche sono disponibili.'
-        : (permissionDirectoryRequired ? 'La condivisione richiede una directory autenticata leggibile.' : 'Nessuna condivisione richiede la directory nel piano corrente.'),
+      status: v5AclMutationBlocked
+        ? 'blocked'
+        : (permissionDirectoryRequired ? (shareDirectory ? 'passed' : 'blocked') : (shareDirectory ? 'passed' : 'not_required')),
+      detail: v5AclMutationBlocked
+        ? 'Le modifiche ACL su risorse v5 sono disabilitate nel profilo preview.'
+        : (shareDirectory
+          ? 'Utenti, gruppi e chiavi pubbliche sono disponibili.'
+          : (permissionDirectoryRequired ? 'La condivisione richiede una directory autenticata leggibile.' : 'Nessuna condivisione richiede la directory nel piano corrente.')),
     },
     {
       id: 'destination_access',
       label: 'Accesso destinazione',
-      status: destinationPlan.failure ? 'blocked' : 'passed',
-      detail: destinationPlan.failure || 'Destinazioni risolte con diritto di creazione.',
+      status: (destinationPlan.failure || v5PersonalDestinationReason) ? 'blocked' : 'passed',
+      detail: destinationPlan.failure || v5PersonalDestinationReason || 'Destinazioni risolte con diritto di creazione.',
     },
     {
       id: 'conflicts',
@@ -3122,6 +3635,7 @@ async function analyzeCapabilities(
     : (preflightChecks.some((item) => item.status === 'warning') ? 'warning' : 'passed');
   const digestPayload = {
     user_id: String(user.id),
+    capability_attestation_digest: capabilityAttestationDigest,
     resource_format_requested: requestedFormat,
     resource_format_selected: selectedFormat,
     resource_type_id: resourceType?.id ?? null,
@@ -3155,8 +3669,9 @@ async function analyzeCapabilities(
       default_folder_type: defaultFolderType,
       allow_creation_of_v4_folders: allowV4Folders,
       allow_creation_of_v5_folders: allowV5Folders,
-      allow_usage_of_personal_metadata_keys: metadataKeySettings === null ? null : Boolean(metadataKeySettings.allow_usage_of_personal_keys),
+      allow_usage_of_personal_metadata_keys: metadataKeySettings?.allow_usage_of_personal_keys ?? null,
     },
+    capability_attestation_digest: capabilityAttestationDigest,
     resource_format_requested: requestedFormat,
     resource_format_selected: selectedFormat,
     destination_mode: destinationMode,
@@ -3184,13 +3699,17 @@ async function analyzeCapabilities(
     preflight_checks: preflightChecks,
     can_import: canImport,
     unavailable_reason: reason,
-    available_folders: folderCatalog.filter((folder) => folder.can_create).map((folder) => ({
+    available_folders: folderCatalog.filter((folder) => (
+      folder.can_create && (selectedFormat !== 'v5' || folder.personal_acl_verified === true)
+    )).map((folder) => ({
       id: folder.id,
       name: folder.name,
+      format: folder.format,
       folder_parent_id: folder.folder_parent_id,
       path: folder.path,
       permission_type: folder.permission_type,
       personal: folder.personal,
+      personal_acl_verified: folder.personal_acl_verified,
       shared: folder.shared,
       share_recipient_count: folder.share_recipients.length,
       share_permission_count: folder.share_permissions.length,
@@ -3213,9 +3732,11 @@ async function analyzeCapabilities(
   return {
     capabilities,
     runtime: {
+      currentUserId: String(user.id ?? ''),
       resourceType,
       selectedFormat,
       selectedFolderFormat,
+      capabilityAttestationDigest,
       metadataEncryptionKey,
       sharedMetadataEncryptionKey,
       shareDirectory,
@@ -3245,7 +3766,7 @@ async function inspectKey(input) {
 }
 
 async function readiness(input) {
-  requireV4OnlyFormats(input.resource_format, input.folder_format);
+  requirePreviewFormats(input.resource_format, input.folder_format);
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
   const candidates = safeCandidates(input.candidates);
@@ -3253,7 +3774,6 @@ async function readiness(input) {
   const session = new PassboltSession(baseUrl);
   try {
     const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
-    await assertV4OnlyServer(session);
     const capabilities = await readCapabilities(
       session,
       user,
@@ -3303,40 +3823,128 @@ async function encryptSecret(password, description, resourceType, key, encryptio
 async function buildFolderPayload(folder, runtime, keyMaterial) {
   assert(folder && folder.action === 'create', 'FOLDER_PLAN_INVALID', 'La cartella da creare non appartiene al piano.');
   assert(typeof folder.name === 'string' && folder.name.length > 0, 'FOLDER_PLAN_INVALID', 'La cartella da creare non contiene un nome valido.');
-  assert(['v4', 'v5'].includes(folder.format), 'FOLDER_FORMAT_UNAVAILABLE', 'Il formato della cartella da creare non e disponibile.');
-  if (folder.format === 'v4') {
-    return {
-      name: folder.name,
-      folder_parent_id: folder.folder_parent_id ?? null,
-    };
-  }
-
-  const metadataEncryptionKey = folder.shared
-    ? runtime.sharedMetadataEncryptionKey
-    : runtime.metadataEncryptionKey;
-  assert(metadataEncryptionKey?.publicKey, 'METADATA_KEY_UNAVAILABLE', 'La chiave di cifratura dei metadati v5 non e disponibile.');
-  const clearMetadata = JSON.stringify({
-    object_type: FOLDER_METADATA_OBJECT_TYPE,
-    name: folder.name,
-  });
-  const encryptedMetadata = await openpgp.encrypt({
-    message: await openpgp.createMessage({ text: clearMetadata }),
-    encryptionKeys: metadataEncryptionKey.publicKey,
-    signingKeys: keyMaterial.privateKey,
-    format: 'armored',
-  });
+  assert(
+    folder.format === 'v4'
+      && (
+        folder.folder_parent_id === null || folder.folder_parent_id === undefined
+          ? (folder.parent_format === null || folder.parent_format === undefined || folder.parent_format === 'v4')
+          : folder.parent_format === 'v4'
+      ),
+    'PASSBOLT_V5_FOLDER_DISABLED',
+    'Il profilo preview consente cartelle operative esclusivamente v4 e rifiuta il payload cartella prima della scrittura.',
+    {
+      compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+      folder_format: String(folder.format ?? ''),
+      parent_folder_format: String(folder.parent_format ?? ''),
+    },
+  );
   return {
-    metadata: encryptedMetadata,
-    metadata_key_id: metadataEncryptionKey.id,
-    metadata_key_type: metadataEncryptionKey.type,
+    name: folder.name,
     folder_parent_id: folder.folder_parent_id ?? null,
   };
+}
+
+async function attestCreatedPersonalFolderForV5(
+  session,
+  folderId,
+  currentUserId,
+  expectedName,
+  expectedParentId,
+) {
+  const response = await session.request(
+    `/folders/${encodeURIComponent(folderId)}.json?api-version=v2&contain[permission]=1&contain[permissions]=1`,
+    { allowError: true },
+  );
+  assert(
+    response.status >= 200 && response.status < 300,
+    'FOLDER_PERSONAL_ACL_READ_FAILED',
+    `La cartella appena creata non puo essere riletta per attestare la ACL personale (HTTP ${response.status}).`,
+    { http_status: response.status },
+  );
+  const entry = apiBody(response.document);
+  assert(
+    entry && typeof entry === 'object' && String(entry.id ?? '') === String(folderId),
+    'FOLDER_PERSONAL_ACL_READ_FAILED',
+    'La cartella riletta non corrisponde alla destinazione appena creata.',
+  );
+  const normalizedExpectedParentId = expectedParentId === null || expectedParentId === undefined
+    ? null
+    : String(expectedParentId);
+  const actualParentId = entry.folder_parent_id === null || entry.folder_parent_id === undefined
+    ? null
+    : (typeof entry.folder_parent_id === 'string' ? entry.folder_parent_id : undefined);
+  assert(
+    typeof expectedName === 'string'
+      && expectedName.length > 0
+      && typeof entry.name === 'string'
+      && entry.name === expectedName
+      && actualParentId !== undefined
+      && actualParentId === normalizedExpectedParentId,
+    'FOLDER_PERSONAL_DESTINATION_MISMATCH',
+    'La cartella riletta non conserva nome e gerarchia della destinazione v4 appena creata.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'folder' },
+  );
+  assert(
+    !isV5MetadataFolder(entry),
+    'PASSBOLT_V5_FOLDER_DISABLED',
+    'La cartella appena creata espone marker metadata v5 e non puo essere usata come destinazione operativa dal profilo preview.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'folder' },
+  );
+  const evidence = personalFolderAclEvidence(entry, currentUserId, folderId);
+  assert(
+    evidence.personalAclVerified,
+    'FOLDER_PERSONAL_ACL_NOT_VERIFIED',
+    'La cartella appena creata non espone una ACL personale completa con l’utente autenticato come unico proprietario.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'folder' },
+  );
+  return evidence;
 }
 
 async function buildResourcePayload(resource, runtime, keyMaterial, folderParentId = null) {
   const resourceType = runtime.resourceType;
   assert(resourceType && runtime.selectedFormat, 'RESOURCE_TYPE_UNAVAILABLE', 'Il tipo di risorsa selezionato non e disponibile.');
   const v5 = runtime.selectedFormat === 'v5';
+  if (folderParentId !== null && folderParentId !== undefined) {
+    const destinationFolders = [
+      ...(Array.isArray(runtime?.folders) ? runtime.folders : []),
+      ...(Array.isArray(runtime?.destinationFolders) ? runtime.destinationFolders : []),
+    ].filter((folder) => (
+      String(folder?.folder_id ?? '') === String(folderParentId)
+      || (resource?.destination_key && folder?.destination_key === resource.destination_key)
+    ));
+    assert(
+      destinationFolders.length > 0 && destinationFolders.every((folder) => folder?.format === 'v4'),
+      'PASSBOLT_V5_FOLDER_DISABLED',
+      'La destinazione del payload risorsa non e una cartella v4 attestata; il profilo preview interrompe la costruzione prima della scrittura.',
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, folder_id: String(folderParentId) },
+    );
+    const unverifiedPersonalDestination = v5 && destinationFolders.find((folder) => (
+      (folder?.action === 'reuse' && folder.personal_acl_verified !== true)
+      || (
+        folder?.action === 'create'
+        && (
+          folder.personal_acl_verified !== true
+          || (
+            folder.folder_parent_id !== null
+            && folder.folder_parent_id !== undefined
+            && folder.parent_personal_acl_verified !== true
+          )
+        )
+      )
+    ));
+    assert(
+      !unverifiedPersonalDestination,
+      'ACL_V5_MUTATION_DISABLED',
+      'La destinazione della risorsa v5 non possiede una attestazione ACL personale sufficiente; il payload viene rifiutato prima della scrittura.',
+      { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'resource', folder_id: String(folderParentId) },
+    );
+  }
+  assert(
+    !(v5 && resource?.shared),
+    'ACL_V5_MUTATION_DISABLED',
+    'Il profilo preview non consente di costruire payload per risorse v5 condivise o soggette a modifiche ACL.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'resource' },
+  );
   const descriptionInMetadata = resourceDescriptionIsMetadata(resourceType);
   const metadataFields = {
     name: resource.title,
@@ -3595,6 +4203,7 @@ async function simulateExistingAclChange(session, objectType, objectId, permissi
 async function applyExistingAcl(session, target, desiredPermissions, runtime, keyMaterial, currentUserId, planCounts, progress) {
   const objectType = normalizeAclObjectType(target.object_type);
   const objectId = normalizeAclObjectId(target.object_id);
+  assertAclMutationSupported(runtime, objectType, objectId);
   const permissionRecords = runtime.permissionRecordsByObject.get(`${objectType}:${objectId}`);
   const permissionChanges = buildExistingPermissionChanges(target, desiredPermissions, permissionRecords, String(currentUserId));
   const currentPermissions = aclMaskFromRows(target.permissions);
@@ -3685,6 +4294,12 @@ async function applyExistingAcl(session, target, desiredPermissions, runtime, ke
 }
 
 async function shareCreatedResource(session, resourceId, createdPermission, planned, resource, runtime, keyMaterial) {
+  assert(
+    runtime?.selectedFormat === 'v4' && !String(runtime?.resourceType?.slug ?? '').startsWith('v5-'),
+    'ACL_V5_MUTATION_DISABLED',
+    'Il profilo preview non consente simulazioni o scritture ACL su risorse v5.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'resource' },
+  );
   const permissionChanges = buildResourcePermissionChanges(createdPermission, planned.share_permissions, resourceId);
   const simulation = await session.request(`/share/simulate/resource/${resourceId}.json?api-version=v2`, {
     method: 'POST',
@@ -3783,12 +4398,57 @@ function technicalDigest(value) {
 
 async function createPlannedContent(session, createPlan, resources, runtime, keyMaterial, progress = async () => {}) {
   assert(typeof progress === 'function', 'INVALID_PROGRESS_WRITER', 'Il canale di avanzamento non e valido.');
+  const operationalFolders = Array.isArray(runtime?.folders) ? runtime.folders : [];
+  const destinationFolders = Array.isArray(runtime?.destinationFolders) ? runtime.destinationFolders : [];
+  const unsupportedFolder = [...operationalFolders, ...destinationFolders].find((folder) => (
+    folder?.format !== 'v4'
+    || (
+      folder?.action === 'create'
+      && folder.folder_parent_id !== null
+      && folder.folder_parent_id !== undefined
+      && folder.parent_format !== 'v4'
+    )
+  ));
+  assert(
+    !unsupportedFolder,
+    'PASSBOLT_V5_FOLDER_DISABLED',
+    'Il piano contiene una cartella o un contenitore non v4; il profilo preview interrompe l’importazione prima delle scritture.',
+    {
+      compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+      folder_format: String(unsupportedFolder?.format ?? ''),
+      parent_folder_format: String(unsupportedFolder?.parent_format ?? ''),
+    },
+  );
+  assert(
+    !(runtime?.selectedFormat === 'v5' && createPlan.some((candidate) => candidate?.shared)),
+    'ACL_V5_MUTATION_DISABLED',
+    'Il piano contiene una risorsa v5 condivisa; il profilo preview interrompe l’importazione prima delle scritture ACL.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'resource' },
+  );
+  const operationalFoldersByKey = new Map(operationalFolders.map((folder) => [folder.destination_key, folder]));
+  const unverifiedV5Destination = runtime?.selectedFormat === 'v5'
+    ? createPlan.find((candidate) => {
+      if (candidate?.folder_action === 'root') return false;
+      if (candidate?.folder_action === 'reuse') return candidate.personal_acl_verified !== true;
+      if (candidate?.folder_action === 'create') {
+        const folder = operationalFoldersByKey.get(candidate.destination_key);
+        return Boolean(folder?.folder_parent_id) && folder.parent_personal_acl_verified !== true;
+      }
+      return true;
+    })
+    : null;
+  assert(
+    !unverifiedV5Destination,
+    'ACL_V5_MUTATION_DISABLED',
+    'Il piano v5 contiene una destinazione che non possiede una attestazione ACL personale sufficiente; l’importazione viene bloccata prima delle scritture.',
+    { compatibility_profile: RELEASE_COMPATIBILITY_PROFILE, object_type: 'resource' },
+  );
   const created = [];
   const createdFolders = [];
   const reconciledFolders = [];
   const resourceMap = new Map(resources.map((item) => [item.candidate_id, item]));
   const folderIds = new Map();
-  for (const folder of runtime.folders) {
+  for (const folder of operationalFolders) {
     if (folder.action === 'reuse') {
       folderIds.set(folder.destination_key, folder.folder_id);
       continue;
@@ -3936,6 +4596,44 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       share_inherited_from_folder_id: folder.share_inherited_from_folder_id ?? null,
     };
     createdFolders.push(createdFolder);
+    folder.folder_id = folderId;
+    if (runtime?.selectedFormat === 'v5') {
+      try {
+        await attestCreatedPersonalFolderForV5(
+          session,
+          folderId,
+          String(runtime?.currentUserId ?? ''),
+          folder.name,
+          folder.folder_parent_id ?? null,
+        );
+        folder.personal_acl_verified = true;
+      } catch (error) {
+        const causeCode = error instanceof SafeError ? error.code : 'INTERNAL_ERROR';
+        await progress('operation_failed', {
+          operation_id: createFolderOperationId,
+          object_type: 'folder',
+          folder_id: folderId,
+          error_code: causeCode,
+          outcome: 'partial',
+          ...(error instanceof SafeError && Number.isInteger(error.details?.http_status)
+            ? { http_status: error.details.http_status }
+            : {}),
+        });
+        throw new SafeError(
+          'IMPORT_PARTIAL_FAILURE',
+          `La cartella ${folder.name} e stata creata, ma identita, gerarchia, formato v4 e ACL personale non sono stati attestati integralmente; nessuna risorsa v5 e stata scritta nella destinazione.`,
+          {
+            created_folders: createdFolders,
+            reconciled_folders: reconciledFolders,
+            created,
+            failed_folder_name: folder.name,
+            created_unverified_folder_id: folderId,
+            cause_code: causeCode,
+            http_status: error instanceof SafeError ? error.details?.http_status : undefined,
+          },
+        );
+      }
+    }
     await progress('folder_created', {
       operation_id: createFolderOperationId,
       folder_id: folderId,
@@ -4003,7 +4701,11 @@ async function createPlannedContent(session, createPlan, resources, runtime, key
       ? null
       : folderIds.get(planned.destination_key);
     assert(planned.folder_action === 'root' || typeof folderParentId === 'string', 'FOLDER_DESTINATION_MISSING', `La destinazione di ${resource.title} non e disponibile.`);
-    const payload = await buildResourcePayload(resource, runtime, keyMaterial, folderParentId ?? null);
+    const payload = await buildResourcePayload({
+      ...resource,
+      destination_key: planned.destination_key,
+      shared: Boolean(planned.shared),
+    }, runtime, keyMaterial, folderParentId ?? null);
     const createResourceOperationId = randomUUID();
     await progress('operation_intent', {
       operation_id: createResourceOperationId,
@@ -4338,7 +5040,7 @@ async function verifyCreatedResources(
 }
 
 async function executeImport(input) {
-  requireV4OnlyFormats(input.resource_format, input.folder_format);
+  requirePreviewFormats(input.resource_format, input.folder_format);
   const baseUrl = normalizeBaseUrl(input.base_url);
   const expectedFingerprint = normalizeFingerprint(input.expected_server_fingerprint, 'Fingerprint attesa del server');
   const candidates = safeCandidates(input.candidates);
@@ -4346,7 +5048,6 @@ async function executeImport(input) {
   const session = new PassboltSession(baseUrl);
   try {
     const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
-    await assertV4OnlyServer(session);
     const analysis = await analyzeCapabilities(
       session,
       user,
@@ -4453,7 +5154,7 @@ class PersistentImportSession {
     const session = new PassboltSession(baseUrl);
     try {
       const { user, mfaProvider } = await authenticate(session, key, expectedFingerprint, input.mfa_totp);
-      await assertV4OnlyServer(session);
+      const serverCapabilities = await assertPreviewServerCapabilities(session);
       const sessionId = randomUUID();
       this.state = {
         sessionId,
@@ -4463,6 +5164,7 @@ class PersistentImportSession {
         key,
         user,
         mfaProvider,
+        serverCapabilities,
       };
       return {
         command: 'session-open',
@@ -4474,6 +5176,7 @@ class PersistentImportSession {
         user_key_fingerprint: key.fingerprint,
         user: safeUser(user),
         compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
+        server_profile: serverCapabilities.server_profile,
         secrets_serialized: false,
       };
     } catch (error) {
@@ -4492,7 +5195,7 @@ class PersistentImportSession {
   }
 
   async readiness(input) {
-    requireV4OnlyFormats(input.resource_format, input.folder_format);
+    requirePreviewFormats(input.resource_format, input.folder_format);
     const state = this.requireState(input);
     await verifyPersistentSession(state.session, String(state.user.id));
     const candidates = safeCandidates(input.candidates);
@@ -4546,7 +5249,12 @@ class PersistentImportSession {
     await verifyPersistentSession(state.session, String(state.user.id));
     state.aclPlan = null;
     state.aclRecovery = null;
-    const catalog = await readAclCatalog(state.session, state.user, state.key);
+    const catalog = await readAclCatalog(
+      state.session,
+      state.user,
+      state.key,
+      state.serverCapabilities?.capability_attestation_digest ?? null,
+    );
     return {
       command: 'acl-catalog',
       session_id: state.sessionId,
@@ -4563,10 +5271,22 @@ class PersistentImportSession {
     await verifyPersistentSession(state.session, String(state.user.id));
     const objectType = normalizeAclObjectType(input.object_type);
     const objectId = normalizeAclObjectId(input.object_id);
-    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const analysis = await analyzeAclCatalog(
+      state.session,
+      state.user,
+      state.key,
+      state.serverCapabilities?.capability_attestation_digest ?? null,
+    );
     const matches = analysis.catalog.objects.filter((entry) => entry.object_type === objectType && entry.object_id === objectId);
     assert(matches.length === 1, 'ACL_PLAN_OBJECT_NOT_FOUND', 'L’oggetto selezionato non e piu presente in modo univoco su Passbolt. Aggiornare il catalogo ACL.');
-    const plan = buildAclChangePlan(matches[0], input.desired_permissions, analysis.runtime.shareDirectory, String(state.user.id));
+    assertAclMutationSupported(analysis.runtime, objectType, objectId);
+    const plan = buildAclChangePlan(
+      matches[0],
+      input.desired_permissions,
+      analysis.runtime.shareDirectory,
+      String(state.user.id),
+      analysis.runtime.capabilityAttestationDigest,
+    );
     const desiredTemplate = normalizeCustomPermissionEntries(input.desired_permissions, String(state.user.id));
     const desiredPermissions = normalizeFolderPermissions([
       ...desiredTemplate,
@@ -4588,6 +5308,7 @@ class PersistentImportSession {
       desiredAclDigest: plan.desired_acl_digest,
       directoryStateDigest: plan.directory_state_digest,
       planDigest: plan.plan_digest,
+      legacyPlanDigests: plan.legacyPlanDigests,
       desiredTemplate,
       desiredPermissions,
       changeCount: plan.change_count,
@@ -4632,10 +5353,22 @@ class PersistentImportSession {
     assert(saved.changeCount > 0 && saved.confirmationRequired, 'ACL_APPLY_NOTHING_TO_DO', 'Il piano non contiene modifiche applicabili.');
     assert(String(input.confirmation ?? '') === saved.confirmationRequired, 'CONFIRMATION_MISMATCH', `Conferma richiesta: ${saved.confirmationRequired}`);
     await verifyPersistentSession(state.session, String(state.user.id));
-    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const analysis = await analyzeAclCatalog(
+      state.session,
+      state.user,
+      state.key,
+      state.serverCapabilities?.capability_attestation_digest ?? null,
+    );
     const matches = analysis.catalog.objects.filter((entry) => entry.object_type === saved.objectType && entry.object_id === saved.objectId);
     assert(matches.length === 1, 'ACL_APPLY_OBJECT_NOT_FOUND', 'L’oggetto del piano non e piu presente in modo univoco su Passbolt.');
-    const freshPlan = buildAclChangePlan(matches[0], saved.desiredTemplate, analysis.runtime.shareDirectory, String(state.user.id));
+    assertAclMutationSupported(analysis.runtime, saved.objectType, saved.objectId);
+    const freshPlan = buildAclChangePlan(
+      matches[0],
+      saved.desiredTemplate,
+      analysis.runtime.shareDirectory,
+      String(state.user.id),
+      analysis.runtime.capabilityAttestationDigest,
+    );
     assert(
       freshPlan.object_state_digest === saved.objectStateDigest
       && freshPlan.desired_acl_digest === saved.desiredAclDigest
@@ -4712,17 +5445,40 @@ class PersistentImportSession {
     }
     const desiredTemplate = normalizeCustomPermissionEntries(recovery.desired_permissions, String(state.user.id));
     await verifyPersistentSession(state.session, String(state.user.id));
-    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const analysis = await analyzeAclCatalog(
+      state.session,
+      state.user,
+      state.key,
+      state.serverCapabilities?.capability_attestation_digest ?? null,
+    );
     const matches = analysis.catalog.objects.filter((entry) => entry.object_type === objectType && entry.object_id === objectId);
     assert(matches.length === 1, 'ACL_RECOVERY_OBJECT_NOT_FOUND', 'L’oggetto del journal ACL non e piu presente in modo univoco su Passbolt.');
-    const freshPlan = buildAclChangePlan(matches[0], desiredTemplate, analysis.runtime.shareDirectory, String(state.user.id));
+    assertAclMutationSupported(analysis.runtime, objectType, objectId);
+    const freshPlan = buildAclChangePlan(
+      matches[0],
+      desiredTemplate,
+      analysis.runtime.shareDirectory,
+      String(state.user.id),
+      analysis.runtime.capabilityAttestationDigest,
+    );
     assert(freshPlan.desired_acl_digest === String(recovery.desired_acl_digest), 'ACL_RECOVERY_DESIRED_CHANGED', 'La ACL desiderata ricostruita non corrisponde al journal locale.');
+    const restrictiveCount = Number(recovery.downgrade_count ?? 0) + Number(recovery.revoke_count ?? 0);
+    const applyMode = String(recovery.apply_mode ?? (restrictiveCount > 0 ? 'restrictive' : 'additive'));
+    assert(['additive', 'mixed', 'restrictive'].includes(applyMode), 'ACL_RECOVERY_PLAN_CHANGED', 'La modalita del piano ACL nel journal non e valida.');
+    const expectedMode = restrictiveCount === 0 ? 'additive' : ((Number(recovery.add_count ?? 0) + Number(recovery.upgrade_count ?? 0)) > 0 ? 'mixed' : 'restrictive');
+    assert(applyMode === expectedMode, 'ACL_RECOVERY_PLAN_CHANGED', 'La modalita del piano ACL non corrisponde ai conteggi del journal.');
     let resolution;
+    let journalPlanDigestScheme = null;
     if (freshPlan.object_state_digest === String(recovery.desired_acl_digest)) {
       resolution = 'remote_success';
     } else if (freshPlan.object_state_digest === String(recovery.object_state_digest)) {
+      journalPlanDigestScheme = aclRecoveryPlanDigestScheme(freshPlan, recovery);
       assert(
-        freshPlan.plan_digest === String(recovery.plan_digest)
+        journalPlanDigestScheme !== null
+        && (
+          journalPlanDigestScheme !== 'legacy_0_16'
+          || (freshPlan.counts.downgrade === 0 && freshPlan.counts.revoke === 0 && applyMode === 'additive')
+        )
         && freshPlan.change_count === Number(recovery.change_count)
         && freshPlan.counts.add === Number(recovery.add_count)
         && freshPlan.counts.upgrade === Number(recovery.upgrade_count)
@@ -4754,11 +5510,6 @@ class PersistentImportSession {
       remote_acl_digest: freshPlan.object_state_digest,
       recovery_plan_digest: recoveryPlanDigest,
     });
-    const restrictiveCount = Number(recovery.downgrade_count ?? 0) + Number(recovery.revoke_count ?? 0);
-    const applyMode = String(recovery.apply_mode ?? (restrictiveCount > 0 ? 'restrictive' : 'additive'));
-    assert(['additive', 'mixed', 'restrictive'].includes(applyMode), 'ACL_RECOVERY_PLAN_CHANGED', 'La modalita del piano ACL nel journal non e valida.');
-    const expectedMode = restrictiveCount === 0 ? 'additive' : ((Number(recovery.add_count ?? 0) + Number(recovery.upgrade_count ?? 0)) > 0 ? 'mixed' : 'restrictive');
-    assert(applyMode === expectedMode, 'ACL_RECOVERY_PLAN_CHANGED', 'La modalita del piano ACL non corrisponde ai conteggi del journal.');
     const confirmationRequired = resolution === 'remote_success'
       ? `CHIUDI ACL ${recoveryPlanDigest.slice(0, 8).toUpperCase()}`
       : (restrictiveCount > 0
@@ -4778,9 +5529,11 @@ class PersistentImportSession {
         { aro: 'User', aro_foreign_key: String(state.user.id), type: 15 },
       ]),
       recovery: {
+        appVersion: String(recovery.app_version ?? ''),
         objectStateDigest: String(recovery.object_state_digest),
         desiredAclDigest: String(recovery.desired_acl_digest),
         planDigest: String(recovery.plan_digest),
+        planDigestScheme: journalPlanDigestScheme,
       },
       changeCount: freshPlan.change_count,
       counts: {
@@ -4819,10 +5572,22 @@ class PersistentImportSession {
     assert(String(input.confirmation ?? '') === saved.confirmationRequired, 'CONFIRMATION_MISMATCH', `Conferma richiesta: ${saved.confirmationRequired}`);
     assert(this.progressWriter, 'PROGRESS_WRITER_REQUIRED', 'Il canale durevole ACL non e disponibile.');
     await verifyPersistentSession(state.session, String(state.user.id));
-    const analysis = await analyzeAclCatalog(state.session, state.user, state.key);
+    const analysis = await analyzeAclCatalog(
+      state.session,
+      state.user,
+      state.key,
+      state.serverCapabilities?.capability_attestation_digest ?? null,
+    );
     const matches = analysis.catalog.objects.filter((entry) => entry.object_type === saved.objectType && entry.object_id === saved.objectId);
     assert(matches.length === 1, 'ACL_RECOVERY_OBJECT_NOT_FOUND', 'L’oggetto del journal ACL non e piu presente in modo univoco su Passbolt.');
-    const freshPlan = buildAclChangePlan(matches[0], saved.desiredTemplate, analysis.runtime.shareDirectory, String(state.user.id));
+    assertAclMutationSupported(analysis.runtime, saved.objectType, saved.objectId);
+    const freshPlan = buildAclChangePlan(
+      matches[0],
+      saved.desiredTemplate,
+      analysis.runtime.shareDirectory,
+      String(state.user.id),
+      analysis.runtime.capabilityAttestationDigest,
+    );
     const resolutionNow = freshPlan.object_state_digest === saved.recovery.desiredAclDigest
       ? 'remote_success'
       : (freshPlan.object_state_digest === saved.recovery.objectStateDigest ? 'not_applied' : 'conflict');
@@ -4840,8 +5605,13 @@ class PersistentImportSession {
     let removedUserCount = 0;
     let restrictiveChangeCount = 0;
     if (resolutionNow === 'not_applied') {
+      const journalPlanDigestSchemeNow = aclRecoveryPlanDigestScheme(freshPlan, {
+        app_version: saved.recovery.appVersion,
+        plan_digest: saved.recovery.planDigest,
+      });
       assert(
-        freshPlan.plan_digest === saved.recovery.planDigest
+        journalPlanDigestSchemeNow === saved.recovery.planDigestScheme
+        && journalPlanDigestSchemeNow !== null
         && freshPlan.counts.add === saved.counts.add
         && freshPlan.counts.upgrade === saved.counts.upgrade
         && freshPlan.counts.downgrade === saved.counts.downgrade
@@ -4896,7 +5666,7 @@ class PersistentImportSession {
   }
 
   async recoveryReadiness(input) {
-    requireV4OnlyFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
+    requirePreviewFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
     assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il lotto locale da recuperare non e valido.');
@@ -4970,7 +5740,7 @@ class PersistentImportSession {
   }
 
   async recoveryImport(input) {
-    requireV4OnlyFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
+    requirePreviewFormats(input.resource_format, input.folder_format, { allowNoFolder: true });
     const state = this.requireState(input);
     const saved = state.recoveryReadiness;
     assert(saved, 'RECOVERY_READINESS_REQUIRED', 'Eseguire prima la verifica autenticata del lotto.');
@@ -5104,7 +5874,7 @@ class PersistentImportSession {
   }
 
   async import(input) {
-    requireV4OnlyFormats(input.resource_format, input.folder_format);
+    requirePreviewFormats(input.resource_format, input.folder_format);
     const state = this.requireState(input);
     const reconciliationBatchId = normalizeReconciliationBatchId(input.reconciliation_batch_id);
     assert(reconciliationBatchId, 'RECONCILIATION_BATCH_REQUIRED', 'Il registro locale di riconciliazione non e stato inizializzato.');
@@ -5245,13 +6015,68 @@ class PersistentImportSession {
 }
 
 async function selfTest() {
-  let v5FormatRejected = false;
+  let v5ResourceFormatSupported = false;
   try {
-    requireV4OnlyFormats('v5', 'v5');
-  } catch (error) {
-    v5FormatRejected = error instanceof SafeError && error.code === 'PASSBOLT_V5_DISABLED';
+    requirePreviewFormats('v5', 'v4');
+    v5ResourceFormatSupported = true;
+  } catch {
+    v5ResourceFormatSupported = false;
   }
-  assert(v5FormatRejected, 'SELF_TEST_FAILED', 'Il profilo v4-only non rifiuta i formati v5.');
+  let v5FolderFormatRejected = false;
+  try {
+    requirePreviewFormats('v5', 'v5');
+  } catch (error) {
+    v5FolderFormatRejected = error instanceof SafeError && error.code === 'PASSBOLT_V5_FOLDER_DISABLED';
+  }
+  let automaticFormatRejected = false;
+  try {
+    requirePreviewFormats('auto', 'v4');
+  } catch (error) {
+    automaticFormatRejected = error instanceof SafeError && error.code === 'PASSBOLT_AUTOMATIC_FORMAT_DISABLED';
+  }
+  let v5AclMutationRejected = false;
+  try {
+    assertAclMutationSupported(
+      { v5ObjectKeys: new Set(['resource:self-test-v5-resource']) },
+      'resource',
+      'self-test-v5-resource',
+    );
+  } catch (error) {
+    v5AclMutationRejected = error instanceof SafeError && error.code === 'ACL_V5_MUTATION_DISABLED';
+  }
+  let v5FolderPayloadRejected = false;
+  try {
+    await buildFolderPayload(
+      { action: 'create', name: 'Self test v5 folder', format: 'v5', folder_parent_id: null },
+      {},
+      {},
+    );
+  } catch (error) {
+    v5FolderPayloadRejected = error instanceof SafeError && error.code === 'PASSBOLT_V5_FOLDER_DISABLED';
+  }
+  let v5SharedResourcePayloadRejected = false;
+  try {
+    await buildResourcePayload(
+      {
+        title: 'Self test v5 shared resource',
+        username: 'self-test',
+        uri: 'https://self-test.example.invalid',
+        password: 'self-test-secret',
+        description: '',
+        shared: true,
+      },
+      { selectedFormat: 'v5', resourceType: { id: 'self-test-v5', slug: 'v5-default', definition: null } },
+      {},
+    );
+  } catch (error) {
+    v5SharedResourcePayloadRejected = error instanceof SafeError && error.code === 'ACL_V5_MUTATION_DISABLED';
+  }
+  assert(v5ResourceFormatSupported, 'SELF_TEST_FAILED', 'Il profilo preview non accetta risorse v5 esplicite con cartelle v4.');
+  assert(v5FolderFormatRejected, 'SELF_TEST_FAILED', 'Il profilo preview non rifiuta le cartelle v5.');
+  assert(automaticFormatRejected, 'SELF_TEST_FAILED', 'Il profilo preview non rifiuta la selezione automatica dei formati.');
+  assert(v5AclMutationRejected, 'SELF_TEST_FAILED', 'Il profilo preview non blocca le modifiche ACL sugli oggetti v5.');
+  assert(v5FolderPayloadRejected, 'SELF_TEST_FAILED', 'Il sink payload cartella non blocca le cartelle v5.');
+  assert(v5SharedResourcePayloadRejected, 'SELF_TEST_FAILED', 'Il sink payload risorsa non blocca le risorse v5 condivise.');
   const bomInputProbe = JSON.parse(stripUtf8Bom('\ufeff{"ok":true}'));
   assert(bomInputProbe.ok === true, 'SELF_TEST_FAILED', 'La normalizzazione del BOM UTF-8 non e disponibile.');
   const passphrase = `self-test-${randomUUID()}`;
@@ -5391,7 +6216,12 @@ async function selfTest() {
   return {
     command: 'self-test',
     compatibility_profile: RELEASE_COMPATIBILITY_PROFILE,
-    v5_format_rejected: v5FormatRejected,
+    v5_resource_format_supported: v5ResourceFormatSupported,
+    v5_folder_format_rejected: v5FolderFormatRejected,
+    automatic_format_rejected: automaticFormatRejected,
+    v5_acl_mutation_rejected: v5AclMutationRejected,
+    v5_folder_payload_rejected: v5FolderPayloadRejected,
+    v5_shared_resource_payload_rejected: v5SharedResourcePayloadRejected,
     openpgp_version: '6.3.1',
     encryption: true,
     decryption: true,
@@ -5527,7 +6357,7 @@ if (import.meta.url === invokedPath) {
 export {
   PassboltSession,
   PersistentImportSession,
-  assertV4OnlyServer,
+  assertPreviewServerCapabilities,
   analyzeCapabilities,
   authenticate,
   buildCandidatePlan,
@@ -5542,5 +6372,6 @@ export {
   buildAclChangePlan,
   permissionMaskDigest,
   readCapabilities,
-  requireV4OnlyFormats,
+  requirePreviewFormats,
+  shareCreatedResource,
 };

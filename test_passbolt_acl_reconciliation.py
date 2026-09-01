@@ -83,6 +83,7 @@ class AclJournalTests(unittest.TestCase):
             snapshot = journal.read()
             self.assertFalse(snapshot.complete)
             state = build_acl_recovery_state(journal.batch_id, temporary)
+            self.assertEqual(state["app_version"], "0.16.0")
             self.assertEqual(state["object_id"], "resource-id")
             self.assertEqual(state["desired_permissions"][0]["aro_foreign_key"], "recipient-id")
             encoded = journal.path.read_text(encoding="utf-8")

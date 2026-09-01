@@ -1,16 +1,20 @@
 {
-  "schema_version": 1,
-  "version": "0.28.4-beta.2",
+  "schema_version": 2,
+  "version": "0.29.0-beta.1",
   "changelog_state": "technical_beta",
-  "compatibility_profile": "passbolt-v4-only",
+  "compatibility_profile": "passbolt-v4-v5-resource-preview",
   "quality_gate": {
-    "python_tests": 144,
-    "offline_read_only_scenarios": 7,
-    "offline_stateful_scenarios": 9,
-    "offline_recovery_fault_paths": 12,
-    "wpf_controls": 139,
-    "import_readiness_diagnostic_cases": 5,
+    "python_tests": 154,
+    "offline_read_only_scenarios_v4": 7,
+    "offline_read_only_scenarios_v5_resource_preview": 7,
+    "offline_stateful_scenarios_v4": 9,
+    "offline_stateful_scenarios_v5_resource_preview": 9,
+    "offline_recovery_fault_paths_v4": 12,
+    "offline_recovery_fault_paths_v5_resource_preview": 12,
+    "wpf_controls": 140,
+    "import_readiness_diagnostic_cases": 6,
     "ui_previews_required": 29,
-    "real_v4_matrix_scenarios": 16
+    "real_v4_matrix_scenarios": 16,
+    "real_v5_resource_matrix_scenarios": 16
   }
 }

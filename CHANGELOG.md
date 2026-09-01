@@ -2,7 +2,43 @@
 
 Le modifiche rilevanti del progetto sono documentate in questo file. Il formato segue [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) e il progetto usa [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Le sezioni precedenti al candidato corrente sono cronologia: eventuali riferimenti v5 descrivono esperimenti e contratti storici e non costituiscono supporto, gate o flusso operativo della release `passbolt-v4-only`.
+Le sezioni precedenti al candidato corrente sono cronologia: soltanto il contratto ristretto `passbolt-v4-v5-resource-preview` descritto nella prima sezione è operativo; gli esperimenti v5 storici non ampliano questo perimetro.
+
+## 0.29.0-beta.1 - Technical beta
+
+`0.29.0-beta.1` è una beta tecnica non production-ready. Mantiene Passbolt v4 e introduce il profilo `passbolt-v4-v5-resource-preview`: l'operatore può scegliere esplicitamente risorse v4 o risorse v5 personali, mentre `auto`, import v5 condivisi, cartelle v5, conversioni e ACL mutative v5 restano bloccati. Il gate offline mantiene `release_authorized=false`; non esistono commit, tag o release per questa versione.
+
+### Added
+
+- aggiunta alla UI la scelta esplicita del formato risorsa v4/v5, legata al piano e con default v4;
+- riabilitati attraverso i confini pubblici Python/Node la lettura di risorse e chiavi metadata personali/condivise e i percorsi dry-run, import, verifica e recovery per risorse v5 personali;
+- aggiunti gate sintetici separati v4 e v5-resource-preview su `127.0.0.1`, ricevute v5 a schema chiuso e configurazione di matrice dedicata;
+- aggiunti ai report di matrice contratti per-scenario che distinguono scritture riuscite, successi senza scrittura e rifiuti v5 fail-closed;
+- evoluto `release-candidate.json` allo schema 2 con conteggi distinti per profilo e matrici reali separate.
+
+### Changed
+
+- riallineate a `0.29.0-beta.1` identità UI, user agent, progetti, ricevute, laboratorio, matrice, test e documentazione;
+- sostituito il rifiuto indiscriminato dei server che espongono metadata v5 con un'attestazione fail-closed delle capability richieste dal formato esplicito;
+- vincolato ogni piano allo snapshot normalizzato delle capability realmente usato dalla decisione, comprese definizioni dei tipi di risorsa, policy e fingerprint della chiave metadata effettivamente selezionata;
+- mantenuta la compatibilità v4 senza negoziazione automatica o fallback silenziosi.
+
+### Security
+
+- formati mancanti, `auto`, creazione o riuso di cartelle v5 e valori sconosciuti vengono rifiutati prima di leggere sorgenti o avviare scritture;
+- i sink Node rifiutano direttamente payload di cartelle v5 e risorse v5 condivise, anche se un piano interno fosse incoerente;
+- i booleani e gli enum di capability non vengono più convertiti implicitamente: schemi malformati, cataloghi duplicati e drift fra readiness, import o recovery sono rifiutati prima delle scritture;
+- una risorsa v5 può usare una cartella v4 esistente soltanto quando Passbolt attesta `personal=true` e una ACL con l'utente autenticato come unico proprietario; una cartella v4 appena creata viene riletta e deve conservare ID, nome, genitore, assenza di marker v5 e lo stesso predicato ACL prima del primo `POST` risorsa v5;
+- le ACL di oggetti v5 restano consultabili in sola lettura, ma il loro catalogo riusa l'attestazione capability rigorosa e lega il digest a piano, applicazione e recovery; pianificazione/applicazione mutativa e recovery ACL v5 sono bloccati;
+- il recovery di journal ACL dichiarati dalle serie 0.16-0.28 seleziona la relativa generazione del payload e riconosce il digest storico soltanto se viene ricostruito esattamente; la 0.16 resta limitata ai piani additivi e nuovi dry-run/apply restano vincolati al digest capability-bound;
+- il quality gate convalida a schema chiuso e tipi JSON esatti tutti gli envelope v5 read-only/stateful, inclusi ordine, unicità, stato e metriche dei nove scenari;
+- nessuna nuova dipendenza, credenziale reale o contatto automatico con istanze Passbolt è introdotto.
+
+### Known limitations
+
+- la creazione di cartelle v5 resta fuori scope finché il difetto upstream `passbolt_api #617/#618` non è chiuso o mitigato e verificato end-to-end;
+- import v5 condivisi e tutte le mutazioni ACL v5 restano intenzionalmente bloccati;
+- CI GitHub e matrici reali v4/v5-resource-preview sul futuro commit candidato restano pendenti e non autorizzano una release stabile.
 
 ## 0.28.4-beta.2 - Technical beta
 

@@ -1,11 +1,11 @@
 # Passbolt Migration Assistant for Windows
 
-Windows desktop assistant for safely inventorying, reviewing and importing credentials into Passbolt v4 with OpenPGP, MFA TOTP, folders and sharing.
+Windows desktop assistant for safely inventorying, reviewing and importing credentials into Passbolt v4 or explicitly selected personal v5 resources with OpenPGP and MFA TOTP; folders, sharing and ACL mutations remain v4-only.
 
 Passbolt Migration Assistant is a local WPF workflow for controlled credential migrations. It inventories supported documents without opening them during discovery, exposes a masked review step, authenticates with Passbolt through GPGAuth and TOTP, builds a deterministic dry-run plan, and writes only after explicit confirmation.
 
 > [!IMPORTANT]
-> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.28.4-beta.2 is a technical beta, limited to Passbolt v4 and not production-ready: Passbolt v5 targets and v5 formats are rejected fail-closed. Use it only in a non-production environment and keep verified backups before any migration.
+> This is an independent community project. It is not an official Passbolt product and is not affiliated with or endorsed by Passbolt SA. Version 0.29.0-beta.1 is a technical beta and is not production-ready: Passbolt v4 remains supported and v5 is limited to explicitly selected personal-resource metadata preview. Automatic negotiation, shared v5 imports, v5 folder creation, format conversion and v5 ACL mutations are rejected fail-closed. Use only a non-production environment and keep verified backups.
 
 ## Italiano
 
@@ -23,26 +23,26 @@ Passbolt Migration Assistant è un'app desktop Windows per migrare credenziali v
 - verifica pubblica di healthcheck e TLS, con rilevamento e conferma della fingerprint OpenPGP del server;
 - sessione GPGAuth riutilizzata durante il workflow, con supporto MFA TOTP;
 - verifica fail-closed della firma GPGAuth con tolleranza temporale massima di cinque minuti rispetto all'header `Date` della stessa risposta HTTPS;
-- creazione di risorse Passbolt v4 con cifratura OpenPGP locale;
-- destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
-- creazione di sottocartelle personali e condivise con permessi ereditati oppure con una ACL personalizzata;
-- editor autenticato dei permessi per selezionare utenti e gruppi Passbolt e assegnare Lettura, Aggiornamento o Proprietario ai nuovi oggetti;
-- visualizzatore autenticato e read-only delle ACL di cartelle e risorse Passbolt v4 esistenti, inclusi i gruppi espansi;
+- creazione di risorse Passbolt v4 o di risorse v5 personali su scelta esplicita, con cifratura OpenPGP locale e cartelle sempre v4; per riusare una cartella con una risorsa v5 servono `personal=true` e la prova ACL dell'utente autenticato come unico proprietario, mentre una cartella appena creata viene riletta e deve conservare ID, nome, genitore, formato v4 e ACL personale prima del primo `POST` risorsa v5;
+- per il percorso v4, destinazione nella radice, in cartelle personali o in cartelle condivise esistenti;
+- creazione di sottocartelle v4 personali e condivise con permessi ereditati oppure con una ACL personalizzata;
+- editor autenticato dei permessi v4 per selezionare utenti e gruppi Passbolt e assegnare Lettura, Aggiornamento o Proprietario ai nuovi oggetti;
+- visualizzatore autenticato e read-only delle ACL di cartelle e risorse Passbolt v4/v5 esistenti, inclusi i gruppi espansi;
 - editor di simulazione per confrontare ACL attuale e desiderata, con digest dello snapshot remoto e classificazione di aggiunte, aumenti, riduzioni e revoche;
-- applicazione esplicita di aggiunte, aumenti, riduzioni e revoche ACL su cartelle e risorse esistenti, con impatto sugli utenti effettivi, protezione dell'ultimo proprietario e nuova verifica dello stato remoto immediatamente prima della scrittura;
+- applicazione esplicita di aggiunte, aumenti, riduzioni e revoche ACL soltanto su oggetti v4 esistenti; gli oggetti v5 restano read-only nel workspace ACL;
 - journal ACL dedicato e recupero idempotente delle risposte incerte, senza ripetere una scrittura quando Passbolt contiene già il risultato atteso;
 - gestione locale dei journal ACL con elenco completo degli stati attivi, filtri, dettaglio tecnico sicuro e archiviazione non distruttiva;
 - espansione controllata dei gruppi e verifica delle chiavi dei destinatari;
-- centro preflight autenticato con controlli espliciti di identità, CSRF, formato v4, compatibilità server, cataloghi, destinazione, directory permessi e conflitti;
+- centro preflight autenticato con controlli espliciti di identità, CSRF, formato risorsa v4/v5, cartelle v4, capability server, chiavi metadata, cataloghi, destinazione, directory permessi e conflitti;
 - dry-run con digest, rilevamento duplicati e riconciliazione dei fallimenti parziali;
 - dashboard operativa del lotto con avanzamento live, fase e operazione correnti, contatori, tempi e timeline priva di segreti;
 - verifica automatica dopo la scrittura di metadati, contenuto cifrato, cartella e ACL, con esito per risorsa e blocco fail-closed in caso di difformità;
 - ricevute JSON sanitizzate di preflight e migrazione verificata, a schema chiuso e digest canonico;
 - registro locale durevole e privo di segreti per le operazioni eseguite durante ogni lotto;
 - recupero guidato e idempotente degli import interrotti, con verifica autenticata e archiviazione non distruttiva dei journal;
-- matrice di integrazione ripetibile per laboratori Passbolt v4, con prove automatizzate in sola lettura, attestazioni operative e report sanitizzati con digest;
-- laboratorio HTTPS locale e stateful v4 per esercitare l'app senza un'istanza Passbolt disponibile, con identità, MFA, documenti e credenziali esclusivamente sintetici;
-- accettazione offline automatica degli scenari operativi v4: importazioni, destinazioni, duplicati, condivisione, ACL additive/restrittive e recuperi dopo fault controllati;
+- matrici di integrazione separate per laboratori Passbolt v4 e v5-resource-preview, con prove automatizzate in sola lettura, attestazioni operative e report sanitizzati con digest;
+- laboratorio HTTPS locale e stateful v4/v5 per esercitare l'app senza un'istanza reale, con identità, MFA, documenti e credenziali esclusivamente sintetici;
+- accettazione offline automatica degli scenari operativi v4 e delle risorse v5 con cartelle v4, inclusi recuperi dopo fault controllati;
 - nessun caricamento dei documenti sorgente su servizi esterni.
 
 ### Formati sorgente
@@ -93,7 +93,7 @@ Al primo utilizzo:
 2. completare inventario e revisione interamente in locale;
 3. nella fase 04 inserire o confermare l'URL HTTPS, verificare la connessione pubblica e confrontare la fingerprint OpenPGP rilevata con il valore comunicato dall'amministratore tramite un canale indipendente;
 4. aprire la sessione GPGAuth/MFA soltanto dopo la conferma della fingerprint;
-5. completare mappatura delle destinazioni, eventuale configurazione dei permessi e dry-run prima di autorizzare la scrittura.
+5. scegliere esplicitamente il formato risorsa v4 oppure v5 preview, completare destinazione e permessi, quindi eseguire il dry-run prima di autorizzare la scrittura.
 
 Se i documenti usano intestazioni non riconosciute automaticamente, nella fase **Inventario** aprire **Profilo sorgente: Automatico** prima della revisione. Il profilo personalizzato associa una o più etichette a ciascun campo Passbolt; richiede sempre la password e almeno uno fra username e URL/host. **Carica JSON...** e **Salva JSON...** consentono di riusare soltanto la configurazione delle etichette: il file non contiene valori dei documenti o credenziali. Ogni modifica al profilo invalida la revisione e il piano già costruiti, così la griglia mascherata diventa l'anteprima obbligatoria della nuova mappatura.
 
@@ -118,11 +118,11 @@ I journal troncati o corrotti vengono mostrati ma restano bloccati in modalità 
 
 Per consultare o modificare i permessi già presenti su Passbolt, nella fase 04 scegliere **Gestisci ACL esistenti**. Si apre uno spazio separato dal percorso di migrazione: le opzioni di destinazione dell'import non si applicano agli oggetti esistenti e **Torna alla migrazione** ripristina l'ultimo percorso scelto. Mantenere attiva la stessa sessione autenticata e scegliere **Leggi permessi**. Lo spazio ACL consente di filtrare cartelle e risorse, cercare per nome, percorso o ID e visualizzare la ACL del singolo oggetto. Le voci dirette e quelle assegnate tramite gruppo restano distinte; per i gruppi viene mostrato il numero di destinatari effettivi verificati. Se la ACL è completa, tutti i soggetti sono verificati e l'account autenticato è Proprietario, **Simula modifica...** prepara la ACL desiderata e mostra il confronto prima/dopo in **Piano e applicazione**.
 
-Il pulsante **Applica ACL** richiede `APPLICA ACL N XXXXXXXX` per un piano puramente additivo. Se il piano contiene almeno un downgrade o una revoca, mostra gli utenti effettivi che perderanno o ridurranno l'accesso, richiede `CONFERMO RIDUZIONE ACL R L XXXXXXXX` e presenta un secondo avviso prima della scrittura. L'utente autenticato deve rimanere un permesso diretto `Owner` e il risultato deve conservare almeno un proprietario. Subito prima della `PUT`, il bridge riverifica identità, oggetto, maschera e directory, inclusi membri effettivi dei gruppi e fingerprint delle chiavi; confronta digest dello snapshot, del desiderato, della directory e del piano, quindi una variazione remota invalida l'operazione.
+Il pulsante **Applica ACL** richiede `APPLICA ACL N XXXXXXXX` per un piano puramente additivo. Se il piano contiene almeno un downgrade o una revoca, mostra gli utenti effettivi che perderanno o ridurranno l'accesso, richiede `CONFERMO RIDUZIONE ACL R L XXXXXXXX` e presenta un secondo avviso prima della scrittura. L'utente autenticato deve rimanere un permesso diretto `Owner` e il risultato deve conservare almeno un proprietario. Subito prima della `PUT`, il bridge riverifica identità, capability e catalogo dei tipi, oggetto, maschera e directory, inclusi membri effettivi dei gruppi e fingerprint delle chiavi; confronta digest dello snapshot, del desiderato, della directory e del piano, quindi una variazione remota invalida l'operazione.
 
 Per ogni modifica viene prima chiamata la simulazione Passbolt. Gli insiemi `added` e `removed` devono coincidere esattamente con gli utenti effettivi calcolati dalla ACL prima e dopo l'espansione dei gruppi; un destinatario inatteso blocca la scrittura. Per una risorsa, il bridge legge e decifra localmente il segreto esistente soltanto se devono essere create nuove copie cifrate. Downgrade e revoche che non aggiungono utenti non richiedono la lettura del segreto. Il testo in chiaro non viene inviato alla GUI o scritto nel journal.
 
-Se l'applicazione restituisce un esito incerto, non preparare un nuovo piano. Usare **Recupera ACL...**, selezionare il journal indicato nell'errore e completare la verifica autenticata. Se la ACL remota coincide con il risultato atteso, il journal viene chiuso senza una seconda scrittura; se coincide esattamente con lo snapshot originale, l'app può ripetere soltanto lo stesso piano originario. Un recupero restrittivo richiede la frase rafforzata e un secondo avviso. Qualsiasi stato parziale o differente è un conflitto fail-closed.
+Se l'applicazione restituisce un esito incerto, non preparare un nuovo piano. Usare **Recupera ACL...**, selezionare il journal indicato nell'errore e completare la verifica autenticata. Se la ACL remota coincide con il risultato atteso, il journal viene chiuso senza una seconda scrittura; se coincide esattamente con lo snapshot originale, l'app può ripetere soltanto lo stesso piano originario. Per i soli journal dichiarati dalle serie 0.16-0.28, il recupero riconosce anche il digest storico della relativa generazione ricostruito esattamente; un journal 0.16 resta limitato ai piani additivi disponibili in quella versione. I nuovi dry-run e apply accettano esclusivamente il digest legato alle capability correnti. Un recupero restrittivo richiede la frase rafforzata e un secondo avviso. Qualsiasi stato parziale o differente è un conflitto fail-closed.
 
 Il controllo pubblico può essere eseguito anche senza aprire la GUI:
 
@@ -154,7 +154,7 @@ Consulta [SECURITY.md](SECURITY.md) prima di segnalare una vulnerabilità o lavo
 
 ## Test locali
 
-I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue parsing, self-test, suite Python e Node/OpenPGP, laboratorio read-only v4, accettazione stateful con fault di recupero, self-test WPF, anteprime UI e `git diff --check`. Versione, profilo e conteggi attesi hanno una sola fonte macchina in [`release-candidate.json`](release-candidate.json); il runner confronta quel contratto con i risultati effettivi e fallisce in caso di drift:
+I test non contattano un'istanza Passbolt reale. I test di protocollo usano esclusivamente server simulati su `127.0.0.1`. Il comando unico esegue parsing, self-test, suite Python e Node/OpenPGP, laboratori read-only/stateful/recovery v4 e v5-resource-preview, self-test WPF, anteprime UI e `git diff --check`. Versione, profilo e conteggi per ciascun percorso hanno una sola fonte macchina in [`release-candidate.json`](release-candidate.json); il runner fallisce in caso di drift:
 
 ```powershell
 python -m pip install --requirement requirements-test.txt
@@ -181,14 +181,15 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass `
   -RenderPreviewDpi 144
 ```
 
-## Laboratorio Passbolt offline v4
+## Laboratorio Passbolt offline v4/v5
 
 La versione 0.21.0 consente di provare il workflow anche quando non è disponibile un server Passbolt. Il runner prepara sotto `%TEMP%` un certificato TLS autofirmato, un'identità OpenPGP con passphrase e TOTP casuali, un piccolo archivio di documenti sintetici e un server HTTPS stateful in ascolto esclusivamente su `127.0.0.1`. Il trust TLS viene applicato soltanto ai processi avviati dal runner: l'archivio certificati di Windows non viene modificato.
 
-Per aprire l'app con il laboratorio v4 supportato:
+Per aprire l'app con un laboratorio sintetico v4 oppure v5-resource-preview:
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v4
+.\run_offline_lab.ps1 -Profile v5
 ```
 
 Il terminale mostra URL, fingerprint, percorso della chiave privata, passphrase, TOTP e cartella dei documenti da inserire nell'app. Ogni password sintetica contiene il marcatore `LAB-ONLY-NOT-A-REAL-SECRET`. Alla chiusura dell'app il server viene arrestato e il workspace temporaneo viene cancellato. `-KeepWorkspace` ne impedisce la rimozione soltanto per una diagnosi esplicita; il contenuto resta materiale di laboratorio e deve comunque essere eliminato dopo l'uso.
@@ -233,13 +234,14 @@ La versione 0.26.0 estende gli stessi controlli alle interruzioni di trasporto s
 .\run_offline_lab.ps1 -Profile v4 -Fault next-share-after-commit-disconnect
 ```
 
-Il controllo automatico in sola lettura, usato anche dal quality gate, esegue le sette prove della matrice e verifica che non restino oggetti nel simulatore:
+Il controllo automatico in sola lettura, usato anche dal quality gate, esegue per ciascun profilo le sette prove della matrice e verifica che non restino oggetti nel simulatore:
 
 ```powershell
 .\run_offline_lab.ps1 -Profile v4 -SelfTest
+.\run_offline_lab.ps1 -Profile v5 -SelfTest
 ```
 
-L'accettazione automatica mutativa resta confinata al workspace effimero. Il quality gate corrente esegue sul profilo v4 tutte le prove operative dichiarate nel manifesto: risorsa in radice, nuova cartella cliente, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Le fixture v5 storiche non costituiscono supporto della release e non vengono eseguite come accettazione positiva.
+L'accettazione automatica mutativa resta confinata al workspace effimero. Il quality gate corrente esegue, separatamente per v4 e v5-resource-preview, tutte le prove operative dichiarate nel manifesto: risorsa in radice, nuova cartella cliente v4, destinazione esistente, duplicato senza scritture, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero di un import dopo HTTP 500 e recupero di una ACL dopo HTTP 500. Nel profilo preview le risorse sono v5, le cartelle restano v4 e le mutazioni ACL sugli oggetti v5 restano escluse dal prodotto; il simulatore esercita soltanto i percorsi ammessi dal contratto.
 
 In 0.26.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risorsa, creazione cartella e modifica ACL sia dopo HTTP 500 sia dopo una disconnessione. Il fault pre-commit deve produrre `not_applied` e una sola ripetizione della mutazione originaria; il fault post-commit deve produrre `remote_success` e zero riscritture della stessa mutazione. Per le cartelle, la risorsa pianificata viene poi creata nella destinazione appena verificata. Gli HTTP 5xx e gli errori di trasporto delle creazioni sono registrati come esito incerto; soltanto una risposta 4xx resta un fallimento confermato.
 
@@ -247,29 +249,29 @@ In 0.26.0 l'accettazione esercita entrambi gli esiti sicuri per creazione risors
 .\run_offline_lab.ps1 -Profile v4 -AcceptanceTest
 ```
 
-`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente i percorsi di fault v4 nei due casi di recupero, controlla che gli envelope di avanzamento non contengano campi sensibili e produce un riepilogo con soli stati e contatori. Gli esiti sintetici vengono eseguiti anche dal quality gate, ma non sostituiscono né compilano automaticamente le attestazioni della matrice su un'istanza Passbolt v4 reale.
+`-AcceptanceTest` accetta soltanto lo scenario `healthy` senza fault iniziale, imposta internamente i fault di recupero, controlla che gli envelope non contengano campi sensibili e produce un riepilogo con soli stati e contatori. Nel profilo v5 crea risorse v5 ma mantiene le cartelle v4. Gli esiti sintetici non sostituiscono le matrici reali.
 
 Il simulatore riproduce soltanto i contratti API utilizzati dall'app e non sostituisce la verifica finale su una versione Passbolt reale. È però adatto a testare inventario, revisione, login GPGAuth/TOTP, scelta della destinazione, dry-run, creazioni e percorsi di errore senza coinvolgere dati o sistemi aziendali.
 
 ## Identita del candidato e decisione go/no-go
 
-Il candidato corrente usa `0.28.4-beta.2` come unica versione applicativa, di protocollo e di report ed è marcato **Technical beta**. Soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente; `-SkipUiPreviews` dichiara invece `partial_ui_previews_skipped`. Nessuno dei due esiti crea un tag o una release.
+Il candidato corrente usa `0.29.0-beta.1` come unica versione applicativa, di protocollo e di report ed è marcato **Technical beta** con profilo `passbolt-v4-v5-resource-preview`. Soltanto `offline_gate: passed` di una corsa completa di `run_tests.ps1` attesta il gate offline del contenuto corrente; `-SkipUiPreviews` dichiara `partial_ui_previews_skipped`. Nessuno dei due esiti crea un tag o una release.
 
 Per una release stabile la decisione resta **GO** soltanto se tutte le condizioni seguenti valgono sul medesimo commit:
 
-1. parsing PowerShell/Python/Node, self-test, suite Python e Node/OpenPGP, laboratorio v4, scenari stateful, fault di recupero, self-test WPF, anteprime e `git diff --check` sono tutti superati con i conteggi dichiarati in `release-candidate.json`;
-2. runtime, UI, configurazione della matrice e report dichiarano `passbolt-v4-only`, mentre formato `auto`, formati v5 e capability server v5 restano rifiutati fail-closed;
-3. un operatore ha autorizzato esplicitamente gli scenari reali e attestato che l'istanza Passbolt v4 è dedicata e usa-e-getta prima della prima mutazione;
-4. il report sanitizzato della matrice reale supera tutti i 16 scenari v4 con `-RequireComplete`, senza esiti `failed`, `blocked` o `not_run` e con digest valido;
-5. il report resta fuori dal repository e non contiene URL, fingerprint, identità, ID remoti, chiavi, passphrase, MFA, cookie, nomi o messaggi API.
+1. parsing PowerShell/Python/Node, self-test, suite, laboratori v4/v5, fault di recupero, WPF, anteprime e `git diff --check` sono superati con i conteggi schema 2;
+2. runtime, UI, ricevute e gate dichiarano `passbolt-v4-v5-resource-preview`, mentre ogni report di matrice dichiara la coppia di formati v4/v4 o v5/v4; `auto`, import v5 condivisi, cartelle v5, conversioni e ACL mutative v5 restano fail-closed;
+3. un operatore ha autorizzato separatamente gli scenari reali e attestato target v4 e v5 dedicati e usa-e-getta;
+4. i report sanitizzati delle matrici reali superano separatamente tutti i 16 scenari v4 e i 16 scenari v5-resource-preview con digest valido;
+5. i report restano fuori dal repository e non contengono URL, fingerprint, identità, ID remoti, chiavi, passphrase, MFA, cookie, nomi o messaggi API.
 
-Il punto 4 non è superato. La matrice reale del candidato precedente si è fermata a `7/16`: 7 prove read-only superate, 0 fallite, 1 bloccata, 8 non eseguite e 0 scritture remote; `summary --require-complete` non è passato. La matrice `16/16` del nuovo commit beta non è ancora attestata.
+Il punto 4 non è superato. Le evidenze precedenti, inclusa la matrice v5 storica `14/16`, non attestano il nuovo candidato e non vengono reinterpretate.
 
 La decisione di prodotto accetta questo rischio residuo esclusivamente per preparare una **beta tecnica non production-ready**, dopo gate offline e CI verdi sullo stesso commit e con etichettatura beta esplicita. La release stabile resta **NO-GO** finché la matrice reale completa non è attestata; la beta non deve essere presentata come superamento del punto 4.
 
-## Matrice di integrazione v4
+## Matrici di integrazione v4 e v5-resource-preview
 
-Il runner separato verifica l'app contro un'istanza Passbolt v4 di laboratorio reale. La configurazione contiene esclusivamente ID del profilo, URL HTTPS, fingerprint pubblica attesa e formati v4 espliciti: chiave privata, passphrase e TOTP non devono essere aggiunti al file. Qualsiasi profilo v5, anche disabilitato, è materiale storico fuori scope e non deve essere usato come configurazione operativa del candidato.
+Il runner separato prepara report distinti per un'istanza v4 (`resource=v4`, `folder=v4`) o v5-resource-preview (`resource=v5`, `folder=v4`). La configurazione contiene soltanto ID, URL HTTPS, fingerprint pubblica attesa e formati espliciti; chiave privata, passphrase e TOTP non devono essere aggiunti al file. Profili con cartelle v5 o formato `auto` vengono rifiutati.
 
 Preparare una configurazione locale ignorata da Git:
 
@@ -283,13 +285,14 @@ Per ogni profilo, sostituire URL e fingerprint, impostare `enabled` a `true` e a
 
 ```powershell
 .\run_passbolt_integration_matrix.ps1 -Action Run -Instance v4-lab
+.\run_passbolt_integration_matrix.ps1 -Action Run -Instance v5-resource-preview
 ```
 
 Il runner richiede interattivamente percorso della chiave `.asc`, passphrase e TOTP; nessuno di questi valori compare negli argomenti del processo. Le prove automatiche dichiarate nel manifesto eseguono healthcheck, pinning della fingerprint, GPGAuth/MFA, lettura della directory dei permessi, lettura del catalogo ACL e dry-run sintetici di una risorsa nella radice e di una nuova cartella cliente. Dichiarano sempre `write_requests=0` e non chiamano importazione o applicazione ACL.
 
 I report vengono salvati per impostazione predefinita sotto `%LOCALAPPDATA%\Passbolt Migration Assistant\IntegrationMatrix`. Contengono soltanto profilo logico, formati attesi, stati, contatori e codici enumerati; omettono URL, fingerprint, identità, ID remoti, nomi degli oggetti, chiavi, passphrase, MFA e messaggi API. Un digest SHA-256 rileva modifiche o troncamenti.
 
-Le prove che creano oggetti, modificano permessi o simulano recuperi devono essere eseguite nell'app su istanze usa-e-getta e poi attestate singolarmente. Prima della prima prova mutativa l'operatore deve autorizzare esplicitamente l'esecuzione e attestare che il target v4 e dedicato e usa-e-getta; non inserire segreti nell'autorizzazione, nella configurazione o in chat. Per esempio:
+Le prove che creano oggetti, modificano permessi o simulano recuperi devono essere eseguite nell'app su istanze usa-e-getta e poi attestate singolarmente. Prima della prima prova mutativa l'operatore deve autorizzare esplicitamente l'esecuzione e attestare che il target selezionato e dedicato e usa-e-getta; non inserire segreti nell'autorizzazione, nella configurazione o in chat. Per esempio:
 
 ```powershell
 .\run_passbolt_integration_matrix.ps1 `
@@ -304,17 +307,17 @@ Le prove che creano oggetti, modificano permessi o simulano recuperi devono esse
   -RequireComplete
 ```
 
-Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, destinazione esistente, duplicati, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero import interrotto e recupero ACL interrotto. Un esito `failed` o `blocked` richiede soltanto un `-ErrorCode` enumerato; non inserire note libere o dati reali nel report.
+Gli scenari manuali sono: importazione nella radice, nuova cartella cliente, destinazione esistente, duplicati, condivisione personalizzata, ACL additiva, ACL restrittiva, recupero import interrotto e recupero ACL interrotto. Nel profilo v5-resource-preview, condivisione personalizzata e i due scenari ACL sono prove negative: risultano `passed` soltanto se l'operatore osserva `ACL_V5_MUTATION_DISABLED`, indica `-ErrorCode ACL_V5_MUTATION_DISABLED` e non avviene alcuna scrittura remota. Il report lega ogni scenario a `remote_write_success`, `no_write_success` o `fail_closed_no_write` e rifiuta metriche incoerenti anche con digest ricalcolato. Un esito `failed` o `blocked` richiede un `-ErrorCode` enumerato; non inserire note libere o dati reali nel report.
 
 La descrizione completa del comportamento, degli endpoint e dei controlli implementati è disponibile in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 
 ## Limiti correnti
 
-La beta tecnica `0.28.4-beta.2` è rigidamente **v4-only** e non è destinata alla produzione. UI, backend, laboratorio positivo e matrice operativa usano soltanto formati v4 espliciti; `auto`, formati v5, profili v5 e server che espongono capability v5 vengono rifiutati fail-closed. Le fixture v5 rimaste nel codice servono esclusivamente come regressioni storiche o prove negative e non costituiscono un flusso operativo, un gate corrente o una promessa di supporto.
+La beta tecnica `0.29.0-beta.1` non è destinata alla produzione. Passbolt v4 resta il percorso completo; v5 è limitato alle risorse personali selezionate esplicitamente. Le cartelle v5 esistenti possono apparire nei cataloghi read-only, ma non sono destinazioni operative; una cartella v4 esistente è proposta al percorso v5 soltanto con prova positiva di ACL personale e unico proprietario autenticato. `auto`, import v5 condivisi, creazione o riuso di cartelle v5, conversioni e ACL mutative v5 vengono rifiutati fail-closed.
 
 Non sono supportati provider MFA diversi da TOTP, la revisione diretta dei file Excel legacy `.xls`, cancellazione o spostamento di oggetti Passbolt e modifiche alla composizione dei gruppi. Le migrazioni devono essere provate su ambienti non produttivi con backup verificati; una risposta di scrittura incerta richiede il recupero autenticato dal journal e non autorizza la ripetizione diretta dell'operazione.
 
-La matrice reale v4 completa resta un gate esterno separato dal gate offline e deve essere eseguita sul medesimo commit candidato in un'istanza dedicata e usa-e-getta, conservando il solo report sanitizzato fuori dal repository. Il supporto v5 potrà essere rivalutato soltanto con una nuova decisione formale di scope e una matrice reale completa; non è parte della roadmap operativa di questo candidato.
+Le matrici reali v4 e v5-resource-preview restano gate esterni separati dal gate offline e devono essere eseguite sul medesimo commit candidato in istanze dedicate e usa-e-getta, conservando soltanto report sanitizzati fuori dal repository. Il profilo corrente non promette supporto per le capability v5 escluse.
 
 La cronologia delle funzionalità, inclusa l'evidenza storica dei precedenti esperimenti v5, è mantenuta esclusivamente in [CHANGELOG.md](CHANGELOG.md). I contratti tecnici correnti sono descritti in [LEGGIMI-Passbolt-API.md](LEGGIMI-Passbolt-API.md).
 

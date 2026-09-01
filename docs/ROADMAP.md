@@ -1,35 +1,40 @@
 # Roadmap
 
-La roadmap ordina il lavoro di abilitazione della release; non amplia da sola il perimetro funzionale. Versione e conteggi non vengono duplicati qui: fanno fede [`release-candidate.json`](../release-candidate.json) e i risultati del gate.
+La roadmap ordina il lavoro di abilitazione della release; non amplia da sola il perimetro funzionale. Versione e conteggi fanno fede in [`release-candidate.json`](../release-candidate.json) e nei risultati del gate.
 
-## P0 — Verità del candidato
+## P0.29 — Risorse v5 preview
 
-### P0-CONTRACT-01 — Contratto formati e governance
+### P0.29-SCOPE-01 — Contratto duale ristretto
 
-Stato: **implementato nel candidato corrente; verifica locale obbligatoria**.
+Stato: **completato nel worktree del candidato corrente**; resta da fissare in un commit candidato autorizzato.
 
-- allineare README e guida alle 16 estensioni inventariate;
-- dichiarare `.xls` rilevato ma conversion-only prima della revisione e rimuovere la promessa ODT;
-- impedire con un test il drift fra documenti e liste implementate;
-- mantenere regole operative, direzione, roadmap e checklist concise;
-- aggiornare l'identità del candidato senza cambiare parser, protocolli o scritture.
+- mantenere invariato il percorso Passbolt v4;
+- consentire risorse v5 personali soltanto su scelta esplicita e legata al piano;
+- mantenere fail-closed `auto`, import v5 condivisi, cartelle v5, conversioni e ACL mutative v5;
+- aggiornare UI, bridge, ricevute, manifesto e documentazione come un unico contratto.
 
-### P0-CI-01 — CI Windows sul commit candidato
+### P0.29-OFFLINE-01 — Accettazione sintetica v4/v5
 
-Stato: **pendente, esterno a P0-CONTRACT-01**.
+Stato: **completato localmente** sul worktree corrente; il risultato non sostituisce CI e matrici reali sul futuro SHA candidato.
 
-Eseguire il workflow Windows sullo stesso SHA candidato e conservare soltanto artefatti sintetici. Un gate locale verde non consente di segnare questa attività come completata.
+Eseguire su `127.0.0.1` i gate read-only, stateful e recovery per v4 e per risorse v5 con cartelle v4. I conteggi devono derivare dalle suite realmente presenti e il percorso v4 non deve regredire.
 
-### P0-MATRIX-01 — Matrice reale Passbolt v4
+### P0.29-CI-01 — CI Windows
 
-Stato: **pendente e non autorizzato in questa attività**.
+Stato: **pendente sul futuro SHA candidato**.
 
-Richiede un laboratorio dedicato e usa-e-getta, autorizzazione esplicita dell'operatore e attestazione separata del target prima di qualsiasi contatto o mutazione. Il report sanitizzato deve completare tutti gli scenari dichiarati dal manifesto sul medesimo commit.
+Il workflow Windows deve essere verde sull'esatto commit candidato e conservare soltanto artefatti sintetici. Il gate locale non attesta la CI.
 
-### P0-RELEASE-01 — Decisione go/no-go
+### P0.29-MATRIX-01 — Matrici reali separate
 
-Stato: **NO-GO per una release stabile** finché CI e matrice reale non sono complete. Un'eventuale distribuzione beta richiede comunque un'autorizzazione esplicita e non modifica `release_authorized=false` nel gate offline.
+Stato: **pendente e non autorizzato**.
 
-## Dopo P0
+Le matrici v4 e v5-resource-preview richiedono laboratori dedicati e usa-e-getta, autorizzazione esplicita e report sanitizzati separati sullo stesso commit. La precedente evidenza v5 `14/16` resta soltanto storica.
 
-Nuove funzionalità, parser, workflow ACL o supporto v5 richiedono una decisione di scope separata, un nuovo candidato e verifiche proporzionate. Non sono parte di `P0-CONTRACT-01`.
+### P0.29-RELEASE-01 — Decisione go/no-go
+
+Stato: **NO-GO per una release stabile** finché CI e matrici reali non sono complete. `release_authorized=false` resta obbligatorio nel gate offline.
+
+## Dopo P0.29
+
+La creazione di cartelle v5 richiede una decisione separata dopo la chiusura o mitigazione verificata del difetto upstream `passbolt_api #617/#618`, verifica post-write dedicata e matrice reale completa. Lo stesso vale per import v5 condivisi, ACL mutative v5, conversioni e negoziazione `auto`.

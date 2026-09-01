@@ -58,7 +58,7 @@ class FakeBridge:
                 "ok": True,
                 "result": {
                     "resource_format_selected": self.resource_format,
-                    "folder_format_selected": "none" if at_root else self.folder_format,
+                    "folder_format_selected": None if at_root else self.folder_format,
                     "can_import": True,
                     "create_count": 1,
                     "blocked_count": 0,
@@ -72,11 +72,12 @@ class FakeBridge:
         raise AssertionError(command)
 
 
-class NullRootFolderFormatBridge(FakeBridge):
+class InvalidRootFolderPlanBridge(FakeBridge):
     def request(self, request):
         response = super().request(request)
         if request["command"] == "session-readiness" and request["destination_mode"] == "root":
-            response["result"]["folder_format_selected"] = None
+            response["result"]["folder_format_selected"] = "v5"
+            response["result"]["create_folder_count"] = 3
         return response
 
 
@@ -137,14 +138,29 @@ class IntegrationMatrixTests(unittest.TestCase):
             self.assertEqual(profiles[0].expected_resource_format, "v4")
             document = json.loads(path.read_text(encoding="utf-8"))
             document["instances"][0]["expected_resource_format"] = "v5"
+            document["instances"][0]["expected_folder_format"] = "v4"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            v5_profiles = matrix.load_config(path)
+            self.assertEqual(
+                (
+                    v5_profiles[0].expected_resource_format,
+                    v5_profiles[0].expected_folder_format,
+                ),
+                ("v5", "v4"),
+            )
             document["instances"][0]["expected_folder_format"] = "v5"
             path.write_text(json.dumps(document), encoding="utf-8")
-            with self.assertRaisesRegex(matrix.MatrixError, "esclusivamente"):
+            with self.assertRaisesRegex(matrix.MatrixError, "cartelle v5"):
                 matrix.load_config(path)
             document["instances"][0]["enabled"] = False
             path.write_text(json.dumps(document), encoding="utf-8")
-            disabled_profiles = matrix.load_config(path)
-            self.assertFalse(disabled_profiles[0].enabled)
+            with self.assertRaisesRegex(matrix.MatrixError, "cartelle v5"):
+                matrix.load_config(path)
+            document["instances"][0]["expected_resource_format"] = "auto"
+            document["instances"][0]["expected_folder_format"] = "v4"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(matrix.MatrixError, "auto"):
+                matrix.load_config(path)
             document = json.loads(path.read_text(encoding="utf-8"))
             document["instances"][0]["enabled"] = True
             document["instances"][0]["expected_resource_format"] = "v4"
@@ -153,6 +169,62 @@ class IntegrationMatrixTests(unittest.TestCase):
             path.write_text(json.dumps(document), encoding="utf-8")
             with self.assertRaises(matrix.MatrixError):
                 matrix.load_config(path)
+
+    def test_v5_resource_preview_uses_v4_folders_end_to_end(self):
+        bridge = FakeBridge(resource_format="v5", folder_format="v4")
+        profile = self.profile(
+            instance_id="v5-resource-preview",
+            expected_resource_format="v5",
+            expected_folder_format="v4",
+        )
+        report = matrix.run_instance(
+            profile,
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "123456",
+            probe_runner=self.probe,
+            bridge_factory=lambda: bridge,
+        )
+        matrix.validate_report_document(report)
+        self.assertEqual(
+            (report["expected_resource_format"], report["expected_folder_format"]),
+            ("v5", "v4"),
+        )
+        readiness_requests = [
+            request for request in bridge.requests if request["command"] == "session-readiness"
+        ]
+        self.assertEqual(len(readiness_requests), 2)
+        self.assertTrue(
+            all(
+                request["resource_format"] == "v5"
+                and request["folder_format"] == "v4"
+                for request in readiness_requests
+            )
+        )
+        self.assertTrue(
+            all(
+                next(
+                    item
+                    for item in report["scenarios"]
+                    if item["name"] == scenario_name
+                )["status"]
+                == "passed"
+                for scenario_name in matrix.AUTOMATED_SCENARIOS
+            )
+        )
+
+    def test_direct_run_rejects_v5_folders_before_probe(self):
+        with self.assertRaisesRegex(matrix.MatrixError, "cartelle v5"):
+            matrix.run_instance(
+                self.profile(
+                    expected_resource_format="v5", expected_folder_format="v5"
+                ),
+                Path("C:/private/key.asc"),
+                "passphrase",
+                "123456",
+                probe_runner=lambda *args: self.fail("probe must not run"),
+                bridge_factory=lambda: self.fail("bridge must not start"),
+            )
 
     def test_read_only_run_is_complete_and_report_contains_no_secrets(self):
         bridge = FakeBridge()
@@ -193,11 +265,26 @@ class IntegrationMatrixTests(unittest.TestCase):
             "passphrase",
             "123456",
             probe_runner=self.probe,
-            bridge_factory=lambda: NullRootFolderFormatBridge(),
+            bridge_factory=lambda: FakeBridge(),
         )
         scenario = next(item for item in report["scenarios"] if item["name"] == "resource_root_dry_run")
         self.assertEqual(scenario["status"], "passed")
         self.assertIsNone(scenario["metrics"]["folder_format_selected"])
+
+    def test_root_readiness_rejects_folder_format_and_create_count(self):
+        report = matrix.run_instance(
+            self.profile(),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "123456",
+            probe_runner=self.probe,
+            bridge_factory=lambda: InvalidRootFolderPlanBridge(),
+        )
+        root = next(item for item in report["scenarios"] if item["name"] == "resource_root_dry_run")
+        client = next(item for item in report["scenarios"] if item["name"] == "client_folder_dry_run")
+        self.assertEqual(root["status"], "failed")
+        self.assertEqual(root["metrics"]["error_code"], "READINESS_EXPECTATION_MISMATCH")
+        self.assertEqual(client["status"], "passed")
 
     def test_gpg_auth_only_login_preserves_null_mfa_provider(self):
         report = matrix.run_instance(
@@ -282,10 +369,88 @@ class IntegrationMatrixTests(unittest.TestCase):
             scenario = next(item for item in updated["scenarios"] if item["name"] == "import_root_resource")
             self.assertEqual(scenario["status"], "passed")
             self.assertTrue(scenario["metrics"]["operator_attested"])
+            self.assertEqual(
+                scenario["metrics"]["attestation_contract"],
+                matrix.REMOTE_WRITE_SUCCESS,
+            )
+            self.assertTrue(scenario["metrics"]["remote_writes_recorded"])
             with self.assertRaises(matrix.MatrixError):
                 matrix.record_manual_result(path, "authenticated_login", "passed", None)
 
-    def test_release_completion_requires_v4_and_v5_history_is_read_only(self):
+    def test_v5_custom_share_requires_negative_no_write_proof(self):
+        report = matrix.run_instance(
+            self.profile(
+                instance_id="v5-resource-preview",
+                expected_resource_format="v5",
+                expected_folder_format="v4",
+            ),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "123456",
+            probe_runner=self.probe,
+            bridge_factory=lambda: FakeBridge(resource_format="v5", folder_format="v4"),
+        )
+        contracts = {
+            scenario["name"]: scenario["metrics"].get("attestation_contract")
+            for scenario in report["scenarios"]
+            if scenario["kind"] == "manual"
+        }
+        self.assertEqual(
+            contracts["custom_shared_permissions"], matrix.FAIL_CLOSED_NO_WRITE
+        )
+        self.assertEqual(
+            contracts["additive_acl_update"], matrix.FAIL_CLOSED_NO_WRITE
+        )
+        self.assertEqual(
+            contracts["restrictive_acl_update"], matrix.FAIL_CLOSED_NO_WRITE
+        )
+        self.assertEqual(contracts["duplicate_detection"], matrix.NO_WRITE_SUCCESS)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v5-resource-preview.json"
+            matrix.write_report(report, path)
+            with self.assertRaisesRegex(matrix.MatrixError, "ACL_V5_MUTATION_DISABLED"):
+                matrix.record_manual_result(
+                    path, "custom_shared_permissions", "passed", None
+                )
+            with self.assertRaisesRegex(matrix.MatrixError, "ACL_V5_MUTATION_DISABLED"):
+                matrix.record_manual_result(
+                    path, "custom_shared_permissions", "passed", "WRONG_REJECTION"
+                )
+            matrix.record_manual_result(
+                path,
+                "custom_shared_permissions",
+                "passed",
+                "ACL_V5_MUTATION_DISABLED",
+            )
+            updated = matrix.load_report(path)
+            custom = next(
+                scenario
+                for scenario in updated["scenarios"]
+                if scenario["name"] == "custom_shared_permissions"
+            )
+            self.assertEqual(
+                custom["metrics"],
+                {
+                    "attestation_contract": matrix.FAIL_CLOSED_NO_WRITE,
+                    "operator_attested": True,
+                    "remote_writes_recorded": False,
+                    "rejection_observed": True,
+                    "error_code": "ACL_V5_MUTATION_DISABLED",
+                },
+            )
+            custom["metrics"]["remote_writes_recorded"] = True
+            updated = matrix.finalize_report(updated)
+            path.write_text(json.dumps(updated), encoding="utf-8")
+            with self.assertRaisesRegex(matrix.MatrixError, "contratto|metriche"):
+                matrix.load_report(path)
+
+        self_test = matrix.self_test()
+        self.assertTrue(self_test["v5_custom_share_negative_proof_required"])
+        self.assertTrue(self_test["v5_custom_share_negative_proof_recorded"])
+        self.assertTrue(self_test["v5_manual_contract_complete"])
+
+    def test_release_completion_accepts_v5_resource_preview_but_not_v5_folders(self):
         report = matrix.run_instance(
             self.profile(),
             Path("C:/private/key.asc"),
@@ -294,12 +459,50 @@ class IntegrationMatrixTests(unittest.TestCase):
             probe_runner=self.probe,
             bridge_factory=lambda: FakeBridge(),
         )
+        v4_pair = ("v4", "v4")
         for scenario in report["scenarios"]:
             if scenario["name"] in matrix.MANUAL_SCENARIOS:
                 scenario["status"] = "passed"
-                scenario["metrics"] = {"operator_attested": True, "remote_writes_recorded": True}
+                scenario["metrics"] = matrix._manual_passed_metrics(
+                    v4_pair, scenario["name"]
+                )
         report = matrix.finalize_report(report)
         self.assertTrue(matrix.report_is_release_complete(report))
+
+        v5_resource_preview = matrix.run_instance(
+            self.profile(
+                instance_id="v5-resource-preview",
+                expected_resource_format="v5",
+                expected_folder_format="v4",
+            ),
+            Path("C:/private/key.asc"),
+            "passphrase",
+            "123456",
+            probe_runner=self.probe,
+            bridge_factory=lambda: FakeBridge(resource_format="v5", folder_format="v4"),
+        )
+        v5_pair = ("v5", "v4")
+        for scenario in v5_resource_preview["scenarios"]:
+            if scenario["name"] in matrix.MANUAL_SCENARIOS:
+                contract = matrix._manual_attestation_contract(
+                    v5_pair, scenario["name"]
+                )
+                scenario["status"] = "passed"
+                scenario["metrics"] = matrix._manual_passed_metrics(
+                    v5_pair,
+                    scenario["name"],
+                    matrix.V5_ACL_REJECTION_CODE
+                    if contract == matrix.FAIL_CLOSED_NO_WRITE
+                    else None,
+                )
+        v5_resource_preview = matrix.finalize_report(v5_resource_preview)
+        matrix.validate_report_document(v5_resource_preview)
+        self.assertTrue(matrix.report_is_release_complete(v5_resource_preview))
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "v5-resource-preview.json"
+            matrix.write_report(v5_resource_preview, path)
+            matrix.record_manual_result(path, "import_root_resource", "passed", None)
 
         historical_v5 = json.loads(json.dumps(report))
         historical_v5["expected_resource_format"] = "v5"

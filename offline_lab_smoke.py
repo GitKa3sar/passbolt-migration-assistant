@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the read-only v4 integration matrix against the offline lab."""
+"""Run the read-only v4 or v5-resource integration matrix against the offline lab."""
 
 from __future__ import annotations
 
@@ -21,9 +21,13 @@ from passbolt_integration_matrix import (
 )
 
 
-APP_VERSION = "0.28.4-beta.2"
+APP_VERSION = "0.29.0-beta.1"
 MAX_READY_BYTES = 128 * 1024
 LOCAL_URL_PATTERN = re.compile(r"^https://localhost:[1-9][0-9]{0,4}$")
+PROFILE_FORMATS = {
+    "v4": ("v4", "v4"),
+    "v5": ("v5", "v4"),
+}
 
 
 class OfflineLabSmokeError(RuntimeError):
@@ -63,8 +67,10 @@ def load_ready_file(path: str | Path) -> dict[str, Any]:
         raise OfflineLabSmokeError("Il file ready ha una struttura inattesa.")
     if document.get("schema_version") != 1 or document.get("contains_real_credentials") is not False:
         raise OfflineLabSmokeError("Il laboratorio non dichiara un'identita' sintetica valida.")
-    if document.get("profile") != "v4":
-        raise OfflineLabSmokeError("Questa release accetta soltanto il profilo laboratorio v4.")
+    if document.get("app_version") != APP_VERSION:
+        raise OfflineLabSmokeError("Il laboratorio appartiene a una versione applicativa diversa.")
+    if document.get("profile") not in PROFILE_FORMATS:
+        raise OfflineLabSmokeError("Il profilo del laboratorio non e' supportato.")
     if document.get("fault") != "none":
         raise OfflineLabSmokeError("Lo smoke test richiede un laboratorio senza fault injection.")
     if not LOCAL_URL_PATTERN.fullmatch(str(document.get("base_url", ""))):
@@ -116,13 +122,14 @@ def read_lab_status(ready: dict[str, Any]) -> dict[str, Any]:
 
 def run_smoke(ready: dict[str, Any]) -> dict[str, Any]:
     profile_name = str(ready["profile"])
+    expected_resource_format, expected_folder_format = PROFILE_FORMATS[profile_name]
     profile = InstanceProfile(
         instance_id=f"offline-{profile_name}",
         enabled=True,
         base_url=str(ready["base_url"]),
         expected_server_fingerprint=str(ready["server_fingerprint"]),
-        expected_resource_format=profile_name,
-        expected_folder_format=profile_name,
+        expected_resource_format=expected_resource_format,
+        expected_folder_format=expected_folder_format,
     )
     report = run_instance(
         profile,
@@ -133,10 +140,18 @@ def run_smoke(ready: dict[str, Any]) -> dict[str, Any]:
     validate_report_document(report)
     automated = report["scenarios"][: len(AUTOMATED_SCENARIOS)]
     manual = report["scenarios"][len(AUTOMATED_SCENARIOS) :]
-    failed = [item["name"] for item in automated if item.get("status") != "passed"]
+    failed = [
+        (
+            str(item["name"]),
+            str(item.get("metrics", {}).get("error_code", "UNEXPECTED_STATUS")),
+        )
+        for item in automated
+        if item.get("status") != "passed"
+    ]
     if failed:
         raise OfflineLabSmokeError(
-            "Scenari automatici offline non superati: " + ", ".join(failed)
+            "Scenari automatici offline non superati: "
+            + ", ".join(f"{name} ({code})" for name, code in failed)
         )
     if len(manual) != len(MANUAL_SCENARIOS) or any(
         item.get("status") != "not_run" for item in manual
@@ -153,6 +168,8 @@ def run_smoke(ready: dict[str, Any]) -> dict[str, Any]:
         "app": "Passbolt Migration Assistant Offline Lab",
         "version": APP_VERSION,
         "profile": profile_name,
+        "resource_format": expected_resource_format,
+        "folder_format": expected_folder_format,
         "scenario": ready["scenario"],
         "automated_scenarios_passed": len(automated),
         "manual_write_scenarios_executed": 0,

@@ -69,7 +69,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
 [xml]$Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Passbolt Migration Assistant - v0.28.4-beta.2"
+        Title="Passbolt Migration Assistant - v0.29.0-beta.1"
         Width="1360" Height="860" MinWidth="1160" MinHeight="740"
         WindowStartupLocation="CenterScreen" Background="#F5F5F7"
         FontFamily="Segoe UI Variable Text, Segoe UI"
@@ -707,7 +707,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                     </StackPanel>
                     <Button x:Name="AclWorkspaceButton" Grid.Column="1" Content="Gestisci ACL esistenti" Style="{StaticResource SecondaryButton}" Margin="0,0,10,0" ToolTip="Apre uno spazio separato dalla migrazione per consultare, simulare e applicare ACL sugli oggetti esistenti" />
                     <Border Grid.Column="2" Style="{StaticResource StatusPill}">
-                        <TextBlock Text="PASSBOLT V4-ONLY" Foreground="#196C2E" FontSize="11" FontWeight="SemiBold" />
+                        <TextBlock Text="V4 + RISORSE V5 PREVIEW" Foreground="#8A5A00" FontSize="11" FontWeight="SemiBold" />
                     </Border>
                 </Grid>
 
@@ -754,7 +754,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <Grid.ColumnDefinitions><ColumnDefinition Width="105" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,9">
                                 <TextBlock Text="Destinazione migrazione" Style="{StaticResource SectionTitle}" FontSize="16" />
-                                <TextBlock Text="Il preflight verifica destinazione e permessi prima di ogni scrittura. Server e formati v5 vengono rifiutati." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                <TextBlock Text="Il preflight verifica destinazione, formato e permessi prima di ogni scrittura. Le risorse v5 personali sono opt-in; import v5 condivisi, cartelle v5, ACL mutative v5 e selezione automatica restano bloccati." Foreground="#66737F" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,0" />
                             </StackPanel>
                             <TextBlock Grid.Row="1" Text="Destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
                             <ComboBox x:Name="DestinationMode" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" AutomationProperties.Name="Modalità destinazione migrazione" SelectedIndex="0" ToolTip="Crea o riutilizza una cartella per ogni cliente; in un contenitore condiviso eredita la maschera dei permessi verificata" MinHeight="34" Padding="10,6">
@@ -771,10 +771,14 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                             <TextBlock Grid.Row="3" Text="Permessi" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
                             <TextBlock x:Name="PermissionModeStatus" Grid.Row="3" Grid.Column="1" Text="Ereditati dalla destinazione" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,8,0" TextWrapping="Wrap" ToolTip="I permessi personalizzati vengono applicati soltanto alle nuove cartelle e risorse; il proprietario autenticato resta sempre Owner" />
                             <Button x:Name="ConfigurePermissionsButton" Grid.Row="3" Grid.Column="2" Content="Modifica permessi..." Style="{StaticResource SecondaryButton}" Margin="0,8,0,0" IsEnabled="False" MinHeight="34" Padding="13,6" FontSize="12" />
-                            <TextBlock Grid.Row="4" Text="Formato" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
-                            <Border Grid.Row="4" Grid.Column="1" Background="#EAF8F0" BorderBrush="#CAEAD8" BorderThickness="1" CornerRadius="9" Padding="10,7" Margin="0,8,8,0">
-                                <TextBlock Text="Cartelle e risorse: v4" Foreground="#196C2E" FontSize="11" FontWeight="SemiBold" />
-                            </Border>
+                            <TextBlock Grid.Row="4" Text="Formato risorse" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,8,0,0" />
+                            <StackPanel Grid.Row="4" Grid.Column="1" Margin="0,8,8,0">
+                                <ComboBox x:Name="ResourceFormat" AutomationProperties.Name="Formato risorse Passbolt" SelectedIndex="0" ToolTip="La scelta e' esplicita e viene legata al piano; non sono previsti auto-selezione o fallback silenziosi" MinHeight="34" Padding="10,6">
+                                    <ComboBoxItem Content="v4 - metadati in chiaro" Tag="v4" />
+                                    <ComboBoxItem Content="v5 preview personale - metadati cifrati" Tag="v5" />
+                                </ComboBox>
+                                <TextBlock Text="Cartelle: v4. La creazione di cartelle v5 resta bloccata." Foreground="#8A5A00" FontSize="10" TextWrapping="Wrap" Margin="2,4,0,0" />
+                            </StackPanel>
                             <Button x:Name="DryRunButton" Grid.Row="4" Grid.Column="2" Content="Preflight e dry-run" Style="{StaticResource PrimaryButton}" Margin="0,8,0,0" IsEnabled="False" MinHeight="34" Padding="13,6" FontSize="12" />
                         </Grid>
                         <Grid x:Name="AclContextPanel" Grid.Column="2" Visibility="Collapsed">
@@ -790,7 +794,7 @@ if (-not [string]::IsNullOrWhiteSpace($ConfiguredNode)) {
                                 <TextBlock Text="2. Ogni piano confronta una ACL desiderata con uno snapshot remoto fresco." Foreground="#355E85" FontSize="11" TextWrapping="Wrap" />
                             </Border>
                             <Border Grid.Row="3" Background="#FFF8E1" BorderBrush="#F2C94C" BorderThickness="1" CornerRadius="9" Padding="11,8">
-                                <TextBlock Text="3. L'applicazione resta bloccata fino alla conferma esatta; riduzioni e revoche richiedono una conferma rafforzata." Foreground="#754C00" FontSize="11" TextWrapping="Wrap" />
+                                <TextBlock Text="3. L'applicazione resta bloccata fino alla conferma esatta; gli oggetti v5 sono consultabili, ma import condivisi e ACL mutative v5 restano fuori scope." Foreground="#754C00" FontSize="11" TextWrapping="Wrap" />
                             </Border>
                         </Grid>
                     </Grid>
@@ -1172,6 +1176,7 @@ $MigrationDestinationPanel = Get-Control "MigrationDestinationPanel"
 $AclContextPanel = Get-Control "AclContextPanel"
 $DestinationMode = Get-Control "DestinationMode"
 $DestinationFolder = Get-Control "DestinationFolder"
+$ResourceFormat = Get-Control "ResourceFormat"
 $ConfigureClientMappingsButton = Get-Control "ConfigureClientMappingsButton"
 $PermissionModeStatus = Get-Control "PermissionModeStatus"
 $ConfigurePermissionsButton = Get-Control "ConfigurePermissionsButton"
@@ -2208,7 +2213,7 @@ function Save-LocalPreparationProject([switch]$ReviewContext) {
         project = [pscustomobject][ordered]@{
             schema_version = 1
             kind = "passbolt-migration-preparation"
-            app_version = "0.28.4-beta.2"
+            app_version = "0.29.0-beta.1"
             saved_at_utc = $SavedAtUtc
             server_origin = [string]$PlannedServerOrigin
             source_root = [string]$script:InventoryFolder
@@ -5866,11 +5871,15 @@ function Get-ImportReadinessDiagnostic([object]$Result) {
     if ($null -ne $UnavailableReasonProperty -and $UnavailableReasonProperty.Value -is [string]) {
         $UnavailableReason = [string]$UnavailableReasonProperty.Value
     }
-    $KnownCapabilityReason = $UnavailableReason -match '^Il server non consente (?:un tipo password v4 compatibile|cartelle v4)\.$'
+    $KnownCapabilityReason = $UnavailableReason -match '^Il server non consente (?:un tipo password v4 compatibile|alcun tipo password v4 o v5 compatibile|cartelle v4|alcun formato cartella v4 o v5 compatibile)\.$'
+    $KnownV5PolicyReason = $UnavailableReason -match '^Il profilo preview consente risorse v5 personali ma blocca le modifiche ACL necessarie per creare o condividere una risorsa v5 condivisa\.$'
 
     if ($BlockedCheckIds -contains "resource_format" -or $BlockedCheckIds -contains "folder_format" -or $KnownCapabilityReason) {
-        $Cause = "Il server non dichiara le capability Passbolt v4 richieste dal piano."
+        $Cause = "Il server non dichiara le capability Passbolt richieste dal formato e dalla destinazione selezionati."
         $ActivityCode = "server_capability_missing"
+    } elseif ($KnownV5PolicyReason) {
+        $Cause = "Il profilo preview non consente import v5 condivisi o mutazioni ACL v5; scegliere una destinazione e permessi personali oppure usare risorse v4."
+        $ActivityCode = "v5_acl_mutation_disabled"
     } elseif ($BlockedCount -gt 0 -or $BlockedCheckIds -contains "conflicts") {
         if ($BlockedCount -gt 0) {
             $Cause = "$BlockedCount credenziali esistono in una destinazione diversa o presentano conflitti o duplicati bloccanti. Il piano resta bloccato per evitare modifiche implicite."
@@ -6109,6 +6118,11 @@ function Complete-ImportReadinessFailure([string]$FailureMessage, [bool]$CloseSe
     [System.Windows.MessageBox]::Show($FailureMessage, "Dry-run non riuscito", "OK", "Error") | Out-Null
 }
 
+function Resolve-RequestedResourceFormat([AllowNull()][object]$SelectedItem) {
+    if ($null -eq $SelectedItem) { return "" }
+    return [string]$SelectedItem.Tag
+}
+
 function Invoke-ImportReadiness {
     if ($script:ImportRecoveryRequired) {
         Show-Phase04Workspace "recovery" -SkipRefresh
@@ -6135,7 +6149,7 @@ function Invoke-ImportReadiness {
 
     Reset-ImportOperationalViews
     Reset-ImportPlan "Preflight autenticato e dry-run nella sessione attiva in corso..."
-    $RequestedResourceFormat = "v4"
+    $RequestedResourceFormat = Resolve-RequestedResourceFormat $ResourceFormat.SelectedItem
     $RequestedFolderFormat = "v4"
     $RequestedDestinationMode = [string]$DestinationMode.SelectedItem.Tag
     if ($RequestedDestinationMode -notin @("client_folders", "client_mapping", "direct_folder", "root")) { $RequestedDestinationMode = "client_folders" }
@@ -6196,7 +6210,7 @@ function Complete-ConfirmedImportFailure(
     Reset-ImportPlan "Importazione interrotta. Aprire la scheda di recupero e verificare il lotto autenticato prima di riprovare."
     Add-Activity "Importazione non completata: $FailureMessage"
     Update-ImportSessionState
-    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.28.4-beta.2", "OK", "Error") | Out-Null
+    [System.Windows.MessageBox]::Show($FailureMessage, "Importazione non completata - v0.29.0-beta.1", "OK", "Error") | Out-Null
     Show-Phase04Workspace "recovery" -SkipRefresh
     Refresh-RecoveryBatches -Quiet
 }
@@ -7742,6 +7756,12 @@ $DestinationFolder.Add_SelectionChanged({
         Add-Activity "Cartella Passbolt modificata; il piano precedente e' stato invalidato."
     }
 })
+$ResourceFormat.Add_SelectionChanged({
+    if ($null -ne $script:ImportPlan) {
+        Reset-ImportPlan "Il formato delle risorse e' cambiato. Ripetere il dry-run."
+        Add-Activity "Formato risorse modificato; il piano precedente e' stato invalidato."
+    }
+})
 $ConfigureClientMappingsButton.Add_Click({ Show-ClientDestinationMappingDialog })
 $ConfigurePermissionsButton.Add_Click({ Open-PermissionEditorAsync })
 $ImportConfirmation.Add_TextChanged({ Update-ExecuteImportState })
@@ -7949,7 +7969,7 @@ if ($RenderPreviewPath) {
     }
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.4-beta.2"
+        version = "0.29.0-beta.1"
         preview = $PreviewFullPath
         page = $RenderPreviewPage
         import_tab = if ($RenderPreviewPage -eq "Import") { $RenderPreviewImportTab } else { $null }
@@ -8073,7 +8093,7 @@ if ($SelfTest) {
         }
     }
     if (
-        $Window.Title -notmatch "v0\.28\.4-beta\.2" -or
+        $Window.Title -notmatch "v0\.29\.0-beta\.1" -or
         $Window.MinWidth -lt 1160 -or
         $Window.MinHeight -lt 740 -or
         [string]$Window.FontFamily -notmatch "Segoe UI Variable" -or
@@ -8104,6 +8124,7 @@ if ($SelfTest) {
         $ImportSessionButton,
         $DestinationMode,
         $DestinationFolder,
+        $ResourceFormat,
         $ConfigurePermissionsButton,
         $DryRunButton,
         $NewImportModeButton,
@@ -8138,6 +8159,7 @@ if ($SelfTest) {
         $MfaTotpCode,
         $DestinationMode,
         $DestinationFolder,
+        $ResourceFormat,
         $ImportConfirmation,
         $RecoveryConfirmation,
         $AclTypeFilter,
@@ -8329,7 +8351,7 @@ for line in sys.stdin:
         throw "Il backend di revisione non rispetta il contratto di mascheramento."
     }
     $ReceiptBackendTest = Invoke-PythonJson $ReceiptScript @("--self-test")
-    if (-not $ReceiptBackendTest.ok -or $ReceiptBackendTest.result.compatibility_profile -ne "passbolt-v4-only" -or -not $ReceiptBackendTest.result.closed_schema -or -not $ReceiptBackendTest.result.atomic_write) {
+    if (-not $ReceiptBackendTest.ok -or $ReceiptBackendTest.result.compatibility_profile -ne "passbolt-v4-v5-resource-preview" -or -not $ReceiptBackendTest.result.closed_schema -or -not $ReceiptBackendTest.result.atomic_write) {
         throw "Il backend delle ricevute non rispetta il contratto locale chiuso."
     }
     $SourceFeedbackProbe = Invoke-SecureJsonProcess $PythonExecutable @($ReceiptScript, "--secure-json") ([pscustomobject][ordered]@{
@@ -8389,7 +8411,7 @@ for line in sys.stdin:
     $script:ImportCandidates = @()
     $LocalProjectBackendTest = Invoke-PythonJson $LocalProjectScript @("--self-test")
     if (
-        $LocalProjectBackendTest.version -ne "0.28.4-beta.2" -or
+        $LocalProjectBackendTest.version -ne "0.29.0-beta.1" -or
         -not $LocalProjectBackendTest.dpapi_current_user_required -or
         $LocalProjectBackendTest.secret_fields_serialized -or
         $LocalProjectBackendTest.trusted_fingerprint_persisted -or
@@ -8471,15 +8493,15 @@ for line in sys.stdin:
     $script:AllInventoryRows = @()
     $script:AllReviewRows = @()
     $ImportBackendTest = Invoke-PythonJson $ImportScript @("--self-test")
-    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.compatibility_profile -ne "passbolt-v4-only" -or -not $ImportBackendTest.result.v5_format_rejected -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.source_mapping_profile_revalidation -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
+    if (-not $ImportBackendTest.ok -or $ImportBackendTest.result.compatibility_profile -ne "passbolt-v4-v5-resource-preview" -or -not $ImportBackendTest.result.v5_resource_format_supported -or -not $ImportBackendTest.result.v5_folder_format_rejected -or -not $ImportBackendTest.result.automatic_format_rejected -or $ImportBackendTest.result.secrets_serialized -or -not $ImportBackendTest.result.unlimited_candidate_selection -or -not $ImportBackendTest.result.indexed_candidate_revalidation -or -not $ImportBackendTest.result.early_parser_stop -or -not $ImportBackendTest.result.persistent_session_protocol -or -not $ImportBackendTest.result.reconciliation_progress_protocol -or -not $ImportBackendTest.result.dashboard_progress_forwarding -or -not $ImportBackendTest.result.authenticated_preflight_protocol -or -not $ImportBackendTest.result.post_import_verification_protocol -or -not $ImportBackendTest.result.authenticated_recovery_protocol -or -not $ImportBackendTest.result.recovery_management_protocol -or -not $ImportBackendTest.result.recoverable_archive_protocol -or -not $ImportBackendTest.result.explicit_reveal_supported -or -not $ImportBackendTest.result.protected_excel_integrity_supported -or -not $ImportBackendTest.result.source_mapping_profile_revalidation -or -not $ImportBackendTest.result.permission_editor_protocol -or -not $ImportBackendTest.result.existing_acl_viewer_protocol -or -not $ImportBackendTest.result.existing_acl_dry_run_protocol -or -not $ImportBackendTest.result.acl_journal_management_protocol) {
         throw "Il backend di importazione non rispetta il contratto di sicurezza."
     }
     $CryptoBackendTest = Invoke-SecureJsonProcess $NodeExecutable @($CryptoScript) ([pscustomobject]@{ command = "self-test" }) 120000
-    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.compatibility_profile -ne "passbolt-v4-only" -or -not $CryptoBackendTest.result.v5_format_rejected -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.gpgauth_bounded_clock_verification -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
+    if (-not $CryptoBackendTest.ok -or $CryptoBackendTest.result.compatibility_profile -ne "passbolt-v4-v5-resource-preview" -or -not $CryptoBackendTest.result.v5_resource_format_supported -or -not $CryptoBackendTest.result.v5_folder_format_rejected -or -not $CryptoBackendTest.result.automatic_format_rejected -or -not $CryptoBackendTest.result.v5_acl_mutation_rejected -or -not $CryptoBackendTest.result.v5_folder_payload_rejected -or -not $CryptoBackendTest.result.v5_shared_resource_payload_rejected -or $CryptoBackendTest.result.secrets_serialized -or -not $CryptoBackendTest.result.utf8_bom_input -or -not $CryptoBackendTest.result.unlimited_candidate_selection -or -not $CryptoBackendTest.result.indexed_large_batch_planning -or -not $CryptoBackendTest.result.source_mapping_digest_bound -or -not $CryptoBackendTest.result.gpgauth_bounded_clock_verification -or -not $CryptoBackendTest.result.persistent_session_protocol -or -not $CryptoBackendTest.result.reconciliation_progress_protocol -or -not $CryptoBackendTest.result.batch_dashboard_progress_protocol -or -not $CryptoBackendTest.result.authenticated_preflight_protocol -or -not $CryptoBackendTest.result.post_import_verification_protocol -or -not $CryptoBackendTest.result.authenticated_recovery_protocol -or -not $CryptoBackendTest.result.permission_editor_protocol -or -not $CryptoBackendTest.result.existing_acl_viewer_protocol -or -not $CryptoBackendTest.result.existing_acl_dry_run_protocol -or -not $CryptoBackendTest.result.official_wrapped_gpgauth_payload_contract -or -not $CryptoBackendTest.result.official_minimal_totp_payload_contract) {
         throw "Il bridge OpenPGP locale non ha superato il test di sicurezza."
     }
     $IntegrationMatrixTest = Invoke-PythonJson $IntegrationMatrixScript @("self-test")
-    if (-not $IntegrationMatrixTest.ok -or $IntegrationMatrixTest.result.secrets_serialized -or -not $IntegrationMatrixTest.result.read_only_automation -or -not $IntegrationMatrixTest.result.ci_real_instance_guard -or -not $IntegrationMatrixTest.result.report_digest_valid -or -not $IntegrationMatrixTest.result.v5_release_gate_rejected -or -not $IntegrationMatrixTest.result.safe_failure_projection -or $IntegrationMatrixTest.result.automated_scenario_count -ne 7 -or $IntegrationMatrixTest.result.manual_scenario_count -ne 9) {
+    if (-not $IntegrationMatrixTest.ok -or $IntegrationMatrixTest.result.secrets_serialized -or -not $IntegrationMatrixTest.result.read_only_automation -or -not $IntegrationMatrixTest.result.ci_real_instance_guard -or -not $IntegrationMatrixTest.result.report_digest_valid -or -not $IntegrationMatrixTest.result.v5_release_gate_rejected -or -not $IntegrationMatrixTest.result.v5_resource_preview_report_supported -or -not $IntegrationMatrixTest.result.v5_custom_share_negative_proof_required -or -not $IntegrationMatrixTest.result.v5_custom_share_negative_proof_recorded -or -not $IntegrationMatrixTest.result.v5_manual_contract_complete -or -not $IntegrationMatrixTest.result.safe_failure_projection -or $IntegrationMatrixTest.result.automated_scenario_count -ne 7 -or $IntegrationMatrixTest.result.manual_scenario_count -ne 9) {
         throw "La matrice di integrazione non rispetta il contratto di sicurezza."
     }
     $LoginDiagnosticProbe = Get-SecureErrorMessage ([pscustomobject]@{
@@ -8505,8 +8527,8 @@ for line in sys.stdin:
     if ([string]$ImportSessionButton.Content -ne "Avvia sessione" -or $script:ImportSessionIdleTimeoutMinutes -ne 30) {
         throw "I controlli UI della sessione autenticata non sono nello stato previsto."
     }
-    if ($null -ne $Window.FindName("FolderFormat") -or $null -ne $Window.FindName("ResourceFormat") -or $Xaml.OuterXml -notmatch "Cartelle e risorse: v4") {
-        throw "La UI deve rappresentare Passbolt v4-only come stato informativo, senza selettori a opzione unica."
+    if ($null -ne $Window.FindName("FolderFormat") -or $null -eq $ResourceFormat -or $ResourceFormat.Items.Count -ne 2 -or [string]$ResourceFormat.Items[0].Tag -ne "v4" -or [string]$ResourceFormat.Items[1].Tag -ne "v5" -or [string]$ResourceFormat.SelectedItem.Tag -ne "v4" -or (Resolve-RequestedResourceFormat $null) -ne "" -or (Resolve-RequestedResourceFormat ([pscustomobject]@{ Tag = "auto" })) -ne "auto" -or $Xaml.OuterXml -notmatch "Cartelle: v4") {
+        throw "La UI deve offrire una scelta esplicita v4/v5 per le risorse e mantenere le cartelle v5 bloccate."
     }
     Show-Phase04Workspace "new_import" -SkipRefresh
     $MigrationSeparationValid = ($MigrationWorkspace.Visibility -eq "Visible" -and $ExistingAclWorkspace.Visibility -eq "Collapsed" -and $NewImportWorkspace.Visibility -eq "Visible")
@@ -8747,8 +8769,14 @@ for line in sys.stdin:
     $CapabilityDiagnosticProbe = Get-ImportReadinessDiagnostic ([pscustomobject]@{
         can_import = $false
         blocked_count = 0
-        unavailable_reason = "Il server non consente un tipo password v4 compatibile."
+        unavailable_reason = "Il server non consente alcun tipo password v4 o v5 compatibile."
         preflight_checks = @([pscustomobject]@{ id = "resource_format"; status = "blocked" })
+    })
+    $V5PolicyDiagnosticProbe = Get-ImportReadinessDiagnostic ([pscustomobject]@{
+        can_import = $false
+        blocked_count = 0
+        unavailable_reason = "Il profilo preview consente risorse v5 personali ma blocca le modifiche ACL necessarie per creare o condividere una risorsa v5 condivisa."
+        preflight_checks = @([pscustomobject]@{ id = "permission_directory"; status = "blocked" })
     })
     $ImportablePlanProbe = [pscustomobject]@{
         can_import = $true
@@ -8785,7 +8813,10 @@ for line in sys.stdin:
         [string]$ConflictDiagnosticProbe.Hint -match "capabilit" -or
         [bool]$CapabilityDiagnosticProbe.CanImport -or
         [string]$CapabilityDiagnosticProbe.ActivityCode -ne "server_capability_missing" -or
-        [string]$CapabilityDiagnosticProbe.Cause -notmatch "capability Passbolt v4" -or
+        [string]$CapabilityDiagnosticProbe.Cause -notmatch "capability Passbolt" -or
+        [bool]$V5PolicyDiagnosticProbe.CanImport -or
+        [string]$V5PolicyDiagnosticProbe.ActivityCode -ne "v5_acl_mutation_disabled" -or
+        [string]$V5PolicyDiagnosticProbe.Cause -notmatch "import v5 condivisi" -or
         -not [bool]$ImportableDiagnosticProbe.CanImport -or
         -not (Test-ImportPlanCanImport $ImportablePlanProbe) -or
         (Test-ImportPlanCanImport ([pscustomobject]@{ can_import = "true" })) -or
@@ -8797,13 +8828,13 @@ for line in sys.stdin:
     ) {
         throw "La diagnostica sintetica del preflight non distingue in modo fail-closed conflitti, capability e piani importabili."
     }
-    $ImportReadinessDiagnosticCaseCount = 5
+    $ImportReadinessDiagnosticCaseCount = 6
     [pscustomobject]@{
         app = "Passbolt Migration Assistant"
-        version = "0.28.4-beta.2"
+        version = "0.29.0-beta.1"
         ui = "WPF"
         phases = 4
-        controls = 139
+        controls = 140
         import_readiness_diagnostic_cases = $ImportReadinessDiagnosticCaseCount
         inventory_collection = "OK"
         review_backend = "OK"

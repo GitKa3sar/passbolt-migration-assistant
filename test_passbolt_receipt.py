@@ -147,7 +147,10 @@ class ReceiptTests(unittest.TestCase):
         receipt = build_receipt("preflight", preflight_evidence())
         validated = validate_receipt(receipt)
         self.assertEqual(validated["receipt_type"], "preflight")
-        self.assertEqual(validated["compatibility_profile"], "passbolt-v4-only")
+        self.assertEqual(
+            validated["compatibility_profile"],
+            "passbolt-v4-v5-resource-preview",
+        )
         self.assertEqual(validated["formats"], {"resource": "v4", "folder": "v4"})
         self.assertEqual(
             [item["id"] for item in validated["checks"]],
@@ -160,7 +163,26 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(receipt["journal"], {"batch_id": BATCH_ID, "status": "complete"})
         self.assertNotIn("checks", receipt)
 
-    def test_blocked_preflight_can_record_unavailable_v4_capability(self) -> None:
+    def test_v5_resource_preflight_and_migration_receipts_are_supported(self) -> None:
+        for receipt_type, evidence_factory in (
+            ("preflight", preflight_evidence),
+            ("migration", migration_evidence),
+        ):
+            evidence = evidence_factory()
+            evidence["resource_format"] = "v5"
+
+            receipt = validate_receipt(build_receipt(receipt_type, evidence))
+
+            with self.subTest(receipt_type=receipt_type):
+                self.assertEqual(
+                    receipt["formats"], {"resource": "v5", "folder": "v4"}
+                )
+                self.assertEqual(
+                    receipt["compatibility_profile"],
+                    "passbolt-v4-v5-resource-preview",
+                )
+
+    def test_blocked_preflight_can_record_unavailable_capability(self) -> None:
         evidence = preflight_evidence()
         evidence["status"] = "blocked"
         evidence["resource_format"] = "unavailable"
@@ -171,7 +193,7 @@ class ReceiptTests(unittest.TestCase):
 
         self.assertEqual(receipt["status"], "blocked")
         self.assertEqual(receipt["formats"]["resource"], "unavailable")
-        self.assertNotIn("v5", json.dumps(receipt).lower())
+        self.assertEqual(receipt["formats"]["folder"], "unavailable")
 
     def test_migration_receipt_rejects_uncertain_or_partial_result(self) -> None:
         for field, value in (
@@ -186,16 +208,59 @@ class ReceiptTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ReceiptError):
                 build_receipt("migration", evidence)
 
-    def test_receipts_reject_v5_and_recursive_sensitive_fields(self) -> None:
-        evidence = preflight_evidence()
-        evidence["resource_format"] = "v5"
-        with self.assertRaises(ReceiptError):
-            build_receipt("preflight", evidence)
+    def test_receipts_reject_out_of_scope_formats(self) -> None:
+        invalid_formats = (
+            ("preflight", preflight_evidence, "auto", "v4"),
+            ("preflight", preflight_evidence, "v6", "v4"),
+            ("preflight", preflight_evidence, None, "v4"),
+            ("preflight", preflight_evidence, "v4", "auto"),
+            ("preflight", preflight_evidence, "v5", "v5"),
+            ("preflight", preflight_evidence, "v5", None),
+            ("migration", migration_evidence, "unavailable", "v4"),
+            ("migration", migration_evidence, "v5", "unavailable"),
+        )
+        for (
+            receipt_type,
+            evidence_factory,
+            resource_format,
+            folder_format,
+        ) in invalid_formats:
+            evidence = evidence_factory()
+            evidence["resource_format"] = resource_format
+            evidence["folder_format"] = folder_format
+            with self.subTest(
+                receipt_type=receipt_type,
+                resource_format=resource_format,
+                folder_format=folder_format,
+            ), self.assertRaises(ReceiptError):
+                build_receipt(receipt_type, evidence)
 
+    def test_receipts_reject_recursive_sensitive_fields(self) -> None:
         evidence = preflight_evidence()
         evidence["checks"][0]["password"] = "must-not-serialize"
         with self.assertRaises(ReceiptError):
             build_receipt("preflight", evidence)
+
+    def test_validator_rejects_out_of_scope_formats_with_valid_digest(self) -> None:
+        from passbolt_receipt import _digest_document
+
+        for field, value in (
+            ("resource", "auto"),
+            ("resource", "v6"),
+            ("folder", "auto"),
+            ("folder", "v5"),
+        ):
+            evidence = preflight_evidence()
+            evidence["resource_format"] = "v5"
+            receipt = build_receipt("preflight", evidence)
+            receipt["formats"][field] = value
+            receipt.pop("receipt_digest")
+            receipt["receipt_digest"] = _digest_document(receipt)
+
+            with self.subTest(field=field, value=value), self.assertRaises(
+                ReceiptError
+            ):
+                validate_receipt(receipt)
 
     def test_tampering_invalidates_receipt_digest(self) -> None:
         receipt = build_receipt("preflight", preflight_evidence())

@@ -422,22 +422,82 @@ class ImportPreparationTests(unittest.TestCase):
         self.assertEqual(resources, [])
         self.assertNotIn(self.secret, json.dumps(bridge_request))
 
-    def test_v4_only_release_rejects_auto_and_v5_before_source_read(self) -> None:
-        for resource_format, folder_format in (("auto", "v4"), ("v4", "auto"), ("v5", "v5")):
+    def test_resource_v5_preview_is_forwarded_with_v4_folders(self) -> None:
+        bridge_request, resources = _session_bridge_request(
+            self.root,
+            {
+                "command": "session-readiness",
+                "session_id": "session-id",
+                "resource_format": "v5",
+                "folder_format": "v4",
+                "candidates": [self.request],
+            },
+        )
+
+        self.assertEqual(bridge_request["resource_format"], "v5")
+        self.assertEqual(bridge_request["folder_format"], "v4")
+        self.assertEqual(resources, [])
+        self.assertNotIn(self.secret, json.dumps(bridge_request))
+
+    def test_preview_rejects_out_of_scope_formats_before_source_read(self) -> None:
+        invalid_formats = (
+            ("auto", "v4"),
+            ("v4", "auto"),
+            ("v5", "v5"),
+            (None, "v4"),
+            ("v4", None),
+            ("v6", "v4"),
+            ("v5", "none"),
+        )
+        for resource_format, folder_format in invalid_formats:
             with self.subTest(
-                resource_format=resource_format, folder_format=folder_format
+                command="session-readiness",
+                resource_format=resource_format,
+                folder_format=folder_format,
             ):
-                with self.assertRaisesRegex(ImportPreparationError, "v4"):
-                    _session_bridge_request(
-                        self.root,
-                        {
-                            "command": "session-readiness",
-                            "session_id": "session-id",
-                            "resource_format": resource_format,
-                            "folder_format": folder_format,
-                            "candidates": [],
-                        },
-                    )
+                with mock.patch(
+                    "passbolt_import.verify_integrity"
+                ) as source_read, mock.patch(
+                    "passbolt_import._source_file_passwords"
+                ) as secret_read:
+                    with self.assertRaisesRegex(
+                        ImportPreparationError, "esplicito v4 o v5"
+                    ):
+                        _session_bridge_request(
+                            self.root,
+                            {
+                                "command": "session-readiness",
+                                "session_id": "session-id",
+                                "resource_format": resource_format,
+                                "folder_format": folder_format,
+                                "candidates": [self.request],
+                            },
+                        )
+                    source_read.assert_not_called()
+                    secret_read.assert_not_called()
+
+            with self.subTest(
+                command="session-import",
+                resource_format=resource_format,
+                folder_format=folder_format,
+            ):
+                with mock.patch(
+                    "passbolt_import._prepare_import_resources"
+                ) as source_read:
+                    with self.assertRaisesRegex(
+                        ImportPreparationError, "esplicito v4 o v5"
+                    ):
+                        _session_bridge_request(
+                            self.root,
+                            {
+                                "command": "session-import",
+                                "session_id": "session-id",
+                                "resource_format": resource_format,
+                                "folder_format": folder_format,
+                                "candidates": [self.request],
+                            },
+                        )
+                    source_read.assert_not_called()
 
     def test_persistent_permission_catalog_command_requires_no_sources_or_secrets(self) -> None:
         bridge_request, resources = _session_bridge_request(
@@ -584,6 +644,7 @@ class ImportPreparationTests(unittest.TestCase):
             journal_root,
         )
         self.assertEqual(bridge_request["acl_batch_id"], journal.batch_id)
+        self.assertEqual(bridge_request["acl_recovery_state"]["app_version"], "0.16.0")
         self.assertEqual(
             bridge_request["acl_recovery_state"]["desired_permissions"],
             [{"aro": "Group", "aro_foreign_key": "group-id", "type": 7}],
@@ -597,7 +658,7 @@ class ImportPreparationTests(unittest.TestCase):
             {
                 "command": "session-import",
                 "session_id": "session-id",
-                "resource_format": "v4",
+                "resource_format": "v5",
                 "destination_mode": "root",
                 "folder_format": "v4",
                 "permission_mode": "custom",
@@ -612,6 +673,8 @@ class ImportPreparationTests(unittest.TestCase):
         )
 
         self.assertEqual(bridge_request["command"], "session-import")
+        self.assertEqual(bridge_request["resource_format"], "v5")
+        self.assertEqual(bridge_request["folder_format"], "v4")
         self.assertEqual(resources[0]["password"], self.secret)
         self.assertEqual(bridge_request["resources"][0]["password"], self.secret)
         self.assertEqual(bridge_request["permission_mode"], "custom")
@@ -1078,7 +1141,7 @@ for raw in sys.stdin:
             server_fingerprint="C" * 40,
             user_id_hash=hash_user_identifier(user_id),
             plan_digest="d" * 64,
-            resource_format="v4",
+            resource_format="v5",
             folder_format="none",
             destination_mode="root",
             destination_folder_id=None,
@@ -1118,6 +1181,8 @@ for raw in sys.stdin:
             "user": {"id": "59a882e6-4909-4db0-ab84-91093461c777"},
         }
     elif command == "session-recovery-readiness":
+        assert request["resource_format"] == "v5"
+        assert request["folder_format"] == "none"
         batch_id = request["reconciliation_batch_id"]
         candidate_id = request["candidates"][0]["candidate_id"]
         recovery_id = "6ed40c1f-361c-4d09-8064-eb3938e7262c"
@@ -1163,6 +1228,8 @@ for raw in sys.stdin:
             "can_recover": True,
         }
     elif command == "session-recovery-import":
+        assert request["resource_format"] == "v5"
+        assert request["folder_format"] == "none"
         assert request["resources"][0]["password"] == "Segreto-importazione-123"
         batch_id = request["reconciliation_batch_id"]
         candidate_id = request["candidates"][0]["candidate_id"]
@@ -1300,6 +1367,53 @@ for raw in sys.stdin:
         self.assertNotIn(self.secret, serialized)
         self.assertNotIn("key-passphrase", serialized)
         self.assertNotIn("654321", serialized)
+
+    def test_recovery_rejects_v5_folders_before_source_read(self) -> None:
+        journal_root = self.root / "v5-folder-recovery-journals"
+        journal = ReconciliationJournal.create(
+            app_version="0.12.5",
+            server_origin="https://pass.example.test",
+            server_fingerprint="D" * 40,
+            user_id_hash=hash_user_identifier(
+                "59a882e6-4909-4db0-ab84-91093461c777"
+            ),
+            plan_digest="d" * 64,
+            resource_format="v5",
+            folder_format="v5",
+            destination_mode="client_folders",
+            destination_folder_id=None,
+            candidates=(
+                CandidateProof(
+                    self.request["candidate_id"], self.request["source_sha256"]
+                ),
+            ),
+            root=journal_root,
+        )
+        journal.append(
+            "operation_intent",
+            operation_id="2f42a04b-bf31-4095-a492-573fb3e091ba",
+            object_type="resource",
+            action="create_resource",
+            candidate_id=self.request["candidate_id"],
+            destination_key_hash="1" * 64,
+        )
+
+        with mock.patch(
+            "passbolt_import.verify_integrity"
+        ) as source_read, mock.patch(
+            "passbolt_import._source_file_passwords"
+        ) as secret_read:
+            with self.assertRaisesRegex(ImportPreparationError, "cartelle"):
+                _prepare_recovery_context(
+                    self.root,
+                    {
+                        "reconciliation_batch_id": journal.batch_id,
+                        "candidates": [self.request],
+                    },
+                    journal_root,
+                )
+            source_read.assert_not_called()
+            secret_read.assert_not_called()
 
     def test_recovery_rejects_changed_candidate_proofs_before_bridge(self) -> None:
         journal = ReconciliationJournal.create(

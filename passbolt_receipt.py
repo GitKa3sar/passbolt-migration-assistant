@@ -20,11 +20,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-APP_VERSION = "0.28.4-beta.2"
+APP_VERSION = "0.29.0-beta.1"
 ARTIFACT = "passbolt_migration_receipt"
 SOURCE_ARTIFACT = "passbolt_source_feedback"
 SCHEMA_VERSION = 1
-COMPATIBILITY_PROFILE = "passbolt-v4-only"
+COMPATIBILITY_PROFILE = "passbolt-v4-v5-resource-preview"
 MAX_INPUT_BYTES = 256 * 1024
 MAX_RECEIPT_BYTES = 128 * 1024
 MAX_ISSUES = 128
@@ -364,7 +364,9 @@ MIGRATION_EVIDENCE_KEYS = {
 def _normalize_common_evidence(
     raw: Mapping[str, Any], *, allow_unavailable: bool = False
 ) -> dict[str, Any]:
-    resource_formats = {"v4", "unavailable"} if allow_unavailable else {"v4"}
+    resource_formats = (
+        {"v4", "v5", "unavailable"} if allow_unavailable else {"v4", "v5"}
+    )
     folder_formats = (
         {"v4", "not_required", "unavailable"}
         if allow_unavailable
@@ -587,7 +589,11 @@ def validate_receipt(value: object) -> dict[str, Any]:
     formats = _mapping(
         raw["formats"], required={"resource", "folder"}, label="Formati"
     )
-    resource_formats = {"v4", "unavailable"} if receipt_type == "preflight" else {"v4"}
+    resource_formats = (
+        {"v4", "v5", "unavailable"}
+        if receipt_type == "preflight"
+        else {"v4", "v5"}
+    )
     folder_formats = (
         {"v4", "not_required", "unavailable"}
         if receipt_type == "preflight"

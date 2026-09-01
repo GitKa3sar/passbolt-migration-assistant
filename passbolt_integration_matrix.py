@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repeatable, secret-free integration matrix for real Passbolt v4 labs.
+"""Repeatable, secret-free matrix for real v4 and v5-resource-preview labs.
 
 The runner automates only read-only checks. Credentials are requested
 interactively, sent to the existing Node bridge over stdin and never written to
@@ -31,7 +31,7 @@ from typing import Any, Callable, Mapping, Sequence
 from passbolt_api_probe import ProbeError, normalize_base_url, normalize_fingerprint, run_probe
 
 
-APP_VERSION = "0.28.4-beta.2"
+APP_VERSION = "0.29.0-beta.1"
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
 CI_ENVIRONMENT_VARIABLES = ("CI", "GITHUB_ACTIONS", "PASSBOLT_MIGRATION_CI")
@@ -80,6 +80,39 @@ MANUAL_SCENARIOS = (
 
 ALL_SCENARIOS = AUTOMATED_SCENARIOS + MANUAL_SCENARIOS
 FINAL_STATUSES = {"passed", "failed", "blocked"}
+ACTIVE_FORMAT_PAIRS = frozenset({("v4", "v4"), ("v5", "v4")})
+HISTORICAL_REPORT_FORMAT_PAIRS = frozenset({("v5", "v5")})
+REMOTE_WRITE_SUCCESS = "remote_write_success"
+NO_WRITE_SUCCESS = "no_write_success"
+FAIL_CLOSED_NO_WRITE = "fail_closed_no_write"
+ATTESTATION_CONTRACTS = frozenset(
+    {REMOTE_WRITE_SUCCESS, NO_WRITE_SUCCESS, FAIL_CLOSED_NO_WRITE}
+)
+V5_ACL_REJECTION_CODE = "ACL_V5_MUTATION_DISABLED"
+MANUAL_ATTESTATION_CONTRACTS = {
+    ("v4", "v4"): {
+        "import_root_resource": REMOTE_WRITE_SUCCESS,
+        "import_new_client_folder": REMOTE_WRITE_SUCCESS,
+        "import_existing_destination": REMOTE_WRITE_SUCCESS,
+        "duplicate_detection": NO_WRITE_SUCCESS,
+        "custom_shared_permissions": REMOTE_WRITE_SUCCESS,
+        "additive_acl_update": REMOTE_WRITE_SUCCESS,
+        "restrictive_acl_update": REMOTE_WRITE_SUCCESS,
+        "interrupted_import_recovery": REMOTE_WRITE_SUCCESS,
+        "interrupted_acl_recovery": REMOTE_WRITE_SUCCESS,
+    },
+    ("v5", "v4"): {
+        "import_root_resource": REMOTE_WRITE_SUCCESS,
+        "import_new_client_folder": REMOTE_WRITE_SUCCESS,
+        "import_existing_destination": REMOTE_WRITE_SUCCESS,
+        "duplicate_detection": NO_WRITE_SUCCESS,
+        "custom_shared_permissions": FAIL_CLOSED_NO_WRITE,
+        "additive_acl_update": FAIL_CLOSED_NO_WRITE,
+        "restrictive_acl_update": FAIL_CLOSED_NO_WRITE,
+        "interrupted_import_recovery": REMOTE_WRITE_SUCCESS,
+        "interrupted_acl_recovery": REMOTE_WRITE_SUCCESS,
+    },
+}
 REPORT_KEYS = {
     "schema_version",
     "app_version",
@@ -125,6 +158,8 @@ SAFE_METRIC_KEYS = {
     "clock_skew_seconds",
     "operator_attested",
     "remote_writes_recorded",
+    "attestation_contract",
+    "rejection_observed",
 }
 BOOLEAN_METRICS = {
     "fingerprint_matches_expected",
@@ -135,6 +170,7 @@ BOOLEAN_METRICS = {
     "closed",
     "operator_attested",
     "remote_writes_recorded",
+    "rejection_observed",
 }
 COUNT_METRICS = {
     "write_requests",
@@ -164,6 +200,72 @@ class InstanceProfile:
     expected_server_fingerprint: str
     expected_resource_format: str
     expected_folder_format: str
+
+
+def _format_pair(resource_format: object, folder_format: object) -> tuple[str, str]:
+    return (
+        str(resource_format or "").strip().lower(),
+        str(folder_format or "").strip().lower(),
+    )
+
+
+def _require_active_format_pair(
+    resource_format: object, folder_format: object, *, label: str
+) -> tuple[str, str]:
+    pair = _format_pair(resource_format, folder_format)
+    if pair not in ACTIVE_FORMAT_PAIRS:
+        raise MatrixError(
+            f"{label} deve usare (risorse v4, cartelle v4) oppure "
+            "(risorse v5, cartelle v4); auto e cartelle v5 non sono ammessi."
+        )
+    return pair
+
+
+def _manual_attestation_contract(
+    pair: tuple[str, str], scenario_name: str
+) -> str:
+    try:
+        contracts = MANUAL_ATTESTATION_CONTRACTS[pair]
+        contract = contracts[scenario_name]
+    except KeyError as exc:
+        raise MatrixError(
+            "Il profilo non contiene un contratto manuale completo e riconosciuto."
+        ) from exc
+    if set(contracts) != set(MANUAL_SCENARIOS) or contract not in ATTESTATION_CONTRACTS:
+        raise MatrixError(
+            "Il profilo non contiene un contratto manuale completo e riconosciuto."
+        )
+    return contract
+
+
+def _manual_passed_metrics(
+    pair: tuple[str, str], scenario_name: str, error_code: str | None = None
+) -> dict[str, Any]:
+    contract = _manual_attestation_contract(pair, scenario_name)
+    normalized_error = str(error_code or "").strip().upper()
+    metrics: dict[str, Any] = {
+        "attestation_contract": contract,
+        "operator_attested": True,
+        "remote_writes_recorded": contract == REMOTE_WRITE_SUCCESS,
+    }
+    if contract == FAIL_CLOSED_NO_WRITE:
+        if normalized_error != V5_ACL_REJECTION_CODE:
+            raise MatrixError(
+                "La prova negativa v5 richiede il codice "
+                f"{V5_ACL_REJECTION_CODE} e zero scritture remote."
+            )
+        metrics.update(
+            {
+                "rejection_observed": True,
+                "error_code": V5_ACL_REJECTION_CODE,
+            }
+        )
+    elif normalized_error:
+        raise MatrixError(
+            "Uno scenario manuale superato accetta un codice errore soltanto "
+            "quando il contratto richiede una prova negativa fail-closed."
+        )
+    return metrics
 
 
 def utc_now() -> str:
@@ -223,15 +325,11 @@ def load_config(path: str | Path) -> list[InstanceProfile]:
             fingerprint = normalize_fingerprint(str(raw.get("expected_server_fingerprint", "")))
         except ProbeError as exc:
             raise MatrixError(f"Il profilo {instance_id} non contiene URL e fingerprint validi.") from exc
-        resource_format = str(raw.get("expected_resource_format", "")).strip().lower()
-        folder_format = str(raw.get("expected_folder_format", "")).strip().lower()
-        if resource_format not in {"v4", "v5"} or folder_format not in {"v4", "v5"}:
-            raise MatrixError(f"Il profilo {instance_id} deve richiedere formati v4 oppure v5.")
-        if enabled and (resource_format != "v4" or folder_format != "v4"):
-            raise MatrixError(
-                f"Il profilo {instance_id} non può essere attivato: questa release "
-                "supporta esclusivamente server e formati Passbolt v4."
-            )
+        resource_format, folder_format = _require_active_format_pair(
+            raw.get("expected_resource_format"),
+            raw.get("expected_folder_format"),
+            label=f"Il profilo {instance_id}",
+        )
         if enabled and len(set(fingerprint)) == 1:
             raise MatrixError(f"Il profilo attivo {instance_id} usa ancora una fingerprint segnaposto.")
         profiles.append(
@@ -420,8 +518,15 @@ def _blocked(name: str, code: str) -> dict[str, Any]:
     return {"name": name, "kind": "automated" if name in AUTOMATED_SCENARIOS else "manual", "status": "blocked", "metrics": {"error_code": code}}
 
 
-def _manual_not_run(name: str) -> dict[str, Any]:
-    return {"name": name, "kind": "manual", "status": "not_run", "metrics": {}}
+def _manual_not_run(name: str, pair: tuple[str, str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "kind": "manual",
+        "status": "not_run",
+        "metrics": {
+            "attestation_contract": _manual_attestation_contract(pair, name)
+        },
+    }
 
 
 def _success_payload(envelope: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -488,7 +593,14 @@ def _evaluate_readiness(
         or not can_import
         or create_count != 1
         or blocked_count != 0
-        or (expect_folder and (folder_format != profile.expected_folder_format or create_folder_count != 1))
+        or (
+            expect_folder
+            and (folder_format != profile.expected_folder_format or create_folder_count != 1)
+        )
+        or (
+            not expect_folder
+            and (raw_folder_format is not None or create_folder_count != 0)
+        )
     ):
         return _failed(name, "READINESS_EXPECTATION_MISMATCH")
     return _passed(
@@ -537,6 +649,46 @@ def _validate_safe_metrics(metrics: Any) -> None:
         raise MatrixError("Il report contiene uno stato HTTP non valido.")
     if "clock_skew_seconds" in metrics and (type(metrics["clock_skew_seconds"]) is not int or not -86400 <= metrics["clock_skew_seconds"] <= 86400):
         raise MatrixError("Il report contiene uno scarto temporale non valido.")
+    if (
+        "attestation_contract" in metrics
+        and metrics["attestation_contract"] not in ATTESTATION_CONTRACTS
+    ):
+        raise MatrixError("Il report contiene un contratto di attestazione non valido.")
+
+
+def _validate_manual_scenario_contract(
+    scenario: Mapping[str, Any], pair: tuple[str, str]
+) -> None:
+    if pair not in ACTIVE_FORMAT_PAIRS:
+        return
+    name = str(scenario.get("name", ""))
+    status = str(scenario.get("status", ""))
+    metrics = scenario.get("metrics")
+    if not isinstance(metrics, dict):
+        raise MatrixError("Lo scenario manuale non contiene metriche valide.")
+    contract = _manual_attestation_contract(pair, name)
+    if metrics.get("attestation_contract") != contract:
+        raise MatrixError(
+            "Lo scenario manuale non coincide con il contratto del profilo."
+        )
+    if status == "not_run":
+        expected = {"attestation_contract": contract}
+    elif status == "passed":
+        expected = _manual_passed_metrics(
+            pair,
+            name,
+            V5_ACL_REJECTION_CODE if contract == FAIL_CLOSED_NO_WRITE else None,
+        )
+    else:
+        expected = {
+            "attestation_contract": contract,
+            "operator_attested": True,
+            "error_code": metrics.get("error_code"),
+        }
+    if metrics != expected:
+        raise MatrixError(
+            "Le metriche manuali non dimostrano l'esito richiesto dal profilo."
+        )
 
 
 def validate_report_document(report: Mapping[str, Any]) -> None:
@@ -552,7 +704,10 @@ def validate_report_document(report: Mapping[str, Any]) -> None:
         raise MatrixError("Il report non contiene un UUID v4 canonico.")
     if not ID_PATTERN.fullmatch(str(report.get("instance_id", ""))):
         raise MatrixError("Il report non contiene un ID istanza valido.")
-    if report.get("expected_resource_format") not in {"v4", "v5"} or report.get("expected_folder_format") not in {"v4", "v5"}:
+    report_pair = _format_pair(
+        report.get("expected_resource_format"), report.get("expected_folder_format")
+    )
+    if report_pair not in ACTIVE_FORMAT_PAIRS | HISTORICAL_REPORT_FORMAT_PAIRS:
         raise MatrixError("Il report non contiene formati Passbolt validi.")
     if not TIMESTAMP_PATTERN.fullmatch(str(report.get("started_at", ""))) or not TIMESTAMP_PATTERN.fullmatch(str(report.get("completed_at", ""))):
         raise MatrixError("Il report non contiene timestamp UTC validi.")
@@ -571,6 +726,8 @@ def validate_report_document(report: Mapping[str, Any]) -> None:
         if scenario.get("status") not in allowed_statuses:
             raise MatrixError("Il report contiene uno stato di scenario non valido.")
         _validate_safe_metrics(scenario.get("metrics"))
+        if expected_kind == "manual":
+            _validate_manual_scenario_contract(scenario, report_pair)
     digest = str(report.get("report_digest", ""))
     if not re.fullmatch(r"[0-9a-f]{64}", digest) or digest != calculate_report_digest(report):
         raise MatrixError("Il digest del report non corrisponde: il file è stato modificato o troncato.")
@@ -626,6 +783,11 @@ def run_instance(
     probe_runner: Callable[[str, str | None, float], Any] = run_probe,
     bridge_factory: Callable[[], Any] | None = None,
 ) -> dict[str, Any]:
+    pair = _require_active_format_pair(
+        profile.expected_resource_format,
+        profile.expected_folder_format,
+        label=f"Il profilo {profile.instance_id}",
+    )
     run_id = str(uuid.uuid4())
     started = utc_now()
     scenarios: list[dict[str, Any]] = []
@@ -649,7 +811,7 @@ def run_instance(
         scenarios.append(_failed("public_probe", "PUBLIC_PROBE_FAILED"))
         for name in AUTOMATED_SCENARIOS[1:]:
             scenarios.append(_blocked(name, "PUBLIC_PROBE_REQUIRED"))
-        scenarios.extend(_manual_not_run(name) for name in MANUAL_SCENARIOS)
+        scenarios.extend(_manual_not_run(name, pair) for name in MANUAL_SCENARIOS)
         return finalize_report(
             {
                 "schema_version": REPORT_SCHEMA_VERSION,
@@ -768,7 +930,7 @@ def run_instance(
 
     by_name = {scenario["name"]: scenario for scenario in scenarios}
     ordered = [by_name.get(name, _blocked(name, "SCENARIO_NOT_COMPLETED")) for name in AUTOMATED_SCENARIOS]
-    ordered.extend(_manual_not_run(name) for name in MANUAL_SCENARIOS)
+    ordered.extend(_manual_not_run(name, pair) for name in MANUAL_SCENARIOS)
     return finalize_report(
         {
             "schema_version": REPORT_SCHEMA_VERSION,
@@ -791,23 +953,34 @@ def record_manual_result(report_path: str | Path, scenario_name: str, status: st
         raise MatrixError("È possibile attestare soltanto gli scenari manuali previsti.")
     if status not in FINAL_STATUSES:
         raise MatrixError("Lo stato manuale deve essere passed, failed oppure blocked.")
-    normalized_error = str(error_code or "").strip().upper()
-    if status != "passed" and not ERROR_CODE_PATTERN.fullmatch(normalized_error):
-        raise MatrixError("Per uno scenario non superato indicare un codice errore enumerato.")
     report = load_report(report_path)
-    if report.get("expected_resource_format") != "v4" or report.get("expected_folder_format") != "v4":
+    pair = _format_pair(
+        report.get("expected_resource_format"), report.get("expected_folder_format")
+    )
+    if pair not in ACTIVE_FORMAT_PAIRS:
         raise MatrixError(
-            "I report Passbolt v5 restano consultabili come evidenza storica, ma questa release v4-only "
-            "rifiuta nuove attestazioni su quei report."
+            "I report Passbolt v5/v5 restano consultabili come evidenza storica, ma "
+            "non possono ricevere nuove attestazioni. Usare un report separato "
+            "v5-resource-preview con risorse v5 e cartelle v4."
         )
+    normalized_error = str(error_code or "").strip().upper()
+    contract = _manual_attestation_contract(pair, scenario_name)
+    if status == "passed":
+        metrics = _manual_passed_metrics(pair, scenario_name, normalized_error)
+    else:
+        if not ERROR_CODE_PATTERN.fullmatch(normalized_error):
+            raise MatrixError(
+                "Per uno scenario non superato indicare un codice errore enumerato."
+            )
+        metrics = {
+            "attestation_contract": contract,
+            "operator_attested": True,
+            "error_code": normalized_error,
+        }
     for scenario in report["scenarios"]:
         if scenario["name"] == scenario_name:
             scenario["status"] = status
-            scenario["metrics"] = (
-                {"operator_attested": True, "remote_writes_recorded": True}
-                if status == "passed"
-                else {"operator_attested": True, "error_code": normalized_error}
-            )
+            scenario["metrics"] = metrics
             break
     report["completed_at"] = utc_now()
     return write_report(report, report_path)
@@ -822,9 +995,15 @@ def report_summary(report: Mapping[str, Any]) -> dict[str, int]:
 
 
 def report_is_release_complete(report: Mapping[str, Any]) -> bool:
-    """Return True only for a complete Passbolt v4 report for this release."""
+    """Return True for a complete report using one current explicit format pair."""
 
-    if report.get("expected_resource_format") != "v4" or report.get("expected_folder_format") != "v4":
+    if _format_pair(
+        report.get("expected_resource_format"), report.get("expected_folder_format")
+    ) not in ACTIVE_FORMAT_PAIRS:
+        return False
+    try:
+        validate_report_document(report)
+    except MatrixError:
         return False
     counts = report_summary(report)
     return counts["passed"] == len(ALL_SCENARIOS) and all(
@@ -848,8 +1027,10 @@ def real_instance_runs_allowed(environ: Mapping[str, Any] | None = None) -> bool
 
 
 def self_test() -> dict[str, Any]:
+    v4_pair = ("v4", "v4")
+    v5_preview_pair = ("v5", "v4")
     scenarios = [_passed(name, {"write_requests": 0}) for name in AUTOMATED_SCENARIOS]
-    scenarios.extend(_manual_not_run(name) for name in MANUAL_SCENARIOS)
+    scenarios.extend(_manual_not_run(name, v4_pair) for name in MANUAL_SCENARIOS)
     report = finalize_report(
         {
             "schema_version": REPORT_SCHEMA_VERSION,
@@ -881,11 +1062,56 @@ def self_test() -> dict[str, Any]:
         },
         "SELF_TEST_FAILED",
     )
-    historical_v5_report = dict(report)
+    historical_v5_report = json.loads(json.dumps(report))
     historical_v5_report["expected_resource_format"] = "v5"
     historical_v5_report["expected_folder_format"] = "v5"
+    for scenario in historical_v5_report["scenarios"]:
+        if scenario["kind"] == "manual" and scenario["status"] == "not_run":
+            scenario["metrics"] = {}
     historical_v5_report = finalize_report(historical_v5_report)
-    serialized = json.dumps({"report": report, "safe": safe}, sort_keys=True)
+    validate_report_document(historical_v5_report)
+    v5_resource_preview_report = json.loads(json.dumps(report))
+    v5_resource_preview_report["instance_id"] = "v5-resource-preview"
+    v5_resource_preview_report["expected_resource_format"] = "v5"
+    v5_resource_preview_report["expected_folder_format"] = "v4"
+    v5_resource_preview_report["scenarios"] = [
+        scenario
+        if scenario["kind"] == "automated"
+        else _manual_not_run(str(scenario["name"]), v5_preview_pair)
+        for scenario in v5_resource_preview_report["scenarios"]
+    ]
+    v5_resource_preview_report = finalize_report(v5_resource_preview_report)
+    validate_report_document(v5_resource_preview_report)
+    v5_complete_report = json.loads(json.dumps(v5_resource_preview_report))
+    for scenario in v5_complete_report["scenarios"]:
+        if scenario["kind"] != "manual":
+            continue
+        contract = _manual_attestation_contract(
+            v5_preview_pair, str(scenario["name"])
+        )
+        scenario["status"] = "passed"
+        scenario["metrics"] = _manual_passed_metrics(
+            v5_preview_pair,
+            str(scenario["name"]),
+            V5_ACL_REJECTION_CODE if contract == FAIL_CLOSED_NO_WRITE else None,
+        )
+    v5_complete_report = finalize_report(v5_complete_report)
+    validate_report_document(v5_complete_report)
+    v5_custom_share = next(
+        scenario
+        for scenario in v5_complete_report["scenarios"]
+        if scenario["name"] == "custom_shared_permissions"
+    )
+    negative_proof = v5_custom_share["metrics"]
+    serialized = json.dumps(
+        {
+            "report": report,
+            "v5_resource_preview": v5_resource_preview_report,
+            "v5_complete": v5_complete_report,
+            "safe": safe,
+        },
+        sort_keys=True,
+    )
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "automated_scenario_count": len(AUTOMATED_SCENARIOS),
@@ -894,13 +1120,32 @@ def self_test() -> dict[str, Any]:
         "ci_real_instance_guard": not real_instance_runs_allowed({"CI": "true"}),
         "report_digest_valid": report["report_digest"] == calculate_report_digest(report),
         "v5_release_gate_rejected": not report_is_release_complete(historical_v5_report),
+        "v5_resource_preview_report_supported": _format_pair(
+            v5_resource_preview_report["expected_resource_format"],
+            v5_resource_preview_report["expected_folder_format"],
+        ) in ACTIVE_FORMAT_PAIRS,
+        "v5_custom_share_negative_proof_required": _manual_attestation_contract(
+            v5_preview_pair, "custom_shared_permissions"
+        )
+        == FAIL_CLOSED_NO_WRITE,
+        "v5_custom_share_negative_proof_recorded": negative_proof
+        == {
+            "attestation_contract": FAIL_CLOSED_NO_WRITE,
+            "operator_attested": True,
+            "remote_writes_recorded": False,
+            "rejection_observed": True,
+            "error_code": V5_ACL_REJECTION_CODE,
+        },
+        "v5_manual_contract_complete": report_is_release_complete(
+            v5_complete_report
+        ),
         "safe_failure_projection": "secret" not in serialized and "private.invalid" not in serialized,
         "secrets_serialized": False,
     }
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Matrice di integrazione sicura per istanze Passbolt v4 reali.")
+    parser = argparse.ArgumentParser(description="Matrice di integrazione sicura per istanze Passbolt v4 o v5-resource-preview reali.")
     subparsers = parser.add_subparsers(dest="action", required=True)
 
     validate = subparsers.add_parser("validate", help="Valida una configurazione senza collegarsi a Passbolt.")
@@ -915,7 +1160,13 @@ def parse_args() -> argparse.Namespace:
     record.add_argument("--report", required=True)
     record.add_argument("--scenario", required=True, choices=MANUAL_SCENARIOS)
     record.add_argument("--status", required=True, choices=sorted(FINAL_STATUSES))
-    record.add_argument("--error-code")
+    record.add_argument(
+        "--error-code",
+        help=(
+            "Obbligatorio per failed/blocked e per le prove negative v5; "
+            f"queste ultime richiedono {V5_ACL_REJECTION_CODE}."
+        ),
+    )
 
     summary = subparsers.add_parser("summary", help="Verifica digest e riepiloga uno o più report.")
     summary.add_argument("--report", action="append", required=True)

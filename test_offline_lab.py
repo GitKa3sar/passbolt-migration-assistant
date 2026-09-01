@@ -15,6 +15,7 @@ from offline_lab_acceptance import (
     OfflineAcceptanceError,
     STATEFUL_SCENARIOS,
     _acl_recovery_state,
+    _profile_formats,
     _validate_progress,
 )
 from offline_lab_setup import (
@@ -79,6 +80,12 @@ class OfflineLabSetupTests(unittest.TestCase):
 
     def test_stateful_acceptance_covers_every_real_manual_scenario(self) -> None:
         self.assertEqual(STATEFUL_SCENARIOS, MANUAL_SCENARIOS)
+
+    def test_stateful_profiles_keep_v5_folders_disabled(self) -> None:
+        self.assertEqual(_profile_formats("v4"), ("v4", "v4"))
+        self.assertEqual(_profile_formats("v5"), ("v5", "v4"))
+        with self.assertRaisesRegex(OfflineAcceptanceError, "cartelle v4"):
+            _profile_formats("auto")
 
     def test_stateful_progress_is_bounded_and_rejects_sensitive_fields(self) -> None:
         batch_id = "11111111-1111-4111-8111-111111111111"

@@ -67,8 +67,8 @@ from passbolt_review import (
 )
 
 
-APP_VERSION = "0.28.4-beta.2"
-RELEASE_COMPATIBILITY_PROFILE = "passbolt-v4-only"
+APP_VERSION = "0.29.0-beta.1"
+RELEASE_COMPATIBILITY_PROFILE = "passbolt-v4-v5-resource-preview"
 MAX_SECRET_CHARACTERS = 65_536
 MAX_STDIN_BYTES = 64 * 1024 * 1024
 MAX_BRIDGE_OUTPUT_BYTES = 64 * 1024 * 1024
@@ -79,22 +79,27 @@ class ImportPreparationError(RuntimeError):
     """A safe error that never includes an extracted secret."""
 
 
-def _require_v4_only_formats(
+def _require_preview_formats(
     resource_format: object,
     folder_format: object,
     *,
     allow_no_folder: bool = False,
-) -> None:
-    """Reject every non-v4 format before reading sources or secrets."""
+) -> tuple[str, str]:
+    """Require explicit preview formats before reading sources or secrets."""
 
     normalized_resource = str(resource_format or "").strip().lower()
     normalized_folder = str(folder_format or "").strip().lower()
     allowed_folders = {"v4", "none"} if allow_no_folder else {"v4"}
-    if normalized_resource != "v4" or normalized_folder not in allowed_folders:
+    if (
+        normalized_resource not in {"v4", "v5"}
+        or normalized_folder not in allowed_folders
+    ):
         raise ImportPreparationError(
-            "Questa release supporta esclusivamente server e formati Passbolt v4; "
-            "i formati automatici o v5 sono disabilitati in modo fail-closed."
+            "Questa anteprima richiede un formato risorse esplicito v4 o v5 e "
+            "mantiene le cartelle in formato v4; auto, cartelle v5 e formati "
+            "sconosciuti sono disabilitati in modo fail-closed."
         )
+    return normalized_resource, normalized_folder
 
 
 @dataclass(frozen=True)
@@ -550,6 +555,26 @@ def _prepare_recovery_context(
     request: Mapping[str, Any],
     journal_root: str | Path | None,
 ) -> tuple[dict[str, Any], list[object]]:
+    try:
+        snapshot = read_batch(request.get("reconciliation_batch_id"), journal_root)
+        recovery_state = build_recovery_state(snapshot)
+    except ReconciliationJournalCorrupt as exc:
+        raise ImportPreparationError(
+            "Il registro locale è incompleto o danneggiato; la ripresa automatica è bloccata."
+        ) from exc
+    except ReconciliationJournalError as exc:
+        raise ImportPreparationError(
+            "Il lotto locale richiesto non è disponibile per il recupero."
+        ) from exc
+
+    resource_format, folder_format = _require_preview_formats(
+        recovery_state.get("resource_format"),
+        recovery_state.get("folder_format"),
+        allow_no_folder=True,
+    )
+    recovery_state["resource_format"] = resource_format
+    recovery_state["folder_format"] = folder_format
+
     candidates = request.get("candidates")
     if not isinstance(candidates, list) or not candidates:
         raise ImportPreparationError(
@@ -564,17 +589,6 @@ def _prepare_recovery_context(
         )
     finally:
         file_passwords.clear()
-    try:
-        snapshot = read_batch(request.get("reconciliation_batch_id"), journal_root)
-        recovery_state = build_recovery_state(snapshot)
-    except ReconciliationJournalCorrupt as exc:
-        raise ImportPreparationError(
-            "Il registro locale è incompleto o danneggiato; la ripresa automatica è bloccata."
-        ) from exc
-    except ReconciliationJournalError as exc:
-        raise ImportPreparationError(
-            "Il lotto locale richiesto non è disponibile per il recupero."
-        ) from exc
 
     supplied_proofs: list[dict[str, str]] = []
     for candidate in candidates:
@@ -763,7 +777,7 @@ def execute_import(
     node_path: str,
     crypto_script: str,
 ) -> dict[str, Any]:
-    _require_v4_only_formats(
+    resource_format, folder_format = _require_preview_formats(
         request.get("resource_format"), request.get("folder_format")
     )
     node, script = _validate_bridge(node_path, crypto_script)
@@ -776,9 +790,9 @@ def execute_import(
         "private_key_path": request.get("private_key_path"),
         "passphrase": request.get("passphrase"),
         "mfa_totp": request.get("mfa_totp"),
-        "resource_format": request.get("resource_format", "auto"),
+        "resource_format": resource_format,
         "destination_mode": request.get("destination_mode", "client_folders"),
-        "folder_format": request.get("folder_format", "auto"),
+        "folder_format": folder_format,
         "destination_folder_id": request.get("destination_folder_id"),
         "client_destination_mapping": request.get("client_destination_mapping"),
         "permission_mode": request.get("permission_mode", "inherited"),
@@ -850,7 +864,7 @@ def _session_bridge_request(
             [],
         )
     if command == "session-readiness":
-        _require_v4_only_formats(
+        resource_format, folder_format = _require_preview_formats(
             request.get("resource_format"), request.get("folder_format")
         )
         candidates = request.get("candidates")
@@ -867,11 +881,11 @@ def _session_bridge_request(
             {
                 "command": "session-readiness",
                 "session_id": request.get("session_id"),
-                "resource_format": request.get("resource_format", "auto"),
+                "resource_format": resource_format,
                 "destination_mode": request.get(
                     "destination_mode", "client_folders"
                 ),
-                "folder_format": request.get("folder_format", "auto"),
+                "folder_format": folder_format,
                 "destination_folder_id": request.get("destination_folder_id"),
                 "client_destination_mapping": request.get(
                     "client_destination_mapping"
@@ -980,7 +994,7 @@ def _session_bridge_request(
             [],
         )
     if command == "session-import":
-        _require_v4_only_formats(
+        resource_format, folder_format = _require_preview_formats(
             request.get("resource_format"), request.get("folder_format")
         )
         candidates, resources = _prepare_import_resources(root, request)
@@ -988,11 +1002,11 @@ def _session_bridge_request(
             {
                 "command": "session-import",
                 "session_id": request.get("session_id"),
-                "resource_format": request.get("resource_format", "auto"),
+                "resource_format": resource_format,
                 "destination_mode": request.get(
                     "destination_mode", "client_folders"
                 ),
-                "folder_format": request.get("folder_format", "auto"),
+                "folder_format": folder_format,
                 "destination_folder_id": request.get("destination_folder_id"),
                 "client_destination_mapping": request.get(
                     "client_destination_mapping"
@@ -1009,11 +1023,6 @@ def _session_bridge_request(
     if command in {"session-recovery-readiness", "session-recovery-import"}:
         recovery_state, candidates = _prepare_recovery_context(
             root, request, journal_root
-        )
-        _require_v4_only_formats(
-            recovery_state.get("resource_format"),
-            recovery_state.get("folder_format"),
-            allow_no_folder=True,
         )
         resources: list[dict[str, Any]] = []
         if command == "session-recovery-import":
@@ -2264,18 +2273,35 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     if args.self_test:
-        v5_format_rejected = False
+        v5_resource_format_supported = False
         try:
-            _require_v4_only_formats("v5", "v5")
+            v5_resource_format_supported = (
+                _require_preview_formats("v5", "v4") == ("v5", "v4")
+            )
         except ImportPreparationError:
-            v5_format_rejected = True
+            pass
+        try:
+            _require_preview_formats("v5", "v5")
+            v5_folder_format_rejected = False
+        except ImportPreparationError:
+            v5_folder_format_rejected = True
+        automatic_format_rejected = True
+        for resource_format, folder_format in (("auto", "v4"), ("v4", "auto")):
+            try:
+                _require_preview_formats(resource_format, folder_format)
+            except ImportPreparationError:
+                continue
+            automatic_format_rejected = False
+            break
         _write_json(
             {
                 "ok": True,
                 "result": {
                     "version": APP_VERSION,
                     "compatibility_profile": RELEASE_COMPATIBILITY_PROFILE,
-                    "v5_format_rejected": v5_format_rejected,
+                    "v5_resource_format_supported": v5_resource_format_supported,
+                    "v5_folder_format_rejected": v5_folder_format_rejected,
+                    "automatic_format_rejected": automatic_format_rejected,
                     "unlimited_candidate_selection": True,
                     "indexed_candidate_revalidation": True,
                     "early_parser_stop": True,

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("v4")]
+    [ValidateSet("v4", "v5")]
     [string]$Profile = "v4",
     [ValidateSet("healthy", "mfa-rejected", "session-expired")]
     [string]$Scenario = "healthy",
